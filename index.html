@@ -44,9 +44,9 @@
   #startBtn { background:#8a2015; border-color:#ff5a33; color:#fff; font-size:19px; }
   .hint { color:#5f6d85; font-size:11px; text-align:center; line-height:1.7; max-width:340px; }
   #results { display:none; }
-  #resList { display:flex; flex-direction:column; gap:5px; }
-  .resRow { display:grid; grid-template-columns:34px 46px 150px 90px; gap:6px;
-      color:#c8d2e2; font-size:14px; }
+  #resList { column-count:2; column-gap:26px; }
+  .resRow { display:grid; grid-template-columns:26px 38px 124px 66px; gap:5px;
+      color:#c8d2e2; font-size:12px; line-height:1.5; break-inside:avoid; }
   .resRow.me { color:#ffd23d; font-weight:bold; }
   #resTitle { color:#7CFC9A; font-size:22px; font-weight:bold; letter-spacing:2px; text-align:center; }
 
@@ -77,10 +77,11 @@
   <button id="startBtn" class="mbtn">START RACE</button>
   <button id="trkTog" class="mbtn">TRACK: THUNDER OVAL</button>
   <button id="lapTog" class="mbtn">LAPS: 5</button>
+  <button id="qualTog" class="mbtn">QUALIFYING: OFF</button>
   <button id="sndTog" class="mbtn">SOUND: ON</button>
   <button id="tiltTog" class="mbtn">TILT STEER: OFF</button>
   <div class="hint">Landscape only &bull; &#9664; &#9654; steer &bull; GAS / BRAKE right hand<br>
-  Rolling start behind the pace car &bull; green at the line &bull; You start P8 of 8.</div>
+  Rolling start behind the pace car &bull; green at the line &bull; 20-car field.</div>
 </div>
 
 <div id="results" class="overlay">
@@ -88,6 +89,11 @@
   <div id="resList"></div>
   <button id="againBtn" class="mbtn">BACK TO MENU</button>
 </div>
+
+<button id="qSkip" class="mbtn" style="display:none; position:fixed; top:14px; left:50%;
+  transform:translateX(-50%); z-index:6; min-width:150px; padding:8px 14px; font-size:13px;">SKIP QUALIFYING</button>
+<button id="bP" class="ctl" style="display:none; left:14px; bottom:104px; width:88px; height:44px;
+  font-size:15px; background:rgba(180,140,20,0.4);">PIT</button>
 
 <div id="rotate"><div class="phone"></div><p>ROTATE YOUR PHONE</p></div>
 
@@ -253,12 +259,20 @@ function cornerCap(mu, bank){
 
 /* ---------- roster / cars ---------- */
 const rng = mulberry32(12345);
+const rngR = mulberry32(999);        // runtime events (qual spread, spins) — separate stream
 const ROSTER = [
   {name:'B. HOLLISTER', num:28, col:[0.89,0.23,0.18]}, {name:'D. MCCREADY', num:7,  col:[0.18,0.49,0.89]},
   {name:'R. LAFONTAINE',num:44, col:[0.22,0.70,0.29]}, {name:'T. VANCE',    num:3,  col:[0.09,0.09,0.10]},
   {name:'C. DELGADO',   num:91, col:[0.94,0.66,0.09]}, {name:'W. STROUD',   num:15, col:[0.56,0.27,0.68]},
-  {name:'E. KOWALSKI',  num:62, col:[0.05,0.71,0.65]}
+  {name:'E. KOWALSKI',  num:62, col:[0.05,0.71,0.65]}, {name:'J. WHITFIELD',num:5,  col:[0.85,0.85,0.87]},
+  {name:'M. OKONKWO',   num:12, col:[0.75,0.12,0.55]}, {name:'A. CERVANTES',num:18, col:[0.95,0.45,0.10]},
+  {name:'P. LINDQVIST', num:24, col:[0.15,0.25,0.55]}, {name:'G. THIBODEAUX',num:31,col:[0.45,0.60,0.20]},
+  {name:'H. NAKAGAWA',  num:37, col:[0.60,0.10,0.12]}, {name:'S. MCALLISTER',num:48,col:[0.20,0.55,0.85]},
+  {name:'D. FONTAINE',  num:53, col:[0.90,0.75,0.50]}, {name:'K. BRENNAN',  num:66, col:[0.30,0.30,0.34]},
+  {name:'V. ROSSI',     num:73, col:[0.80,0.65,0.10]}, {name:'L. HARGROVE', num:82, col:[0.10,0.45,0.40]},
+  {name:'C. BJORNSTAD', num:88, col:[0.55,0.75,0.90]}
 ];
+const FIELD = ROSTER.length + 1;      // 19 AI + player
 function makeCar(isPlayer, idx){
   const p = TRACK.pointAt(0);
   return {
@@ -275,7 +289,9 @@ function makeCar(isPlayer, idx){
     laneBias: isPlayer?0: (rng()*2-1)*0.8,
     passSide: 0, passT: 0,
     lapStartT:0, lastLapT:0, bestLapT:0,
-    pitch:0
+    pitch:0,
+    spinT:0, spinDir:1, spinCd:0,
+    pit:0, pitT:0, pitReq:false
   };
 }
 
@@ -285,7 +301,9 @@ const S = {
   t:0, countT:0, laps:5,
   order:[], finishOrder:[],
   sound:true, tilt:false, tiltG:0,
-  shakeT:0
+  shakeT:0,
+  qual:false, gridOrder:null, qualPos:0,
+  flag:'green', yellowT:0, cautionUntilLap:-1, greenLockT:0
 };
 
 /* ---------- rolling start: pace car + formation on the backstretch ---------- */
@@ -293,7 +311,13 @@ const PACE = { s:0, lat:0, v:0, hdg:0, x:0, y:0, state:'lead',
                px:0, py:0, phdg:0, ps:0, plat:0 };
 function gridStart(){
   S.cars = [];
-  for(let i=0;i<8;i++) S.cars.push(makeCar(i===7, i===7?0:i+1));
+  // grid order: qualifying result (entries of {idx} with idx 0 = player),
+  // or default order with the player at the back
+  let order = S.gridOrder;
+  if(!order || order.length !== FIELD){
+    order = []; for(let i=1;i<FIELD;i++) order.push(i); order.push(0);
+  }
+  order.forEach(idx => S.cars.push(makeCar(idx===0, idx)));
   const sLead = TRACK.segs[2].s0 + 40;                 // backstretch, headed for T3/T4
   S.cars.forEach((c,i)=>{
     const row = Math.floor(i/2), colL = (i%2===0);
@@ -308,7 +332,8 @@ function gridStart(){
     c.prog = -1 + (i*0.001);
     c.px=c.x; c.py=c.y; c.phdg=c.hdg; c.ps=c.s; c.plat=c.lat;
   });
-  S.player = S.cars[7];
+  S.player = S.cars.find(c=>c.isPlayer);
+  S.flag = 'green'; S.cautionUntilLap = -1;
   S.finishOrder = [];
   S.t = 0; S.paceV = 31; S.greenT = 0;
   const ps = sLead + 18;
@@ -322,8 +347,8 @@ function stepPace(){
   if(PACE.state==='lead'){
     PACE.s += PACE.v*DT;
     if(PACE.s >= TRACK.total) PACE.s -= TRACK.total;
-    // just off T4 onto the frontstretch: dive to the apron (pit road) and slow
-    if(PACE.s > 2 && PACE.s < TRACK.sFinish - 60) PACE.state = 'peel';
+    // initial rolling start only: dive to pit road just off T4 (cautions peel on the green call)
+    if(S.mode==='pace' && PACE.s > 2 && PACE.s < TRACK.sFinish - 60) PACE.state = 'peel';
   } else if(PACE.state==='peel'){
     PACE.s += PACE.v*DT; if(PACE.s >= TRACK.total) PACE.s -= TRACK.total;
     PACE.lat = Math.max(-11, PACE.lat - 5.5*DT);
@@ -380,7 +405,68 @@ function updateAero(){
 const DT = 0.02;
 function stepCar(c){
   let thr, brk, steerIn;
-  if(S.mode==='pace'){
+  if(c.spinCd > 0) c.spinCd -= DT;
+  // arm pit entry as the car reaches the frontstretch
+  if(c.pitReq && c.pit===0 && !c.done && c.spinT<=0){
+    const seg0 = TRACK.segs[0];
+    let dIn = c.s - seg0.s0; if(dIn > TRACK.total/2) dIn -= TRACK.total;
+    if(dIn > -25 && dIn < seg0.len*0.04) c.pit = 1;
+  }
+  if(c.spinT > 0){
+    // wrecked: no control, rotating slide until it scrubs off
+    c.spinT -= DT;
+    thr = 0; brk = 0.4; steerIn = 0;
+    c.hdg += (c.spinDir||1)*4.0*DT;
+    if(c.isPlayer) skid = Math.min(1, skid+0.15);
+  } else if(c.pit > 0){
+    // ---- auto-pit: drive the apron lane, stop at the stall, service, exit ----
+    const seg0 = TRACK.segs[0];
+    const sStall = seg0.s0 + seg0.len*(0.18 + 0.55*(c.idx||0)/FIELD);
+    const sOut = seg0.s0 + seg0.len*0.97;
+    let lane = (c.pit===2) ? -10.5 : -8.4;
+    let vT;
+    if(c.pit===1){
+      let ds = sStall - c.s; if(ds<-TRACK.total/2)ds+=TRACK.total; if(ds>TRACK.total/2)ds-=TRACK.total;
+      vT = Math.min(22, Math.max(0, ds*0.35));
+      if(ds < 2.0 && c.v < 0.8){ c.pit=2; c.pitT=4; }
+    } else if(c.pit===2){
+      vT = 0; c.pitT -= DT;
+      if(c.pitT<=0){ c.wear=0; c.pit=3; }
+    } else {
+      vT = 22;
+      let de = sOut - c.s; if(de<-TRACK.total/2)de+=TRACK.total; if(de>TRACK.total/2)de-=TRACK.total;
+      if(de < 4){ c.pit=0; c.pitReq=false; }
+    }
+    const LAp = Math.max(8, c.v*0.62);
+    const pTp = TRACK.pointAt(c.s + LAp);
+    const txp = pTp.x - Math.sin(pTp.hdg)*lane, typ = pTp.y + Math.cos(pTp.hdg)*lane;
+    let dHp = Math.atan2(typ-c.y, txp-c.x) - c.hdg;
+    while(dHp> Math.PI) dHp-=2*Math.PI; while(dHp<-Math.PI) dHp+=2*Math.PI;
+    const cFF = TRACK.pointAt(c.s + Math.max(6, c.v*0.3)).curv;
+    steerIn = Math.max(-1, Math.min(1, (c.v*cFF)/Math.max(0.05, c.v*0.24) + dHp*1.5));
+    if(c.v < vT - 0.3){ thr=0.4; brk=0; } else if(c.v > vT + 0.4){ thr=0; brk=0.8; } else { thr=0.15; brk=0; }
+  } else if(S.mode==='race' && S.flag==='yellow' && !c.isPlayer){
+    // ---- caution: fall in single file behind the pace car ----
+    let ahead=null, ad=1e9;
+    for(const o of S.cars){ if(o===c || o.pit>0 || o.spinT>0 || o.done) continue;
+      let ds=o.s-c.s; if(ds<-TRACK.total/2)ds+=TRACK.total; if(ds>TRACK.total/2)ds-=TRACK.total;
+      if(ds>0.5 && ds<ad){ ad=ds; ahead=o; } }
+    let vT;
+    if(ahead && ad<30) vT = ahead.v + (ad - 9)*0.5;
+    else { let dp=PACE.s-c.s; if(dp<-TRACK.total/2)dp+=TRACK.total; if(dp>TRACK.total/2)dp-=TRACK.total;
+      vT = (dp>0 && dp<90) ? PACE.v + (dp-16)*0.4 : 44; }
+    const lane = 0;
+    const LAy = Math.max(12, c.v*0.62);
+    const pTy = TRACK.pointAt(c.s + LAy);
+    const txy = pTy.x - Math.sin(pTy.hdg)*lane, tyy = pTy.y + Math.cos(pTy.hdg)*lane;
+    let dHy = Math.atan2(tyy-c.y, txy-c.x) - c.hdg;
+    while(dHy> Math.PI) dHy-=2*Math.PI; while(dHy<-Math.PI) dHy+=2*Math.PI;
+    const cFFy = TRACK.pointAt(c.s + Math.max(6, c.v*0.3)).curv;
+    steerIn = Math.max(-1, Math.min(1, (c.v*cFFy)/Math.max(0.05, c.v*0.24) + dHy*1.3));
+    if(c.v < vT - 0.3){ thr = 0.45; brk = 0; }
+    else if(c.v > vT + 0.5){ thr = 0; brk = 0.6; }
+    else { thr = 0.2; brk = 0; }
+  } else if(S.mode==='pace'){
     // --- formation: hold grid lane, match pace speed, keep gap to car ahead ---
     let vT = S.paceV;
     const ahead = c.gridAhead>=0 ? S.cars[c.gridAhead] : null;
@@ -407,6 +493,7 @@ function stepCar(c){
     steerIn = (input.left?-1:0) + (input.right?1:0);
     if(S.tilt) steerIn = Math.max(-1, Math.min(1, S.tiltG/22));
     steerIn *= 1 - 0.10*Math.min(1, c.v/85);       // calm the wheel at speed (full lock must still reach the corner grip limit)
+    if(S.mode==='race' && S.flag==='yellow' && c.v > 42){ thr = 0; brk = Math.max(brk, 0.5); }  // forced pacing
   } else {
     const vT = targetSpeed(c) * (c.done?0.55:1);
     const pHere = TRACK.pointAt(c.s);
@@ -452,7 +539,7 @@ function stepCar(c){
   const proj = TRACK.project(c.x, c.y);
   c.s = proj.s; c.lat = proj.lat;
   const off = Math.abs(c.lat);
-  const onGrass = off > TRACK.halfW + 0.4 && c.lat < 0;   // infield side only; high side is apron/wall
+  const onGrass = off > TRACK.halfW + 0.4 && c.lat < 0 && c.pit===0;  // infield side only; pit lane is paved apron
   const bank = TRACK.bankAt(c.s);
   const muSurf = (onGrass ? 0.72 : 1.0) * (1 - 0.12*c.wear);
   const muEff = CAR.mu * muSurf + CAR.dfK * c.v * c.v * (c.dirty?0.85:1);
@@ -522,6 +609,17 @@ function collide(){
       b.v = Math.max(0, b.v - 0.3*closeMag);
       a.hdg += ny*0.008*(a.isPlayer?1:2); b.hdg -= ny*0.008;
       if(a.isPlayer||b.isPlayer) S.shakeT=Math.max(S.shakeT,0.15);
+      // hard contact can turn the slower car around (green-flag racing only,
+      // and not in the bunched-up window right after a start/restart)
+      const closingV = Math.abs(a.v - b.v);
+      if(closingV > 9 && S.mode==='race' && S.flag==='green' && S.greenLockT<=0){
+        const victim = a.v > b.v ? b : a;
+        if(victim.spinT<=0 && victim.spinCd<=0 && rngR() < (closingV-9)*0.04 + 0.02){
+          victim.spinT = 1.6 + rngR()*1.2;
+          victim.spinDir = ny > 0 ? 1 : -1;
+          victim.spinCd = 10;
+        }
+      }
     }
   }
 }
@@ -591,7 +689,7 @@ function audioTick(){
   const f = 55 + rpm*165 + S.player.draftF*8;
   oscA.frequency.setTargetAtTime(f, AC.currentTime, 0.03);
   oscB.frequency.setTargetAtTime(f*0.5, AC.currentTime, 0.03);
-  const tgt = (S.mode==='race'||S.mode==='pace') && S.sound ? (0.05 + 0.10*(S.player.thr*0.7+rpm*0.3)) : 0;
+  const tgt = (S.mode==='race'||S.mode==='pace'||S.mode==='qual') && S.sound ? (0.05 + 0.10*(S.player.thr*0.7+rpm*0.3)) : 0;
   gain.gain.setTargetAtTime(tgt, AC.currentTime, 0.08);
   skid = Math.max(0, skid - 0.08);
   skidGain.gain.setTargetAtTime(S.sound ? skid*0.06 : 0, AC.currentTime, 0.05);
@@ -1402,7 +1500,7 @@ function drawGL(){
     if(!CARBUFS[c.num]) CARBUFS[c.num] = { mesh: buildCarMesh(c.num), tex: buildCarTexture(c) };
     drawMesh(CARBUFS[c.num].mesh, carModelMat(c), c.col, CARBUFS[c.num].tex);
   }
-  if(S.mode==='pace' || PACE.state==='peel' || PACE.state==='parked'){
+  if(S.mode==='pace' || S.flag==='yellow' || PACE.state==='peel' || PACE.state==='parked'){
     if(!CARBUFS.pace) CARBUFS.pace = { mesh: buildCarMesh(0, true), tex: buildCarTexture(PACE, true) };
     drawMesh(CARBUFS.pace.mesh, carModelMat(PACE), [0.93,0.93,0.95], CARBUFS.pace.tex);
   }
@@ -1423,25 +1521,35 @@ function dispCol(c){                 // lift near-black car colors so UI chips/t
 }
 function drawHUD(){
   cx.clearRect(0,0,W,H);
-  if(S.mode==='menu') return;
+  refreshPitBtn();
+  if(S.mode==='menu' || S.mode==='menuwait') return;
   const P = S.player;
   cx.textBaseline = 'middle';
-  // --- position tower (left) ---
-  const rows = Math.min(8, S.order.length);
+  if(S.mode==='qual'){ drawQualHUD(); return; }
+  // --- position tower (left): top 7 + the player's own row if outside ---
+  const playerRank = S.order.indexOf(P);
+  const list = [];
+  for(let i=0;i<Math.min(8, S.order.length);i++) list.push(i);
+  if(playerRank >= 8) list[7] = playerRank;
+  const rows = list.length;
   const th=22, tw=128, tx=10+SAFE.l, ty=14+SAFE.t;
   cx.fillStyle='rgba(8,10,16,0.72)';
   rr(tx,ty,tw,26+rows*th,8); cx.fill();
-  cx.fillStyle='#ffd23d'; cx.font='bold 13px monospace'; cx.textAlign='left';
-  cx.fillText('LAKE HILL 400', tx+10, ty+14);
-  for(let i=0;i<rows;i++){
-    const c = S.order[i], y = ty+26+i*th+th/2;
+  cx.fillStyle = S.flag==='yellow' ? '#ffd23d' : '#ffd23d';
+  cx.font='bold 13px monospace'; cx.textAlign='left';
+  cx.fillText(S.flag==='yellow' ? 'CAUTION' : 'LAKE HILL 400', tx+10, ty+14);
+  for(let r=0;r<rows;r++){
+    const i = list[r], c = S.order[i], y = ty+26+r*th+th/2;
     if(c===P){ cx.fillStyle='rgba(255,210,61,0.18)'; cx.fillRect(tx+2,y-th/2+1,tw-4,th-2); }
     cx.fillStyle='#9aa3b2'; cx.font='bold 12px monospace';
     cx.fillText(String(i+1), tx+8, y);
     cx.fillStyle=colCSS(dispCol(c.col));
     cx.fillRect(tx+26, y-7, 5, 14);
     cx.fillStyle = c===P ? '#ffd23d' : '#e8ecf2'; cx.font='11px monospace';
-    cx.fillText('#'+c.num+' '+(c.isPlayer?'YOU':c.name.split(' ').pop()).slice(0,9), tx+36, y);
+    let tag = c.isPlayer ? 'YOU' : c.name.split(' ').pop();
+    if(c.pit>0) tag = 'PIT';
+    else if(c.spinT>0) tag = 'WRECK';
+    cx.fillText('#'+c.num+' '+tag.slice(0,9), tx+36, y);
   }
   // --- lap banner (top center) ---
   cx.fillStyle='rgba(8,10,16,0.72)';
@@ -1491,6 +1599,7 @@ function drawHUD(){
     cx.fillStyle='#141403'; cx.font='bold 14px monospace'; cx.textAlign='center';
     cx.fillText('PACE LAP \u2014 HOLD FORMATION', W/2, 66);
   }
+  if(S.mode==='race' && S.flag==='yellow') drawCautionBanner();
   if(S.greenT>0) drawGreenFlag();
 }
 let MMPTS=null, MMSC=0.115;
@@ -1521,6 +1630,37 @@ function drawGreenFlag(){
   cx.strokeText('GREEN GREEN GREEN!', W/2, H*0.34);
   cx.fillText('GREEN GREEN GREEN!', W/2, H*0.34);
 }
+function drawCautionBanner(){
+  const pulse = 0.72 + 0.28*Math.sin(S.t*5);
+  cx.fillStyle='rgba(235,195,20,'+pulse.toFixed(2)+')';
+  rr(W/2-118, 52, 236, 28, 7); cx.fill();
+  cx.fillStyle='#141403'; cx.font='bold 14px monospace'; cx.textAlign='center';
+  const lead = S.order[0];
+  const togo = Math.max(0, S.cautionUntilLap - (lead ? lead.lap : 0));
+  cx.fillText(togo <= 0 ? 'CAUTION — GREEN NEXT TIME BY' : 'CAUTION — FIELD SLOWED', W/2, 66);
+}
+function drawQualHUD(){
+  const P = S.player;
+  cx.fillStyle='rgba(8,10,16,0.72)';
+  rr(W/2-110, 10+SAFE.t, 220, 34, 8); cx.fill();
+  cx.fillStyle='#e8ecf2'; cx.font='bold 15px monospace'; cx.textAlign='center';
+  cx.fillText(P.lap < 0 ? 'QUALIFYING — OUT LAP' : 'QUALIFYING — FLYING LAP', W/2, 27+SAFE.t);
+  cx.fillStyle='rgba(8,10,16,0.72)';
+  rr(W/2-70, 50+SAFE.t, 140, 30, 8); cx.fill();
+  cx.font='bold 18px monospace';
+  cx.fillStyle='#7CFC9A';
+  cx.fillText(P.lap >= 0 ? fmtT(S.t - P.lapStartT) : '--:--.--', W/2, 65+SAFE.t);
+  // speed
+  const mph = Math.round(P.v*2.237);
+  const spX = W-24-SAFE.r, spY = H-152-SAFE.b;
+  cx.textAlign='right';
+  cx.font='bold 46px monospace'; cx.fillStyle='#ffffff';
+  cx.strokeStyle='rgba(0,0,0,0.7)'; cx.lineWidth=5;
+  cx.strokeText(String(mph), spX, spY);
+  cx.fillText(String(mph), spX, spY);
+  cx.font='bold 15px monospace'; cx.fillStyle='#ffd23d';
+  cx.strokeText('MPH', spX, spY+30); cx.fillText('MPH', spX, spY+30);
+}
 function showResults(){
   const el = document.getElementById('results');
   const list = document.getElementById('resList');
@@ -1544,7 +1684,7 @@ function frame(ts){
   requestAnimationFrame(frame);
   if(!last){ last=ts; return; }
   let dt = Math.min(0.25, (ts-last)/1000); last=ts;
-  if(S.mode==='race' || S.mode==='pace'){
+  if(S.mode==='race' || S.mode==='pace' || S.mode==='qual'){
     acc += dt;
     while(acc >= DT){ tick(); acc -= DT; }
     RALPHA = Math.max(0, Math.min(1, acc/DT));
@@ -1569,8 +1709,48 @@ function tick(){
   S.order = S.cars.slice().sort((a,b)=> (b.done?1e6-b.finishT:b.prog) - (a.done?1e6-a.finishT:a.prog));
   if(S.mode==='pace'){
     for(const c of S.cars) if(c.lap >= 0){          // leader took the green
-      S.mode='race'; S.greenT = 2.2;
+      S.mode='race'; S.greenT = 2.2; S.greenLockT = 12;
       break;
+    }
+  }
+  if(S.greenLockT > 0 && S.flag==='green') S.greenLockT -= DT;
+  if(S.mode==='qual' && S.player.lap >= 1){         // flying lap complete
+    S.mode='menuwait';                              // brief freeze before the race grid forms
+    setTimeout(()=> finishQualifying(S.player.lastLapT), 400);
+  }
+  // ---- AI pit strategy: under yellow on worn tires, or desperate on green ----
+  if(S.mode==='race'){
+    for(const c of S.cars){
+      if(c.isPlayer || c.done || c.pit>0 || c.spinT>0) continue;
+      c.pitReq = (S.flag==='yellow' && c.wear>0.25) || c.wear>0.7;
+    }
+  }
+  // ---- caution controller ----
+  if(S.mode==='race'){
+    if(S.flag==='green'){
+      for(const c of S.cars){
+        if(c.spinT > 0 && !c.done){                 // wreck on track → yellow
+          S.flag='yellow'; S.yellowT = 0;
+          const lead = S.order[0];
+          S.cautionUntilLap = lead.lap + 2;
+          PACE.state='lead'; PACE.lat=0; PACE.v=38;
+          PACE.s = (lead.s + 90) % TRACK.total;
+          break;
+        }
+      }
+    } else if(S.flag==='yellow'){
+      S.yellowT += DT;
+      stepPace();
+      PACE.v = 38;
+      const lead = S.order[0];
+      if(lead.lap >= S.cautionUntilLap && S.yellowT > 8){
+        // one-to-go is done: green as the leader reaches the line zone
+        let dl = (TRACK.sFinish - lead.s + TRACK.total) % TRACK.total;
+        if(dl < 60 || dl > TRACK.total-10){
+          S.flag='green'; S.greenT = 2.2; S.greenLockT = 20;
+          PACE.state='peel';
+        }
+      }
     }
   }
   if(S.greenT>0) S.greenT -= DT;
@@ -1585,6 +1765,45 @@ async function enterLandscapeFullscreen(){
     if(screen.orientation && screen.orientation.lock) await screen.orientation.lock('landscape');
   }catch(e){ /* not fatal — CSS rotate prompt covers it */ }
 }
+function startRace(){
+  document.getElementById('qSkip').style.display='none';
+  gridStart();
+  cam.pos=null;
+  S.mode='pace';
+}
+function startQualifying(){
+  // solo flying lap: out-lap run-up to the line, then one timed lap
+  S.cars = [makeCar(true, 0)];
+  S.player = S.cars[0];
+  const c = S.player;
+  const s0 = TRACK.sFinish - 220 + TRACK.total;
+  const p = TRACK.pointAt(s0);
+  c.x = p.x; c.y = p.y; c.hdg = c.vdir = p.hdg; c.s = s0 % TRACK.total;
+  c.v = 45; c.lap = -1;
+  c.px=c.x; c.py=c.y; c.phdg=c.hdg; c.ps=c.s; c.plat=c.lat;
+  S.finishOrder = []; S.order = [c];
+  S.t = 0; S.flag='green'; S.greenT = 0;
+  PACE.state = 'none';                 // no pace car on a qual run
+  cam.pos = null;
+  S.mode = 'qual';
+  document.getElementById('qSkip').style.display='block';
+}
+function finishQualifying(time){
+  // build the grid: AI times synthesized around the player's lap (skill-spread);
+  // no time (skip) puts the player at the back
+  const entries = [];
+  for(let i=1;i<FIELD;i++){
+    const skill = 0.90 + rngR()*0.085;
+    const t = (time||60) * (0.985 + (1-skill)*0.45 + rngR()*0.012);
+    entries.push({idx:i, t});
+  }
+  entries.push({idx:0, t: time || 1e9});
+  entries.sort((a,b)=>a.t-b.t);
+  S.gridOrder = entries.map(e=>e.idx);
+  S.qualPos = S.gridOrder.indexOf(0)+1;
+  startRace();
+}
+document.getElementById('qSkip').addEventListener('click', ()=> finishQualifying(null));
 document.getElementById('startBtn').addEventListener('click', async ()=>{
   await enterLandscapeFullscreen();
   if(S.tilt && window.DeviceOrientationEvent && DeviceOrientationEvent.requestPermission){
@@ -1593,10 +1812,24 @@ document.getElementById('startBtn').addEventListener('click', async ()=>{
   audioInit();
   document.getElementById('menu').style.display='none';
   document.getElementById('results').style.display='none';
-  gridStart();
-  cam.pos=null;
-  S.mode='pace';
+  S.gridOrder = null; S.qualPos = 0;
+  if(S.qual) startQualifying(); else startRace();
 });
+document.getElementById('qualTog').addEventListener('click', e=>{
+  S.qual=!S.qual; e.target.textContent='QUALIFYING: '+(S.qual?'ON':'OFF');
+});
+const bPitEl = document.getElementById('bP');
+bPitEl.addEventListener('click', ()=>{
+  const P = S.player;
+  if(!P || S.mode!=='race' || P.done) return;
+  if(P.pit===0){ P.pitReq = !P.pitReq; bPitEl.classList.toggle('pressed', P.pitReq); }
+});
+function refreshPitBtn(){
+  const P = S.player;
+  const show = S.mode==='race' && P && !P.done;
+  bPitEl.style.display = show ? 'flex' : 'none';
+  if(show) bPitEl.classList.toggle('pressed', !!(P.pitReq || P.pit));
+}
 document.getElementById('againBtn').addEventListener('click', ()=>{
   document.getElementById('results').style.display='none';
   document.getElementById('menu').style.display='flex';
@@ -1609,7 +1842,7 @@ document.getElementById('tiltTog').addEventListener('click', e=>{
   S.tilt=!S.tilt; e.target.textContent='TILT STEER: '+(S.tilt?'ON':'OFF');
 });
 document.getElementById('lapTog').addEventListener('click', e=>{
-  S.laps = S.laps===3?5:S.laps===5?10:3;
+  S.laps = S.laps===3?5:S.laps===5?10:S.laps===10?20:3;
   e.target.textContent='LAPS: '+S.laps;
 });
 let trackIdx = 0;
