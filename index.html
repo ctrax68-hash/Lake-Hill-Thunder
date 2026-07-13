@@ -412,7 +412,13 @@ function stepCar(c){
     let dIn = c.s - seg0.s0; if(dIn > TRACK.total/2) dIn -= TRACK.total;
     if(dIn > -25 && dIn < seg0.len*0.04) c.pit = 1;
   }
-  if(c.spinT > 0){
+  if(S.mode==='victory' && c.isPlayer){
+    // winner's burnout: tight donuts on the frontstretch
+    thr = 0.6; brk = 0; steerIn = 0;
+    c.hdg += 3.1*DT;
+    c.v = Math.max(7, c.v*0.985);
+    skid = Math.min(1, skid+0.25);
+  } else if(c.spinT > 0){
     // wrecked: no control, rotating slide until it scrubs off
     c.spinT -= DT;
     thr = 0; brk = 0.4; steerIn = 0;
@@ -659,26 +665,68 @@ window.addEventListener('deviceorientation', e=>{
 });
 
 /* ---------- audio ---------- */
-let AC=null, oscA=null, oscB=null, gain=null, skid=0, skidNode=null, skidGain=null;
+let AC=null, oscA=null, oscB=null, oscC=null, gain=null, skid=0, skidNode=null, skidGain=null;
+let engNzG=null, packOsc=null, packGain=null, packPan=null, crowdGain=null, NZBUF=null;
 function audioInit(){
   if(AC || !S.sound) return;
   try{
     AC = new (window.AudioContext||window.webkitAudioContext)();
     gain = AC.createGain(); gain.gain.value = 0; gain.connect(AC.destination);
+    // engine: twin detuned saws + sub square + intake-noise layer, lowpassed
     oscA = AC.createOscillator(); oscA.type='sawtooth';
     oscB = AC.createOscillator(); oscB.type='square';
+    oscC = AC.createOscillator(); oscC.type='sawtooth';
     const f = AC.createBiquadFilter(); f.type='lowpass'; f.frequency.value=900;
     const gB = AC.createGain(); gB.gain.value=0.35;
-    oscA.connect(f); oscB.connect(gB); gB.connect(f); f.connect(gain);
-    oscA.start(); oscB.start();
-    const buf = AC.createBuffer(1, AC.sampleRate*0.5, AC.sampleRate);
-    const d = buf.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
-    skidNode = AC.createBufferSource(); skidNode.buffer=buf; skidNode.loop=true;
+    const gC = AC.createGain(); gC.gain.value=0.55;
+    oscA.connect(f); oscB.connect(gB); gB.connect(f); oscC.connect(gC); gC.connect(f); f.connect(gain);
+    oscA.start(); oscB.start(); oscC.start();
+    NZBUF = AC.createBuffer(1, AC.sampleRate*0.5, AC.sampleRate);
+    const d = NZBUF.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
+    const engNz = AC.createBufferSource(); engNz.buffer=NZBUF; engNz.loop=true;
+    const bpE = AC.createBiquadFilter(); bpE.type='bandpass'; bpE.frequency.value=420; bpE.Q.value=0.7;
+    engNzG = AC.createGain(); engNzG.gain.value=0;
+    engNz.connect(bpE); bpE.connect(engNzG); engNzG.connect(gain);
+    engNz.start();
+    // skid
+    skidNode = AC.createBufferSource(); skidNode.buffer=NZBUF; skidNode.loop=true;
     const hp = AC.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=1800;
     skidGain = AC.createGain(); skidGain.gain.value=0;
     skidNode.connect(hp); hp.connect(skidGain); skidGain.connect(AC.destination);
     skidNode.start();
+    // nearest-opponent engine drone, panned to their side
+    packOsc = AC.createOscillator(); packOsc.type='sawtooth';
+    const lpP = AC.createBiquadFilter(); lpP.type='lowpass'; lpP.frequency.value=650;
+    packGain = AC.createGain(); packGain.gain.value=0;
+    packOsc.connect(lpP);
+    if(AC.createStereoPanner){ packPan = AC.createStereoPanner(); lpP.connect(packPan); packPan.connect(packGain); }
+    else lpP.connect(packGain);
+    packGain.connect(AC.destination);
+    packOsc.start();
+    // crowd bed: band-passed noise, swells on flags
+    const crowdSrc = AC.createBufferSource(); crowdSrc.buffer=NZBUF; crowdSrc.loop=true;
+    crowdSrc.playbackRate.value = 0.35;
+    const bpC = AC.createBiquadFilter(); bpC.type='bandpass'; bpC.frequency.value=850; bpC.Q.value=0.4;
+    crowdGain = AC.createGain(); crowdGain.gain.value=0;
+    crowdSrc.connect(bpC); bpC.connect(crowdGain); crowdGain.connect(AC.destination);
+    crowdSrc.start();
   }catch(e){ AC=null; }
+}
+function spotterBlip(){
+  if(!AC || !S.sound) return;
+  try{
+    const src = AC.createBufferSource(); src.buffer = NZBUF;
+    const bp = AC.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=1450; bp.Q.value=2.2;
+    const g = AC.createGain();
+    g.gain.setValueAtTime(0.06, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime+0.09);
+    src.connect(bp); bp.connect(g); g.connect(AC.destination);
+    src.start(); src.stop(AC.currentTime+0.1);
+  }catch(e){}
+}
+function spotterSay(txt){
+  S.spotTxt = txt; S.spotT = 2.2;
+  spotterBlip();
 }
 function audioTick(){
   if(!AC||!S.player) return;
@@ -689,10 +737,38 @@ function audioTick(){
   const f = 55 + rpm*165 + S.player.draftF*8;
   oscA.frequency.setTargetAtTime(f, AC.currentTime, 0.03);
   oscB.frequency.setTargetAtTime(f*0.5, AC.currentTime, 0.03);
-  const tgt = (S.mode==='race'||S.mode==='pace'||S.mode==='qual') && S.sound ? (0.05 + 0.10*(S.player.thr*0.7+rpm*0.3)) : 0;
+  oscC.frequency.setTargetAtTime(f*1.013, AC.currentTime, 0.03);
+  const live = (S.mode==='race'||S.mode==='pace'||S.mode==='qual'||S.mode==='victory') && S.sound;
+  const tgt = live ? (0.05 + 0.10*(S.player.thr*0.7+rpm*0.3)) : 0;
   gain.gain.setTargetAtTime(tgt, AC.currentTime, 0.08);
+  engNzG.gain.setTargetAtTime(live ? 0.25*S.player.thr : 0, AC.currentTime, 0.1);
   skid = Math.max(0, skid - 0.08);
   skidGain.gain.setTargetAtTime(S.sound ? skid*0.06 : 0, AC.currentTime, 0.05);
+  // nearest opponent audible when close, panned to their side
+  let near=null, nd=1e9;
+  for(const o of S.cars){ if(o===S.player) continue;
+    const d = Math.hypot(o.x-S.player.x, o.y-S.player.y);
+    if(d<nd){ nd=d; near=o; } }
+  if(near && nd < 42 && live){
+    const vo = near.v;
+    let lo2=0, hi2=gears[0];
+    for(let g=0; g<gears.length; g++){ if(vo<=gears[g]||g===gears.length-1){ hi2=gears[g]; lo2=g?gears[g-1]:0; break; } }
+    const rpm2 = 0.25 + 0.75*Math.min(1,(vo-lo2)/Math.max(1,hi2-lo2));
+    packOsc.frequency.setTargetAtTime(52 + rpm2*160, AC.currentTime, 0.05);
+    packGain.gain.setTargetAtTime((1-nd/42)*0.05, AC.currentTime, 0.08);
+    if(packPan){
+      // pan by which side they're on relative to our heading
+      const dx = near.x-S.player.x, dy = near.y-S.player.y;
+      const side = -Math.sin(S.player.hdg)*dx + Math.cos(S.player.hdg)*dy;
+      packPan.pan.setTargetAtTime(Math.max(-1, Math.min(1, side/6)), AC.currentTime, 0.1);
+    }
+  } else packGain.gain.setTargetAtTime(0, AC.currentTime, 0.15);
+  // crowd swells with the big moments
+  let crowd = 0.004;
+  if(S.greenT>0) crowd = 0.030;
+  else if(S.flag==='yellow') crowd = 0.014;
+  else if(S.mode==='victory') crowd = 0.034;
+  crowdGain.gain.setTargetAtTime(S.sound && S.mode!=='menu' ? crowd : 0, AC.currentTime, 0.4);
 }
 
 /* =====================================================================
@@ -1410,6 +1486,24 @@ function carModelMat(c){
 const cam = { pos:null, look:null };
 function updateCamera(){
   const c = S.player;
+  // broadcast flyby: sweep the grid front-to-back during the pace lap intro
+  if(S.mode==='pace' && S.t < 6.5 && S.cars.length > 1){
+    const lead = S.cars[0];
+    const f = S.t/6.5;
+    const sc = lead.s + 14 - f*(24 + S.cars.length*5.6);
+    const pC = pos3(sc, 9.0); pC[1] += 2.4;
+    const pL = pos3(sc - 7, 0); pL[1] += 1.0;
+    cam.pos = pC.slice(); cam.look = pL.slice(); cam.t = performance.now();
+    return m4lookAt(cam.pos, cam.look, [0,1,0]);
+  }
+  // victory lane: slow orbit around the winner
+  if(S.mode==='victory'){
+    const M = carModelMat(c);
+    const az = S.victoryT*0.85, r = 7.5;
+    const pos = [M[12]+Math.cos(az)*r, M[13]+2.3, M[14]+Math.sin(az)*r];
+    cam.pos = pos; cam.look = [M[12], M[13]+0.6, M[14]]; cam.t = performance.now();
+    return m4lookAt(cam.pos, cam.look, [0,1,0]);
+  }
   const M = carModelMat(c);
   const fw=[M[0],M[1],M[2]], up=[M[4],M[5],M[6]];
   const base=[M[12],M[13],M[14]];
@@ -1538,6 +1632,9 @@ function drawHUD(){
   cx.fillStyle = S.flag==='yellow' ? '#ffd23d' : '#ffd23d';
   cx.font='bold 13px monospace'; cx.textAlign='left';
   cx.fillText(S.flag==='yellow' ? 'CAUTION' : 'LAKE HILL 400', tx+10, ty+14);
+  // broadcast-style: alternate names and intervals every few seconds
+  const showGaps = S.mode==='race' && S.flag==='green' && Math.floor(S.t/5)%2===1;
+  const lapEst = (S.order[0] && S.order[0].lastLapT) || TRACK.total/48;
   for(let r=0;r<rows;r++){
     const i = list[r], c = S.order[i], y = ty+26+r*th+th/2;
     if(c===P){ cx.fillStyle='rgba(255,210,61,0.18)'; cx.fillRect(tx+2,y-th/2+1,tw-4,th-2); }
@@ -1549,6 +1646,10 @@ function drawHUD(){
     let tag = c.isPlayer ? 'YOU' : c.name.split(' ').pop();
     if(c.pit>0) tag = 'PIT';
     else if(c.spinT>0) tag = 'WRECK';
+    else if(showGaps && i>0){
+      const dp = S.order[i-1].prog - c.prog;
+      tag = dp >= 1 ? '-'+Math.floor(dp)+' LAP' : '+'+(dp*lapEst).toFixed(1);
+    } else if(showGaps && i===0) tag = 'LEADER';
     cx.fillText('#'+c.num+' '+tag.slice(0,9), tx+36, y);
   }
   // --- lap banner (top center) ---
@@ -1601,6 +1702,29 @@ function drawHUD(){
   }
   if(S.mode==='race' && S.flag==='yellow') drawCautionBanner();
   if(S.greenT>0) drawGreenFlag();
+  // milestone / fastest-lap banner pop-ups
+  if(S.msgT > 0){
+    const a = Math.min(1, S.msgT/0.4);
+    cx.fillStyle='rgba(8,10,16,'+(0.8*a)+')';
+    rr(W/2-130, H*0.20, 260, 30, 8); cx.fill();
+    cx.fillStyle='rgba(124,252,154,'+a+')'; cx.font='bold 15px monospace'; cx.textAlign='center';
+    cx.fillText(S.msgTxt, W/2, H*0.20+15);
+  }
+  if(S.mode==='victory'){
+    cx.font='bold 40px monospace'; cx.textAlign='center';
+    cx.fillStyle='#ffd23d'; cx.strokeStyle='rgba(0,0,0,0.75)'; cx.lineWidth=6;
+    cx.strokeText('CHECKERED FLAG!', W/2, H*0.28);
+    cx.fillText('CHECKERED FLAG!', W/2, H*0.28);
+  }
+  // spotter radio caption (bottom center, radio-style)
+  if(S.spotT > 0 && S.spotTxt){
+    const a = Math.min(1, S.spotT/0.4);
+    cx.font='bold 16px monospace'; cx.textAlign='center';
+    cx.fillStyle='rgba(8,10,16,'+(0.7*a)+')';
+    rr(W/2-96, H-64-SAFE.b, 192, 24, 6); cx.fill();
+    cx.fillStyle='rgba(255,180,60,'+a+')';
+    cx.fillText('« '+S.spotTxt+' »', W/2, H-52-SAFE.b);
+  }
 }
 let MMPTS=null, MMSC=0.115;
 function drawMinimap(){
@@ -1684,7 +1808,7 @@ function frame(ts){
   requestAnimationFrame(frame);
   if(!last){ last=ts; return; }
   let dt = Math.min(0.25, (ts-last)/1000); last=ts;
-  if(S.mode==='race' || S.mode==='pace' || S.mode==='qual'){
+  if(S.mode==='race' || S.mode==='pace' || S.mode==='qual' || S.mode==='victory'){
     acc += dt;
     while(acc >= DT){ tick(); acc -= DT; }
     RALPHA = Math.max(0, Math.min(1, acc/DT));
@@ -1754,7 +1878,47 @@ function tick(){
     }
   }
   if(S.greenT>0) S.greenT -= DT;
-  if(S.player.done && S.mode==='race'){ S.mode='done'; setTimeout(showResults, 900); }
+  if(S.msgT>0) S.msgT -= DT;
+  if(S.spotT>0) S.spotT -= DT;
+  // spotter: alongside calls + laps-to-go
+  if(S.mode==='race' && !S.player.done && S.player.pit===0){
+    const P2 = S.player;
+    let inside=false, outside=false;
+    for(const o of S.cars){
+      if(o===P2 || o.done || o.pit>0) continue;
+      let ds = o.s - P2.s; if(ds<-TRACK.total/2)ds+=TRACK.total; if(ds>TRACK.total/2)ds-=TRACK.total;
+      if(Math.abs(ds) < 5.5 && Math.abs(o.lat-P2.lat) < 3.4){
+        if(o.lat < P2.lat) inside=true; else outside=true;
+      }
+    }
+    if(inside && S.spotState!=='in'){ spotterSay(outside?'THREE WIDE!':'INSIDE!'); S.spotState='in'; }
+    else if(outside && !inside && S.spotState!=='out'){ spotterSay('OUTSIDE!'); S.spotState='out'; }
+    else if(!inside && !outside && (S.spotState==='in'||S.spotState==='out')){ spotterSay('CLEAR'); S.spotState='clear'; }
+    if(P2.lap === S.laps-3 && S.togoMsg!==1 && S.laps>=6){ S.togoMsg=1; spotterSay('3 TO GO'); }
+  }
+  // broadcast pop-ups: fastest lap, halfway, white flag
+  if(S.mode==='race'){
+    for(const c of S.cars){
+      if(c.lastLapT>0 && (!S.fastLap || c.lastLapT < S.fastLap - 0.005) && c.lap>=1){
+        if(S.fastLap){ S.msgTxt='FASTEST LAP — #'+c.num+' '+fmtT(c.lastLapT); S.msgT=2.6; }
+        S.fastLap = c.lastLapT;
+      }
+    }
+    const pl = S.player.lap;
+    if(pl === Math.ceil(S.laps/2) && S.halfMsg!==1 && S.laps>=4){ S.halfMsg=1; S.msgTxt='HALFWAY — LAP '+pl+' OF '+S.laps; S.msgT=2.6; }
+    if(pl === S.laps-1 && S.whiteMsg!==1){ S.whiteMsg=1; S.msgTxt='WHITE FLAG — FINAL LAP'; S.msgT=2.8; }
+  }
+  if(S.player.done && S.mode==='race'){
+    if(S.finishOrder[0]===S.player){                // winner: burnout celebration first
+      S.mode='victory'; S.victoryT = 0;
+    } else {
+      S.mode='done'; setTimeout(showResults, 900);
+    }
+  }
+  if(S.mode==='victory'){
+    S.victoryT += DT;
+    if(S.victoryT > 6){ S.mode='done'; setTimeout(showResults, 600); }
+  }
 }
 
 /* ---------- UI wiring ---------- */
@@ -1769,6 +1933,8 @@ function startRace(){
   document.getElementById('qSkip').style.display='none';
   gridStart();
   cam.pos=null;
+  S.fastLap = 0; S.halfMsg = 0; S.whiteMsg = 0; S.msgT = 0; S.msgTxt = '';
+  S.spotT = 0; S.spotTxt = ''; S.spotState = 'clear'; S.togoMsg = 0;
   S.mode='pace';
 }
 function startQualifying(){
