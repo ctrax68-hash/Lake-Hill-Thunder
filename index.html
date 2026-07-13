@@ -883,25 +883,31 @@ function addNumber(B, num, put, w, h, col){
    198in x 75in x 51in, 110in wheelbase, 60in angled spoiler.
    ===================================================================== */
 const TX = 512;
-/* loft stations: [x, halfWidth, yTop, yLow] */
+/* loft stations: [x, halfWidth, yTop, yLow] — Gen-4 stock car silhouette:
+   low wide nose, fender bulges over both axles (x=±1.395), pinched
+   greenhouse, long raked windshield, fastback rear glass, long flat deck. */
 const CAR_ST = [
-  [ 2.51, 0.55, 0.47, 0.10],
-  [ 2.28, 0.79, 0.57, 0.10],
-  [ 1.75, 0.88, 0.68, 0.13],
-  [ 1.40, 0.94, 0.74, 0.15],
-  [ 0.95, 0.91, 0.81, 0.17],
-  [ 0.68, 0.90, 0.86, 0.18],
-  [ 0.30, 0.87, 1.10, 0.185],
-  [-0.05, 0.83, 1.29, 0.19],
-  [-0.95, 0.82, 1.28, 0.20],
-  [-1.40, 0.94, 1.08, 0.21],
-  [-1.78, 0.90, 0.955,0.21],
-  [-2.51, 0.80, 0.93, 0.16]
+  [ 2.51, 0.68, 0.43, 0.13],   // bumper cap (low sloped nose)
+  [ 2.34, 0.80, 0.51, 0.11],
+  [ 2.04, 0.88, 0.61, 0.11],   // nose fascia
+  [ 1.70, 0.92, 0.685,0.12],   // fender leading edge
+  [ 1.40, 0.95, 0.735,0.14],   // front axle — fender bulge (full 75in width)
+  [ 1.05, 0.93, 0.795,0.16],
+  [ 0.68, 0.91, 0.855,0.175],  // cowl / windshield base
+  [ 0.34, 0.875,1.075,0.18],   // windshield mid (long rake)
+  [ 0.02, 0.835,1.275,0.185],  // A-pillar top
+  [-0.60, 0.825,1.295,0.195],  // roof (51in peak)
+  [-1.00, 0.84, 1.255,0.20],   // fastback glass start
+  [-1.40, 0.95, 1.055,0.205],  // rear axle — quarter-panel bulge
+  [-1.75, 0.92, 0.965,0.205],  // deck start
+  [-2.10, 0.885,0.945,0.19],
+  [-2.34, 0.845,0.935,0.17],
+  [-2.51, 0.76, 0.92, 0.15]    // tail (spoiler base)
 ];
 /* ring cross-section fractions: [heightFrac, widthFrac] bottom-right→top→bottom-left */
 const RINGF = [
-  [0.00,0.74],[0.10,0.95],[0.30,1.00],[0.55,1.00],[0.78,0.90],[0.95,0.55],[1.00,0.20],
-  [1.00,-0.20],[0.95,-0.55],[0.78,-0.90],[0.55,-1.00],[0.30,-1.00],[0.10,-0.95],[0.00,-0.74]
+  [0.00,0.76],[0.09,0.96],[0.28,1.00],[0.56,0.99],[0.80,0.885],[0.94,0.58],[1.00,0.22],
+  [1.00,-0.22],[0.94,-0.58],[0.80,-0.885],[0.56,-0.99],[0.28,-1.00],[0.09,-0.96],[0.00,-0.76]
 ];
 const NK = RINGF.length;
 function carU(x){ return 0.02 + (2.51 - x)/5.02 * 0.76; }   // nose 0.02 → tail 0.78
@@ -1045,7 +1051,37 @@ function drawNum(c2, num, cx2, cy2, hgt, fill, outline, rot, flipX, flipY){
   draw(0, fill);
   c2.restore();
 }
-function paintLivery(c2, body, accent, num, pace){
+/* ---- 3x5 pixel font (rows top→bottom, 3-bit masks) for sponsor wordmarks ---- */
+const FONT35 = {
+  A:[2,5,7,5,5], B:[6,5,6,5,6], C:[3,4,4,4,3], D:[6,5,5,5,6], E:[7,4,6,4,7],
+  F:[7,4,6,4,4], G:[3,4,5,5,3], H:[5,5,7,5,5], I:[7,2,2,2,7], J:[1,1,1,5,2],
+  K:[5,6,4,6,5], L:[4,4,4,4,7], M:[5,7,7,5,5], N:[6,5,5,5,5], O:[2,5,5,5,2],
+  P:[6,5,6,4,4], Q:[2,5,5,6,3], R:[6,5,6,6,5], S:[3,4,2,1,6], T:[7,2,2,2,2],
+  U:[5,5,5,5,7], V:[5,5,5,5,2], W:[5,5,7,7,5], X:[5,5,2,5,5], Y:[5,5,2,2,2],
+  Z:[7,1,2,4,7], ' ':[0,0,0,0,0], '-':[0,0,7,0,0], '.':[0,0,0,0,2]
+};
+function drawWord(c2, txt, cx2, cy2, cell, color, rot, flipX){
+  const wGlyph = 4*cell, tw = txt.length*wGlyph - cell;
+  c2.save();
+  c2.translate(cx2, cy2);
+  if(rot) c2.rotate(rot);
+  if(flipX) c2.transform(-1,0,0,1,0,0);
+  c2.fillStyle = color;
+  let x = -tw/2;
+  for(const ch of txt){
+    const g = FONT35[ch] || FONT35[' '];
+    for(let r=0;r<5;r++) for(let b=0;b<3;b++)
+      if(g[r] & (4>>b)) c2.fillRect(x+b*cell, -2.5*cell+r*cell, cell+0.35, cell+0.35);
+    x += wGlyph;
+  }
+  c2.restore();
+}
+const SPONSORS = ['LAKE HILL','TALON OIL','REDLINE COLA','IRONWOOD','COMET FUEL',
+                  'STAMPEDE','NORTHSTAR','VULCAN TOOLS','CASCADE BREW','BLUE PEAK'];
+const ACCENT2 = [[0.97,0.97,0.97],[0.10,0.10,0.12],[0.95,0.78,0.12],[0.85,0.20,0.15],
+                 [0.15,0.40,0.80],[0.10,0.60,0.35],[0.90,0.45,0.10],[0.55,0.25,0.65]];
+function mixC(a,b,t){ return [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t]; }
+function paintLivery(c2, body, accent, num, pace, idx){
   const u=(f)=>f*TX, v=(f)=>f*TX;
   const rgb=(a,m)=>'rgb('+Math.round(a[0]*255*(m||1))+','+Math.round(a[1]*255*(m||1))+','+Math.round(a[2]*255*(m||1))+')';
   // base + vertical panel shading (baked light: roof bright, rockers dark)
@@ -1057,12 +1093,51 @@ function paintLivery(c2, body, accent, num, pace){
   const U0=u(0.02), U1=u(0.78);
   if(!pace){
     // stripe package (accent): twin side stripes + hood/deck runners
-    c2.fillStyle=rgb(accent);
-    c2.fillRect(U0, v(0.145), U1-U0, v(0.030));
-    c2.fillRect(U0, v(0.205), U1-U0, v(0.014));
-    c2.fillRect(U0, v(0.825), U1-U0, v(0.030));
-    c2.fillRect(U0, v(0.781), U1-U0, v(0.014));
-    c2.fillRect(u(0.05), v(0.470), u(0.24), v(0.060));            // hood center band
+    const style = (idx||0) % 4;
+    const acc2 = ACCENT2[((idx||0)*3+1) % ACCENT2.length];
+    if(style===0){
+      // twin side stripes + hood band (classic)
+      c2.fillStyle=rgb(accent);
+      c2.fillRect(U0, v(0.145), U1-U0, v(0.030));
+      c2.fillRect(U0, v(0.205), U1-U0, v(0.014));
+      c2.fillRect(U0, v(0.825), U1-U0, v(0.030));
+      c2.fillRect(U0, v(0.781), U1-U0, v(0.014));
+      c2.fillRect(u(0.05), v(0.470), u(0.24), v(0.060));
+    } else if(style===1){
+      // forward slash: skewed accent band sweeping down across the sides
+      c2.save();
+      c2.transform(1, 0, -0.55, 1, 0, 0);
+      c2.fillStyle=rgb(accent);
+      c2.fillRect(u(0.46), 0, u(0.09), TX);
+      c2.fillStyle=rgb(acc2);
+      c2.fillRect(u(0.57), 0, u(0.028), TX);
+      c2.restore();
+      c2.fillStyle=rgb(accent);
+      c2.fillRect(U0, v(0.145), U1-U0, v(0.016));
+      c2.fillRect(U0, v(0.839), U1-U0, v(0.016));
+    } else if(style===2){
+      // two-tone: rear half fades to accent in stepped bands
+      for(let sBand=0;sBand<4;sBand++){
+        c2.fillStyle=rgb(mixC(body, accent, 0.25+sBand*0.25), 0.96);
+        const x0 = 0.40 + sBand*0.028;
+        const w2 = sBand<3 ? 0.028 : (0.78-x0);
+        for(const [vy,vh] of [[0.052,0.248],[0.70,0.248]]){
+          c2.fillRect(u(x0), v(vy), u(w2), v(vh));
+        }
+      }
+      c2.fillStyle=rgb(acc2);
+      c2.fillRect(u(0.40), v(0.052), u(0.010), v(0.896));
+    } else {
+      // halo: accent roof + nose cap + twin pinstripes
+      c2.fillStyle=rgb(accent);
+      c2.fillRect(U0, v(0.40), u(0.10), v(0.20));                  // hood front wash
+      c2.fillRect(u(0.36), v(0.435), u(0.185), v(0.13));           // roof panel
+      c2.fillStyle=rgb(acc2);
+      c2.fillRect(U0, v(0.160), U1-U0, v(0.012));
+      c2.fillRect(U0, v(0.196), U1-U0, v(0.012));
+      c2.fillRect(U0, v(0.828), U1-U0, v(0.012));
+      c2.fillRect(U0, v(0.792), U1-U0, v(0.012));
+    }
   }
   // rocker + seam dark
   c2.fillStyle='rgb(18,18,20)';
@@ -1076,9 +1151,9 @@ function paintLivery(c2, body, accent, num, pace){
     }
   }
   // ---- glass ----
-  const uWS0=u(carU(0.68)), uWS1=u(carU(-0.05));
-  const uSG0=u(carU(0.42)), uSG1=u(carU(-0.90));
-  const uRG0=u(carU(-0.95)), uRG1=u(carU(-1.78));
+  const uWS0=u(carU(0.68)), uWS1=u(carU(0.02));
+  const uSG0=u(carU(0.30)), uSG1=u(carU(-0.95));
+  const uRG0=u(carU(-1.00)), uRG1=u(carU(-1.75));
   c2.fillStyle='rgb(16,20,30)';
   c2.fillRect(uWS0, v(0.30), uWS1-uWS0, v(0.40));                 // windshield
   c2.fillRect(uRG0, v(0.30), uRG1-uRG0, v(0.40));                 // rear glass
@@ -1114,37 +1189,54 @@ function paintLivery(c2, body, accent, num, pace){
   if(!pace){
     const white='rgb(250,250,250)', dark='rgb(10,10,12)';
     // roof: authentic NASCAR — top of digits toward driver (left) side,
-    // reads for a viewer on the car's right; sideways from the chase cam
-    drawNum(c2, num, u((carU(0.30)+carU(-0.40))/2), v(0.50), u(0.115), white, dark, Math.PI, false, false);
+    // reads for a viewer on the car's right; sideways from the chase cam.
+    // Centered on the roof panel proper (between windshield end and rear glass).
+    drawNum(c2, num, u(carU(-0.49)), v(0.50), u(0.105), white, dark, Math.PI, false, false);
     // right door (v<0.5): unwrap flips both axes vs viewer → 180°
     drawNum(c2, num, u(carU(-0.10)), v(0.225), v(0.135), white, dark, Math.PI, false, false);
     // left door (v>0.5): upright
     drawNum(c2, num, u(carU(-0.10)), v(0.775), v(0.135), white, dark, 0, false, false);
-    // contingency decal rows on both front fenders (small sponsor squares)
-    const DEC=[[218,52,42],[238,198,44],[64,110,214],[240,240,240],[46,168,92],[236,120,30]];
-    for(const vv of [[0.115,0.20],[0.80,0.885]]){
-      for(let i=0;i<6;i++){
+    // ---- sponsor wordmarks (fictional, 3x5 pixel font) ----
+    const short = SPONSORS[(idx||0) % SPONSORS.length].split(' ')[0];
+    const lumA = accent[0]*0.5+accent[1]*0.4+accent[2]*0.1;
+    const wcol = lumA > 0.5 ? rgb(accent) : 'rgb(248,248,248)';
+    // rear quarters, high on the panel so the 3D tires don't occlude
+    drawWord(c2, short, u(carU(-2.02)), v(0.262), v(0.012), wcol, Math.PI, false);
+    drawWord(c2, short, u(carU(-2.02)), v(0.738), v(0.012), wcol, 0, false);
+    // hood + deck: text runs laterally, tops toward the nose (read from ahead)
+    drawWord(c2, short, u(carU(1.35)), v(0.50), v(0.016), wcol, -Math.PI/2, false);
+    drawWord(c2, short, u(carU(-2.10)), v(0.50), v(0.012), wcol, -Math.PI/2, false);
+    // contingency decal rows on both front fenders (white-bordered chips)
+    const DEC=[[218,52,42],[238,198,44],[64,110,214],[240,240,240],[46,168,92],[236,120,30],[150,60,200],[40,180,190]];
+    for(const vv of [0.105, 0.79]){
+      for(let i=0;i<8;i++){
+        const dx2 = u(carU(2.05)) + (i%4)*14, dy2 = v(vv) + Math.floor(i/4)*14;
+        c2.fillStyle='rgb(240,240,240)'; c2.fillRect(dx2, dy2, 12, 12);
         c2.fillStyle='rgb('+DEC[i][0]+','+DEC[i][1]+','+DEC[i][2]+')';
-        c2.fillRect(u(carU(2.0))+ (i%3)*13, v(vv[0]) + Math.floor(i/3)*13, 10, 10);
+        c2.fillRect(dx2+1, dy2+1, 10, 10);
       }
     }
   }
-  // ---- nose island: valance, grille, headlight decals ----
+  // ---- nose island: the cap fan only samples v ≈ NI[1]±0.04, u ≈ NI[0]±0.065 ----
   const NI=[0.845,0.24];
-  c2.fillStyle=rgb(body,0.96); c2.fillRect(u(NI[0]-0.045), v(NI[1]-0.21), u(0.09), v(0.42));
-  c2.fillStyle='rgb(10,10,12)';
-  c2.fillRect(u(NI[0]-0.042), v(NI[1]+0.075), u(0.084), v(0.095));   // grille+valance (low = +v)
+  c2.fillStyle=rgb(body,0.96); c2.fillRect(u(NI[0]-0.07), v(NI[1]-0.06), u(0.14), v(0.12));
+  if(!pace){ c2.fillStyle=rgb(accent);
+    c2.fillRect(u(NI[0]-0.068), v(NI[1]-0.040), u(0.136), v(0.016)); }  // upper accent stripe
   c2.fillStyle='rgb(232,232,225)';
-  c2.fillRect(u(NI[0]-0.038), v(NI[1]-0.010), u(0.030), v(0.055));   // headlight L decal
-  c2.fillRect(u(NI[0]+0.008), v(NI[1]-0.010), u(0.030), v(0.055));   // headlight R decal
-  if(!pace){ c2.fillStyle=rgb(accent); c2.fillRect(u(NI[0]-0.042), v(NI[1]-0.150), u(0.084), v(0.045)); }
-  // ---- tail island: taillight band ----
-  const TI=[0.845,0.74];
-  c2.fillStyle=rgb(body,0.9); c2.fillRect(u(TI[0]-0.045), v(TI[1]-0.21), u(0.09), v(0.42));
-  c2.fillStyle='rgb(120,14,12)';
-  c2.fillRect(u(TI[0]-0.040), v(TI[1]-0.045), u(0.080), v(0.050));   // taillight decal band
+  c2.fillRect(u(NI[0]-0.052), v(NI[1]-0.018), u(0.038), v(0.036));   // headlight L decal
+  c2.fillRect(u(NI[0]+0.014), v(NI[1]-0.018), u(0.038), v(0.036));   // headlight R decal
   c2.fillStyle='rgb(10,10,12)';
-  c2.fillRect(u(TI[0]-0.042), v(TI[1]+0.075), u(0.084), v(0.085));   // rear valance
+  c2.fillRect(u(NI[0]-0.058), v(NI[1]+0.026), u(0.116), v(0.013));   // grille slot (low = +v)
+  // ---- tail island: cap fan samples v ≈ TI[1]±0.103 ----
+  const TI=[0.845,0.74];
+  c2.fillStyle=rgb(body,0.9); c2.fillRect(u(TI[0]-0.07), v(TI[1]-0.12), u(0.14), v(0.24));
+  c2.fillStyle='rgb(120,14,12)';
+  c2.fillRect(u(TI[0]-0.062), v(TI[1]-0.008), u(0.124), v(0.042));   // taillight decal band
+  c2.fillStyle='rgb(10,10,12)';
+  c2.fillRect(u(TI[0]-0.066), v(TI[1]+0.045), u(0.132), v(0.052));   // rear valance
+  // small number decal above the taillight band
+  if(!pace) drawNum(c2, num, u(TI[0]), v(TI[1]-0.055), v(0.055),
+                    'rgb(250,250,250)', 'rgb(10,10,12)', 0, false, false);
   // ---- swatches (geometry parts sample these) ----
   const swp=(sw,cl)=>{ c2.fillStyle=cl; c2.fillRect(u(sw[0]-0.035), v(sw[1]-0.045), u(0.07), v(0.09)); };
   swp(SW.tire,'rgb(14,14,15)'); swp(SW.rim,'rgb(52,52,56)'); swp(SW.chrome,'rgb(185,188,195)');
@@ -1158,7 +1250,7 @@ function buildCarTexture(car, pace){
   const body = pace ? [0.93,0.93,0.95] : car.col;
   const lum = body[0]*0.5+body[1]*0.4+body[2]*0.1;
   const accent = pace ? [0.9,0.6,0.1] : (lum > 0.5 ? [0.06,0.06,0.08] : [0.97,0.97,0.97]);
-  paintLivery(c2, body, accent, pace?0:car.num, !!pace);
+  paintLivery(c2, body, accent, pace?0:car.num, !!pace, pace?0:(car.idx||0));
   const tex = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, tex);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv2);
