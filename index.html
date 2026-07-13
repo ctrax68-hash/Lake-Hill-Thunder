@@ -389,7 +389,7 @@ function stepCar(c){
     thr = input.gas ? 1 : 0; brk = input.brake ? 1 : 0;
     steerIn = (input.left?-1:0) + (input.right?1:0);
     if(S.tilt) steerIn = Math.max(-1, Math.min(1, S.tiltG/22));
-    steerIn *= 1 - 0.55*Math.min(1, c.v/85);       // calm the wheel at speed
+    steerIn *= 1 - 0.10*Math.min(1, c.v/85);       // calm the wheel at speed (full lock must still reach the corner grip limit)
   } else {
     const vT = targetSpeed(c) * (c.done?0.55:1);
     const pHere = TRACK.pointAt(c.s);
@@ -568,7 +568,7 @@ function audioInit(){
 function audioTick(){
   if(!AC||!S.player) return;
   const v = S.player.v;
-  const gears=[11,21,32,56]; let lo=0, hi=gears[0];
+  const gears=[14,26,40,70]; let lo=0, hi=gears[0];
   for(let g=0; g<gears.length; g++){ if(v<=gears[g]||g===gears.length-1){ hi=gears[g]; lo=g?gears[g-1]:0; break; } }
   const rpm = 0.25 + 0.75*Math.min(1,(v-lo)/Math.max(1,hi-lo));
   const f = 55 + rpm*165 + S.player.draftF*8;
@@ -1307,6 +1307,11 @@ function rr(x,y,w,h,r){ cx.beginPath();
   cx.moveTo(x+r,y); cx.arcTo(x+w,y,x+w,y+h,r); cx.arcTo(x+w,y+h,x,y+h,r);
   cx.arcTo(x,y+h,x,y,r); cx.arcTo(x,y,x+w,y,r); cx.closePath(); }
 function colCSS(c){ return `rgb(${Math.round(c[0]*255)},${Math.round(c[1]*255)},${Math.round(c[2]*255)})`; }
+function dispCol(c){                 // lift near-black car colors so UI chips/text stay visible on dark panels
+  const l = 0.299*c[0] + 0.587*c[1] + 0.114*c[2];
+  if(l >= 0.22) return c;
+  return [c[0]+(1-c[0])*0.5, c[1]+(1-c[1])*0.5, c[2]+(1-c[2])*0.5];
+}
 function drawHUD(){
   cx.clearRect(0,0,W,H);
   if(S.mode==='menu') return;
@@ -1324,7 +1329,7 @@ function drawHUD(){
     if(c===P){ cx.fillStyle='rgba(255,210,61,0.18)'; cx.fillRect(tx+2,y-th/2+1,tw-4,th-2); }
     cx.fillStyle='#9aa3b2'; cx.font='bold 12px monospace';
     cx.fillText(String(i+1), tx+8, y);
-    cx.fillStyle=colCSS(c.col);
+    cx.fillStyle=colCSS(dispCol(c.col));
     cx.fillRect(tx+26, y-7, 5, 14);
     cx.fillStyle = c===P ? '#ffd23d' : '#e8ecf2'; cx.font='11px monospace';
     cx.fillText('#'+c.num+' '+(c.isPlayer?'YOU':c.name.split(' ').pop()).slice(0,9), tx+36, y);
@@ -1346,7 +1351,7 @@ function drawHUD(){
   cx.fillStyle='#7CFC9A'; cx.fillText(fmtT(P.bestLapT), rx+58, 46+SAFE.t);
   // --- speed (bottom center-right, big MPH like NT2003) ---
   const mph = Math.round(P.v*2.237);
-  const spX = W-118-SAFE.r, spY = H-58-SAFE.b;
+  const spX = W-24-SAFE.r, spY = H-152-SAFE.b;   // above the GAS/BRAKE cluster (buttons top out ~H-110)
   cx.textAlign='right';
   cx.font='bold 46px monospace'; cx.fillStyle='#ffffff';
   cx.strokeStyle='rgba(0,0,0,0.7)'; cx.lineWidth=5;
@@ -1391,7 +1396,7 @@ function drawMinimap(){
   MMPTS.forEach((p,i)=>{ const X=ox+p[0]*sc, Y=oy+p[1]*sc*0.9; i?cx.lineTo(X,Y):cx.moveTo(X,Y); });
   cx.closePath(); cx.stroke();
   for(const c of S.cars){
-    cx.fillStyle = c.isPlayer ? '#ffd23d' : colCSS(c.col);
+    cx.fillStyle = c.isPlayer ? '#ffd23d' : colCSS(dispCol(c.col));
     cx.beginPath(); cx.arc(ox+c.x*sc, oy+c.y*sc*0.9, c.isPlayer?3.4:2.4, 0, Math.PI*2); cx.fill();
   }
 }
@@ -1412,7 +1417,7 @@ function showResults(){
   order.forEach((c,i)=>{
     const d = document.createElement('div');
     d.className = 'resRow' + (c.isPlayer?' me':'');
-    d.innerHTML = `<span>${i+1}.</span><span style="color:${colCSS(c.col)}">#${c.num}</span>`+
+    d.innerHTML = `<span>${i+1}.</span><span style="color:${colCSS(dispCol(c.col))}">#${c.num}</span>`+
                   `<span>${c.name}</span><span>${fmtT(c.bestLapT)}</span>`;
     list.appendChild(d);
   });
