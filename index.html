@@ -92,7 +92,7 @@
 
 <button id="qSkip" class="mbtn" style="display:none; position:fixed; top:14px; left:50%;
   transform:translateX(-50%); z-index:6; min-width:150px; padding:8px 14px; font-size:13px;">SKIP QUALIFYING</button>
-<button id="bP" class="ctl" style="display:none; left:14px; bottom:104px; width:88px; height:44px;
+<button id="bP" class="ctl" style="display:none; right:112px; bottom:98px; width:88px; height:44px;
   font-size:15px; background:rgba(180,140,20,0.4);">PIT</button>
 
 <div id="rotate"><div class="phone"></div><p>ROTATE YOUR PHONE</p></div>
@@ -291,7 +291,8 @@ function makeCar(isPlayer, idx){
     lapStartT:0, lastLapT:0, bestLapT:0,
     pitch:0,
     spinT:0, spinDir:1, spinCd:0,
-    pit:0, pitT:0, pitReq:false
+    pit:0, pitT:0, pitReq:false,
+    fuel:1, dmg:0, out:false
   };
 }
 
@@ -406,11 +407,16 @@ const DT = 0.02;
 function stepCar(c){
   let thr, brk, steerIn;
   if(c.spinCd > 0) c.spinCd -= DT;
+  if(c.dmgCd > 0) c.dmgCd -= DT;
   // arm pit entry as the car reaches the frontstretch
-  if(c.pitReq && c.pit===0 && !c.done && c.spinT<=0){
+  if((c.pitReq || c.dtPending) && c.pit===0 && !c.done && !c.out && c.spinT<=0){
     const seg0 = TRACK.segs[0];
     let dIn = c.s - seg0.s0; if(dIn > TRACK.total/2) dIn -= TRACK.total;
-    if(dIn > -25 && dIn < seg0.len*0.04) c.pit = 1;
+    if(dIn > -25 && dIn < seg0.len*0.04){
+      // drive-through penalties are served under green, normal stops any time
+      if(c.dtPending && !c.pitReq){ if(S.flag==='green') c.pit = 4; }
+      else c.pit = 1;
+    }
   }
   if(S.mode==='victory' && c.isPlayer){
     // winner's burnout: tight donuts on the frontstretch
@@ -418,6 +424,17 @@ function stepCar(c){
     c.hdg += 3.1*DT;
     c.v = Math.max(7, c.v*0.985);
     skid = Math.min(1, skid+0.25);
+  } else if(c.out){
+    // DNF: limp to the infield apron and park
+    const lane = -9.5;
+    const LAo = Math.max(8, c.v*0.62);
+    const pTo = TRACK.pointAt(c.s + LAo);
+    const txo = pTo.x - Math.sin(pTo.hdg)*lane, tyo = pTo.y + Math.cos(pTo.hdg)*lane;
+    let dHo = Math.atan2(tyo-c.y, txo-c.x) - c.hdg;
+    while(dHo> Math.PI) dHo-=2*Math.PI; while(dHo<-Math.PI) dHo+=2*Math.PI;
+    const cFo = TRACK.pointAt(c.s + Math.max(6, c.v*0.3)).curv;
+    steerIn = Math.max(-1, Math.min(1, (c.v*cFo)/Math.max(0.05, c.v*0.24) + dHo*1.4));
+    thr = 0; brk = c.lat < -7 ? 0.9 : 0.25;        // coast down, brake once off the surface
   } else if(c.spinT > 0){
     // wrecked: no control, rotating slide until it scrubs off
     c.spinT -= DT;
@@ -434,10 +451,18 @@ function stepCar(c){
     if(c.pit===1){
       let ds = sStall - c.s; if(ds<-TRACK.total/2)ds+=TRACK.total; if(ds>TRACK.total/2)ds-=TRACK.total;
       vT = Math.min(22, Math.max(0, ds*0.35));
-      if(ds < 2.0 && c.v < 0.8){ c.pit=2; c.pitT=4; }
+      if(ds < 2.0 && c.v < 0.8){
+        c.pit=2;
+        c.pitT = 4 + (c.fuel<0.3 ? 2 : 0) + (c.dmg>0.3 ? 3 : 0);   // tires + fuel fill + repairs
+      }
     } else if(c.pit===2){
       vT = 0; c.pitT -= DT;
-      if(c.pitT<=0){ c.wear=0; c.pit=3; }
+      if(c.pitT<=0){ c.wear=0; c.fuel=1; c.dmg=Math.max(0, c.dmg-0.5); c.blown=false; c.pit=3; }
+    } else if(c.pit===4){
+      // drive-through penalty: pit-road speed the whole lane, no stop
+      vT = 22;
+      let de2 = sOut - c.s; if(de2<-TRACK.total/2)de2+=TRACK.total; if(de2>TRACK.total/2)de2-=TRACK.total;
+      if(de2 < 4){ c.pit=0; c.pitReq=false; c.dtPending=false; }
     } else {
       vT = 22;
       let de = sOut - c.s; if(de<-TRACK.total/2)de+=TRACK.total; if(de>TRACK.total/2)de-=TRACK.total;
@@ -499,6 +524,7 @@ function stepCar(c){
     steerIn = (input.left?-1:0) + (input.right?1:0);
     if(S.tilt) steerIn = Math.max(-1, Math.min(1, S.tiltG/22));
     steerIn *= 1 - 0.10*Math.min(1, c.v/85);       // calm the wheel at speed (full lock must still reach the corner grip limit)
+    steerIn += c.dmg*0.02;                         // bent bodywork pulls gently toward the wall
     if(S.mode==='race' && S.flag==='yellow' && c.v > 42){ thr = 0; brk = Math.max(brk, 0.5); }  // forced pacing
   } else {
     const vT = targetSpeed(c) * (c.done?0.55:1);
@@ -547,13 +573,17 @@ function stepCar(c){
   const off = Math.abs(c.lat);
   const onGrass = off > TRACK.halfW + 0.4 && c.lat < 0 && c.pit===0;  // infield side only; pit lane is paved apron
   const bank = TRACK.bankAt(c.s);
-  const muSurf = (onGrass ? 0.72 : 1.0) * (1 - 0.12*c.wear);
-  const muEff = CAR.mu * muSurf + CAR.dfK * c.v * c.v * (c.dirty?0.85:1);
+  const muSurf = (onGrass ? 0.72 : 1.0) * (1 - 0.12*c.wear) * (c.blown ? 0.7 : 1);
+  if(c.blown && c.v > 30) c.v = Math.max(30, c.v - 18*DT);   // flat tire: crawl to pit road
+  const muEff = CAR.mu * muSurf + CAR.dfK * c.v * c.v * (c.dirty?0.85:1) * (1 - 0.35*c.dmg);
 
-  const dragMod = (1 - 0.25*c.draftF) * (c.dirty ? 1.10 : 1);
+  // fuel burn (~1/13 tank per Thunder lap flat-out; empty tank sputters)
+  c.fuel = Math.max(0, c.fuel - c.thr*c.v*DT*5e-5);
+  const dragMod = (1 - 0.25*c.draftF) * (c.dirty ? 1.10 : 1) * (1 + 0.5*c.dmg);
   const drag = 0.5*RHO*CAR.cdA*c.v*c.v*dragMod;
   const roll = CAR.roll + (onGrass ? 900 : 0);
-  const engF = c.thr * Math.min(CAR.maxForce, CAR.power/Math.max(4,c.v)) * (onGrass?0.75:1);
+  const engF = c.thr * Math.min(CAR.maxForce, CAR.power/Math.max(4,c.v))
+             * (onGrass?0.75:1) * (1 - 0.3*c.dmg) * (c.fuel>0 ? 1 : 0.25);
   const brkF = c.brk * CAR.brakeForce * muSurf;
   let a = (engF - drag - roll*Math.sign(c.v||1) - brkF*(c.v>0?1:0)) / CAR.mass;
   c.v = Math.max(0, c.v + a*DT);
@@ -570,6 +600,7 @@ function stepCar(c){
     yaw = Math.sign(wantYaw) * maxYaw;
     c.v = Math.max(0, c.v - (demand-cap)*0.16*DT);
     c.wear = Math.min(1, c.wear + 0.00012);
+    c.slipFx = 1;                                   // tire smoke hook
     if(c.isPlayer) skid = Math.min(1, skid+0.3);
   }
   c.wear = Math.min(1, c.wear + Math.abs(yaw)*c.v*0.0000004);
@@ -584,7 +615,13 @@ function stepCar(c){
     const nx = -Math.sin(p2.hdg), ny = Math.cos(p2.hdg);
     const excess = Math.abs(p2.lat) - WALL_LAT;
     c.x -= nx*Math.sign(p2.lat)*excess; c.y -= ny*Math.sign(p2.lat)*excess;
+    const vLost = c.v*0.28;
     c.v *= 0.72; c.hdg = p2.hdg + (c.hdg-p2.hdg)*0.3; c.vdir = c.hdg;
+    if((c.dmgCd||0) <= 0){                        // damage once per incident, not per pinned tick
+      c.dmg = Math.min(1, c.dmg + Math.min(0.12, vLost*0.005));
+      c.dmgCd = 0.6;
+    }
+    c.hitFx = Math.min(1, (c.hitFx||0) + vLost*0.06);      // particle/audio hook
     if(c.isPlayer) S.shakeT = 0.35;
   }
 
@@ -615,6 +652,17 @@ function collide(){
       b.v = Math.max(0, b.v - 0.3*closeMag);
       a.hdg += ny*0.008*(a.isPlayer?1:2); b.hdg -= ny*0.008;
       if(a.isPlayer||b.isPlayer) S.shakeT=Math.max(S.shakeT,0.15);
+      // body damage from contact: harder on the faster (hitting) car's nose
+      const cv2 = Math.abs(a.v - b.v);
+      if(cv2 > 3){
+        const hitter = a.v > b.v ? a : b, victim2 = a.v > b.v ? b : a;
+        if((hitter.dmgCd||0) <= 0){               // once per incident — rubbing is racing
+          hitter.dmg  = Math.min(1, hitter.dmg  + Math.min(0.08, cv2*0.003));
+          victim2.dmg = Math.min(1, victim2.dmg + Math.min(0.05, cv2*0.002));
+          hitter.dmgCd = 0.6; victim2.dmgCd = 0.6;
+        }
+        hitter.hitFx = Math.min(1, (hitter.hitFx||0) + cv2*0.04);
+      }
       // hard contact can turn the slower car around (green-flag racing only,
       // and not in the bunched-up window right after a start/restart)
       const closingV = Math.abs(a.v - b.v);
@@ -703,6 +751,12 @@ function audioInit(){
     else lpP.connect(packGain);
     packGain.connect(AC.destination);
     packOsc.start();
+    // drafting wind whoosh
+    const draftSrc = AC.createBufferSource(); draftSrc.buffer=NZBUF; draftSrc.loop=true;
+    const bpD = AC.createBiquadFilter(); bpD.type='bandpass'; bpD.frequency.value=1200; bpD.Q.value=0.5;
+    draftGain = AC.createGain(); draftGain.gain.value=0;
+    draftSrc.connect(bpD); bpD.connect(draftGain); draftGain.connect(AC.destination);
+    draftSrc.start();
     // crowd bed: band-passed noise, swells on flags
     const crowdSrc = AC.createBufferSource(); crowdSrc.buffer=NZBUF; crowdSrc.loop=true;
     crowdSrc.playbackRate.value = 0.35;
@@ -711,6 +765,31 @@ function audioInit(){
     crowdSrc.connect(bpC); bpC.connect(crowdGain); crowdGain.connect(AC.destination);
     crowdSrc.start();
   }catch(e){ AC=null; }
+}
+let draftGain=null, lastHitFx=0, lastBlown=false;
+function playThump(sev){
+  if(!AC || !S.sound) return;
+  try{
+    const src = AC.createBufferSource(); src.buffer = NZBUF;
+    const lp = AC.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=200;
+    const g = AC.createGain();
+    g.gain.setValueAtTime(Math.min(0.28, 0.10+sev*0.18), AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime+0.22);
+    src.connect(lp); lp.connect(g); g.connect(AC.destination);
+    src.start(); src.stop(AC.currentTime+0.25);
+  }catch(e){}
+}
+function playBang(){
+  if(!AC || !S.sound) return;
+  try{
+    const src = AC.createBufferSource(); src.buffer = NZBUF;
+    const bp = AC.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=320; bp.Q.value=0.8;
+    const g = AC.createGain();
+    g.gain.setValueAtTime(0.3, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime+0.35);
+    src.connect(bp); bp.connect(g); g.connect(AC.destination);
+    src.start(); src.stop(AC.currentTime+0.4);
+  }catch(e){}
 }
 function spotterBlip(){
   if(!AC || !S.sound) return;
@@ -769,6 +848,14 @@ function audioTick(){
   else if(S.flag==='yellow') crowd = 0.014;
   else if(S.mode==='victory') crowd = 0.034;
   crowdGain.gain.setTargetAtTime(S.sound && S.mode!=='menu' ? crowd : 0, AC.currentTime, 0.4);
+  // drafting wind: louder the tighter the tow
+  if(draftGain) draftGain.gain.setTargetAtTime(
+    live ? S.player.draftF*0.035*Math.min(1, S.player.v/50) : 0, AC.currentTime, 0.15);
+  // impact thumps + blowout bang (player-relative)
+  if(S.player.hitFx > lastHitFx + 0.15) playThump(S.player.hitFx);
+  lastHitFx = S.player.hitFx || 0;
+  if(S.player.blown && !lastBlown) playBang();
+  lastBlown = !!S.player.blown;
 }
 
 /* =====================================================================
@@ -867,11 +954,11 @@ PROG = makeProg(`
   }`, `
   precision mediump float;
   varying vec3 vCol; varying float vFog; varying float vLit; varying vec2 vUV;
-  uniform sampler2D uTex; uniform float uUseTex;
+  uniform sampler2D uTex; uniform float uUseTex; uniform float uAlpha;
   void main(){
     vec3 fogC = vec3(0.72, 0.80, 0.90);
     vec3 base = (uUseTex > 0.5) ? texture2D(uTex, vUV).rgb * vLit : vCol;
-    gl_FragColor = vec4(mix(base, fogC, vFog*0.85), 1.0);
+    gl_FragColor = vec4(mix(base, fogC, vFog*0.85), uAlpha);
   }`);
 SKYPROG = makeProg(`
   attribute vec2 aP; varying float vY;
@@ -1482,6 +1569,86 @@ function carModelMat(c){
   return m4fromBasis(fw, upF, right, [P.x, h, P.y]);
 }
 
+/* ---------- particles (render-only: tire smoke, sparks, engine smoke) ---------- */
+const rngP = mulberry32(4242);
+const PARTS = [];
+function spawnP(x,y,z, vx,vy,vz, life, size, col){
+  if(PARTS.length > 220) PARTS.shift();
+  PARTS.push({x,y,z,vx,vy,vz,life,age:0,size,col});
+}
+function emitFX(dt){
+  if(S.mode==='menu' || S.mode==='menuwait') return;
+  for(const c of S.cars){
+    if(!c.slipFx && !c.hitFx && !(c.dmg>0.6)) continue;
+    const M = carModelMat(c);
+    const bx=M[12], by=M[13], bz=M[14];
+    if(c.slipFx > 0){                                 // tire smoke off the rear
+      for(let i=0;i<2;i++) if(rngP() < 0.7)
+        spawnP(bx - M[0]*1.7 + (rngP()-0.5), by+0.2, bz - M[2]*1.7 + (rngP()-0.5),
+          (rngP()-0.5)*2, 0.8+rngP()*0.8, (rngP()-0.5)*2, 0.55+rngP()*0.3, 0.17, [0.78,0.78,0.81]);
+      c.slipFx = Math.max(0, c.slipFx - dt*3.5);
+    }
+    if(c.hitFx > 0){                                  // impact burst: sparks + gray puffs
+      for(let i=0;i<4;i++){
+        const spark = rngP() < 0.6;
+        spawnP(bx+(rngP()-0.5)*1.6, by+0.4+rngP()*0.5, bz+(rngP()-0.5)*1.6,
+          (rngP()-0.5)*8, 1+rngP()*4, (rngP()-0.5)*8,
+          spark ? 0.3+rngP()*0.2 : 0.55+rngP()*0.35,
+          spark ? 0.07 : 0.16,
+          spark ? [1.0,0.82,0.35] : [0.60,0.60,0.62]);
+      }
+      c.hitFx = Math.max(0, c.hitFx - dt*2.5);
+    }
+    if(c.dmg > 0.6 && !c.out && c.v > 5 && rngP() < 0.4){   // wounded engine smoke trail
+      spawnP(bx + M[0]*1.9, by+0.65, bz + M[2]*1.9,
+        (rngP()-0.5), 0.7+rngP()*0.7, (rngP()-0.5), 0.9, 0.15, [0.38,0.38,0.40]);
+    }
+  }
+  for(let i=PARTS.length-1;i>=0;i--){
+    const p=PARTS[i]; p.age+=dt;
+    if(p.age>=p.life){ PARTS.splice(i,1); continue; }
+    p.x+=p.vx*dt; p.y+=p.vy*dt; p.z+=p.vz*dt;
+    p.vy += (p.size<0.15 ? -9.5 : 1.5)*dt;            // sparks fall, smoke rises
+    p.vx*=0.96; p.vz*=0.96;
+  }
+}
+let PBUF=null;
+function drawParticles(view, U, A){
+  if(!PARTS.length) return;
+  const pos=[], nrm=[], col=[], uv=[];
+  const R=[view[0],view[4],view[8]], Up=[view[1],view[5],view[9]];
+  for(const p of PARTS){
+    const g = 1 - p.age/p.life;
+    let s = p.size;
+    if(p.size >= 0.1) s *= 1 + p.age*1.3;             // smoke grows gently
+    s *= Math.min(1, g*3);                            // shrink out at end of life
+    const cA=[p.x - R[0]*s - Up[0]*s, p.y - R[1]*s - Up[1]*s, p.z - R[2]*s - Up[2]*s];
+    const cB=[p.x + R[0]*s - Up[0]*s, p.y + R[1]*s - Up[1]*s, p.z + R[2]*s - Up[2]*s];
+    const cC=[p.x + R[0]*s + Up[0]*s, p.y + R[1]*s + Up[1]*s, p.z + R[2]*s + Up[2]*s];
+    const cD=[p.x - R[0]*s + Up[0]*s, p.y - R[1]*s + Up[1]*s, p.z - R[2]*s + Up[2]*s];
+    for(const q of [cA,cB,cC, cA,cC,cD]){
+      pos.push(q[0],q[1],q[2]); nrm.push(0,1,0);
+      col.push(p.col[0],p.col[1],p.col[2],1); uv.push(-1,-1);
+    }
+  }
+  if(!PBUF) PBUF = { pos:gl.createBuffer(), nrm:gl.createBuffer(), col:gl.createBuffer(), uv:gl.createBuffer() };
+  const up=(b,arr)=>{ gl.bindBuffer(gl.ARRAY_BUFFER,b); gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(arr),gl.DYNAMIC_DRAW); };
+  up(PBUF.pos,pos); up(PBUF.nrm,nrm); up(PBUF.col,col); up(PBUF.uv,uv);
+  gl.uniformMatrix4fv(U('uModel'), false, m4ident());
+  gl.uniform3f(U('uPaint'), 1,1,1);
+  gl.uniform1f(U('uUseTex'), 0);
+  gl.uniform1f(U('uAlpha'), 0.38);
+  gl.bindTexture(gl.TEXTURE_2D, WHITE_TEX);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.depthMask(false);
+  const bindA=(b,name,n)=>{ gl.bindBuffer(gl.ARRAY_BUFFER,b);
+    gl.enableVertexAttribArray(A(name)); gl.vertexAttribPointer(A(name),n,gl.FLOAT,false,0,0); };
+  bindA(PBUF.pos,'aPos',3); bindA(PBUF.nrm,'aNrm',3); bindA(PBUF.col,'aCol',4); bindA(PBUF.uv,'aUV',2);
+  gl.drawArrays(gl.TRIANGLES, 0, pos.length/3);
+  gl.depthMask(true); gl.disable(gl.BLEND);
+  gl.uniform1f(U('uAlpha'), 1.0);
+}
+
 /* ---------- chase camera ---------- */
 const cam = { pos:null, look:null };
 function updateCamera(){
@@ -1573,6 +1740,7 @@ function drawGL(){
     gl.uniformMatrix4fv(U('uModel'), false, model);
     gl.uniform3f(U('uPaint'), paint[0], paint[1], paint[2]);
     gl.uniform1f(U('uUseTex'), tex ? 1 : 0);
+    gl.uniform1f(U('uAlpha'), 1.0);
     gl.bindTexture(gl.TEXTURE_2D, tex || WHITE_TEX);
     gl.bindBuffer(gl.ARRAY_BUFFER, m.pos);
     gl.enableVertexAttribArray(A('aPos'));
@@ -1598,6 +1766,7 @@ function drawGL(){
     if(!CARBUFS.pace) CARBUFS.pace = { mesh: buildCarMesh(0, true), tex: buildCarTexture(PACE, true) };
     drawMesh(CARBUFS.pace.mesh, carModelMat(PACE), [0.93,0.93,0.95], CARBUFS.pace.tex);
   }
+  drawParticles(view, U, A);
 }
 
 /* ---------- HUD (2D overlay, NT2003 broadcast style) ---------- */
@@ -1644,7 +1813,8 @@ function drawHUD(){
     cx.fillRect(tx+26, y-7, 5, 14);
     cx.fillStyle = c===P ? '#ffd23d' : '#e8ecf2'; cx.font='11px monospace';
     let tag = c.isPlayer ? 'YOU' : c.name.split(' ').pop();
-    if(c.pit>0) tag = 'PIT';
+    if(c.out) tag = 'OUT';
+    else if(c.pit>0) tag = 'PIT';
     else if(c.spinT>0) tag = 'WRECK';
     else if(showGaps && i>0){
       const dp = S.order[i-1].prog - c.prog;
@@ -1677,15 +1847,21 @@ function drawHUD(){
   cx.fillText(String(mph), spX, spY);
   cx.font='bold 15px monospace'; cx.fillStyle='#ffd23d';
   cx.strokeText('MPH', spX, spY+30); cx.fillText('MPH', spX, spY+30);
-  // --- tire wear bar + DRAFT flag ---
-  const bw=110, bx=W/2-bw/2, by=H-26-SAFE.b;
+  // --- tire / fuel / damage bars + DRAFT flag ---
+  const bw=110, bx=W/2-bw/2, byBase=H-14-SAFE.b, rowH=13;
   cx.textAlign='left';
-  cx.fillStyle='rgba(8,10,16,0.6)'; rr(bx-46,by-9,bw+52,18,6); cx.fill();
-  cx.fillStyle='#9aa3b2'; cx.font='10px monospace'; cx.fillText('TIRE', bx-40, by);
-  cx.fillStyle='#2a2f3a'; cx.fillRect(bx,by-5,bw,10);
+  cx.fillStyle='rgba(8,10,16,0.6)'; rr(bx-46,byBase-3*rowH-4,bw+52,3*rowH+8,6); cx.fill();
+  const bar=(row,label,frac,col)=>{
+    const y = byBase - (3-row)*rowH + rowH/2 - 2;
+    cx.fillStyle='#9aa3b2'; cx.font='9px monospace'; cx.fillText(label, bx-40, y);
+    cx.fillStyle='#2a2f3a'; cx.fillRect(bx,y-4,bw,8);
+    cx.fillStyle=col; cx.fillRect(bx,y-4,bw*Math.max(0,Math.min(1,frac)),8);
+  };
   const wr = 1-P.wear;
-  cx.fillStyle = wr>0.5 ? '#7CFC9A' : wr>0.25 ? '#ffd23d' : '#ff5544';
-  cx.fillRect(bx,by-5,bw*wr,10);
+  bar(1,'TIRE', wr, wr>0.5 ? '#7CFC9A' : wr>0.25 ? '#ffd23d' : '#ff5544');
+  bar(2,'FUEL', P.fuel, P.fuel>0.3 ? '#57a7ff' : P.fuel>0.12 ? '#ffd23d' : '#ff5544');
+  const dOK = 1-P.dmg;
+  bar(3,'CAR',  dOK, dOK>0.6 ? '#7CFC9A' : dOK>0.3 ? '#ffd23d' : '#ff5544');
   if(P.draftF>0.05){
     cx.fillStyle='rgba(60,190,90,'+(0.55+0.4*P.draftF)+')';
     rr(W/2-42, 52, 84, 24, 6); cx.fill();
@@ -1716,14 +1892,15 @@ function drawHUD(){
     cx.strokeText('CHECKERED FLAG!', W/2, H*0.28);
     cx.fillText('CHECKERED FLAG!', W/2, H*0.28);
   }
-  // spotter radio caption (bottom center, radio-style)
+  // spotter radio caption (above the status bars)
   if(S.spotT > 0 && S.spotTxt){
     const a = Math.min(1, S.spotT/0.4);
     cx.font='bold 16px monospace'; cx.textAlign='center';
+    const cw = Math.max(200, S.spotTxt.length*11 + 60);
     cx.fillStyle='rgba(8,10,16,'+(0.7*a)+')';
-    rr(W/2-96, H-64-SAFE.b, 192, 24, 6); cx.fill();
+    rr(W/2-cw/2, H-98-SAFE.b, cw, 24, 6); cx.fill();
     cx.fillStyle='rgba(255,180,60,'+a+')';
-    cx.fillText('« '+S.spotTxt+' »', W/2, H-52-SAFE.b);
+    cx.fillText('« '+S.spotTxt+' »', W/2, H-86-SAFE.b);
   }
 }
 let MMPTS=null, MMSC=0.115;
@@ -1789,12 +1966,15 @@ function showResults(){
   const el = document.getElementById('results');
   const list = document.getElementById('resList');
   list.innerHTML='';
-  const order = S.finishOrder.concat(S.order.filter(c=>!c.done));
+  const order = S.finishOrder
+    .concat(S.order.filter(c=>!c.done && !c.out))
+    .concat(S.order.filter(c=>!c.done && c.out));      // DNFs classified last
   order.forEach((c,i)=>{
     const d = document.createElement('div');
     d.className = 'resRow' + (c.isPlayer?' me':'');
+    const res = c.out ? 'DNF' : fmtT(c.bestLapT);
     d.innerHTML = `<span>${i+1}.</span><span style="color:${colCSS(dispCol(c.col))}">#${c.num}</span>`+
-                  `<span>${c.name}</span><span>${fmtT(c.bestLapT)}</span>`;
+                  `<span>${c.name}</span><span>${res}</span>`;
     list.appendChild(d);
   });
   document.getElementById('resTitle').textContent =
@@ -1814,6 +1994,7 @@ function frame(ts){
     RALPHA = Math.max(0, Math.min(1, acc/DT));
   }
   if(S.shakeT>0) S.shakeT = Math.max(0, S.shakeT-dt);
+  emitFX(dt);
   audioTick();
   if(S.mode!=='menu') drawGL();
   drawHUD();
@@ -1842,11 +2023,30 @@ function tick(){
     S.mode='menuwait';                              // brief freeze before the race grid forms
     setTimeout(()=> finishQualifying(S.player.lastLapT), 400);
   }
-  // ---- AI pit strategy: under yellow on worn tires, or desperate on green ----
+  // ---- AI pit strategy: yellow on worn tires/low fuel, or desperate on green ----
   if(S.mode==='race'){
     for(const c of S.cars){
-      if(c.isPlayer || c.done || c.pit>0 || c.spinT>0) continue;
-      c.pitReq = (S.flag==='yellow' && c.wear>0.25) || c.wear>0.7;
+      if(c.isPlayer || c.done || c.out || c.pit>0 || c.spinT>0) continue;
+      c.pitReq = (S.flag==='yellow' && (c.wear>0.25 || c.fuel<0.5))
+               || c.wear>0.7 || c.fuel<0.18 || (c.dmg>0.45 && c.dmg<1);
+    }
+  }
+  // ---- blowouts and DNFs ----
+  if(S.mode==='race' || S.mode==='victory'){
+    for(const c of S.cars){
+      if(c.done || c.out || c.pit>0) continue;
+      // worn-out tire can let go
+      if(c.wear > 0.92 && c.spinT<=0 && c.v > 25 && rngR() < 0.0004){
+        c.spinT = 1.8; c.spinDir = rngR()<0.5?-1:1; c.spinCd = 10;
+        c.blown = true;
+        c.hitFx = 1;
+        if(c.isPlayer) spotterSay('FLAT TIRE — PIT NOW!');
+      }
+      // terminal damage: pull off and park (DNF)
+      if(c.dmg >= 1 && !c.out){
+        c.out = true;
+        if(c.isPlayer) spotterSay('TOO MUCH DAMAGE — WE’RE DONE');
+      }
     }
   }
   // ---- caution controller ----
@@ -1859,6 +2059,7 @@ function tick(){
           S.cautionUntilLap = lead.lap + 2;
           PACE.state='lead'; PACE.lat=0; PACE.v=38;
           PACE.s = (lead.s + 90) % TRACK.total;
+          S.yellowRank = S.order.indexOf(S.player);  // race-control snapshot
           break;
         }
       }
@@ -1866,6 +2067,16 @@ function tick(){
       S.yellowT += DT;
       stepPace();
       PACE.v = 38;
+      // race control: player improving position under yellow (vs. non-pitting cars) = penalty
+      if(S.yellowT > 3 && !S.player.dtPending && S.player.pit===0 && !S.player.done){
+        const rank = S.order.indexOf(S.player);
+        const pittersAhead = S.order.slice(0, S.yellowRank).filter(c=>c.pit>0 || c.out).length;
+        if(rank < S.yellowRank - pittersAhead - 0){
+          S.player.dtPending = true;
+          S.msgTxt = 'PENALTY — PASSED UNDER YELLOW'; S.msgT = 3.2;
+          spotterSay('PENALTY — DRIVE-THROUGH');
+        }
+      }
       const lead = S.order[0];
       if(lead.lap >= S.cautionUntilLap && S.yellowT > 8){
         // one-to-go is done: green as the leader reaches the line zone
@@ -1895,6 +2106,9 @@ function tick(){
     else if(outside && !inside && S.spotState!=='out'){ spotterSay('OUTSIDE!'); S.spotState='out'; }
     else if(!inside && !outside && (S.spotState==='in'||S.spotState==='out')){ spotterSay('CLEAR'); S.spotState='clear'; }
     if(P2.lap === S.laps-3 && S.togoMsg!==1 && S.laps>=6){ S.togoMsg=1; spotterSay('3 TO GO'); }
+    if(P2.fuel < 0.15 && S.fuelMsg!==1){ S.fuelMsg=1; spotterSay('FUEL LOW — PIT SOON'); }
+    if(P2.wear > 0.85 && S.tireMsg!==1){ S.tireMsg=1; spotterSay('TIRES ARE GONE'); }
+    if(P2.dmg > 0.6 && S.dmgMsg!==1){ S.dmgMsg=1; spotterSay('HEAVY DAMAGE — PIT FOR REPAIRS'); }
   }
   // broadcast pop-ups: fastest lap, halfway, white flag
   if(S.mode==='race'){
@@ -1914,6 +2128,9 @@ function tick(){
     } else {
       S.mode='done'; setTimeout(showResults, 900);
     }
+  }
+  if(S.player.out && S.mode==='race' && S.player.v < 1){   // player DNF: race over once parked
+    S.mode='done'; setTimeout(showResults, 1200);
   }
   if(S.mode==='victory'){
     S.victoryT += DT;
@@ -1935,6 +2152,7 @@ function startRace(){
   cam.pos=null;
   S.fastLap = 0; S.halfMsg = 0; S.whiteMsg = 0; S.msgT = 0; S.msgTxt = '';
   S.spotT = 0; S.spotTxt = ''; S.spotState = 'clear'; S.togoMsg = 0;
+  S.fuelMsg = 0; S.tireMsg = 0; S.penaltyT = 0;
   S.mode='pace';
 }
 function startQualifying(){
