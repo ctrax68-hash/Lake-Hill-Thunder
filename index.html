@@ -399,7 +399,16 @@ function stepCar(c){
       let ds = o.s - c.s; if(ds<-TRACK.total/2) ds+=TRACK.total; if(ds>TRACK.total/2) ds-=TRACK.total;
       if(ds>0 && ds<26 && Math.abs(o.lat-c.lat)<2.4 && ds<bd){ bd=ds; blocker=o; } }
     if(blocker){
-      if(c.passT<=0){ c.passSide = (blocker.lat > 0 ? -1 : 1); c.passT = 2.5; }
+      if(c.passT<=0){
+        let side = blocker.lat > 0.3 ? -1 : (blocker.lat < -0.3 ? 1 : (c.passSide || 1));
+        const tryLat = Math.max(-3.6, Math.min(3.6, blocker.lat + side*3.4));
+        const laneTaken = S.cars.some(o=>{
+          if(o===c || o===blocker) return false;
+          let ds2 = o.s - c.s; if(ds2<-TRACK.total/2) ds2+=TRACK.total; if(ds2>TRACK.total/2) ds2-=TRACK.total;
+          return ds2>-4 && ds2<26 && Math.abs(o.lat-tryLat)<2.4;
+        });
+        c.passSide = laneTaken ? -side : side; c.passT = 2.5;
+      }
       lane = Math.max(-3.6, Math.min(3.6, blocker.lat + c.passSide*3.4));
     }
     if(c.passT>0){ c.passT -= DT; }
@@ -409,7 +418,7 @@ function stepCar(c){
     let dHdg = Math.atan2(ty-c.y, tx-c.x) - c.hdg;
     while(dHdg> Math.PI) dHdg-=2*Math.PI; while(dHdg<-Math.PI) dHdg+=2*Math.PI;
     const curvFF = TRACK.pointAt(c.s + Math.max(6, c.v*0.3)).curv;
-    const muNow = CAR.mu + CAR.dfK*c.v*c.v;        // downforce-aware steering budget
+    const muNow = CAR.mu*(1-0.12*c.wear) + CAR.dfK*c.v*c.v;  // downforce- and wear-aware steering budget
     const yawLim = Math.min(1.3, Math.max(0.05, c.v*0.24),
                    cornerCap(muNow, TRACK.bankAt(c.s+10))/Math.max(3,c.v)*1.15);
     const ff = (c.v*curvFF)/Math.max(0.05, yawLim);
@@ -491,8 +500,9 @@ function collide(){
       const nx=dx/d, ny=dy/d, push=(min-d)/2;
       a.x-=nx*push; a.y-=ny*push; b.x+=nx*push; b.y+=ny*push;
       const dvel=(a.v-b.v)*0.25;
-      a.v = Math.max(0, a.v - Math.abs(dvel)*0.6 - 0.4);
-      b.v = Math.max(0, b.v - 0.3);
+      const closeMag = Math.min(1, Math.abs(dvel)/1.0);
+      a.v = Math.max(0, a.v - Math.abs(dvel)*0.6 - 0.4*closeMag);
+      b.v = Math.max(0, b.v - 0.3*closeMag);
       a.hdg += ny*0.008*(a.isPlayer?1:2); b.hdg -= ny*0.008;
       if(a.isPlayer||b.isPlayer) S.shakeT=Math.max(S.shakeT,0.15);
     }
@@ -558,7 +568,7 @@ function audioInit(){
 function audioTick(){
   if(!AC||!S.player) return;
   const v = S.player.v;
-  const gears=[14,26,40,70]; let lo=0, hi=gears[0];
+  const gears=[11,21,32,56]; let lo=0, hi=gears[0];
   for(let g=0; g<gears.length; g++){ if(v<=gears[g]||g===gears.length-1){ hi=gears[g]; lo=g?gears[g-1]:0; break; } }
   const rpm = 0.25 + 0.75*Math.min(1,(v-lo)/Math.max(1,hi-lo));
   const f = 55 + rpm*165 + S.player.draftF*8;
