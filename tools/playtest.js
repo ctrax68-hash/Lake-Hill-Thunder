@@ -22,6 +22,7 @@ const { chromium } = require('playwright');
 
 const ROOT = path.join(__dirname, '..');
 const SHOTS = process.argv.includes('--shots');
+const TRACK_ARG = (process.argv.find(a => a.startsWith('--track=')) || '--track=0').split('=')[1] | 0;
 const EXE = process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.png': 'image/png', '.json': 'application/json' };
@@ -46,6 +47,7 @@ const server = http.createServer((req, res) => {
   page.on('pageerror', err => console.error('PAGE ERROR:', err.message));
   await page.goto(`http://localhost:${port}/index.html`);
   await page.waitForTimeout(400);
+  await page.evaluate(i => { if (typeof selectTrack === 'function') selectTrack(i); }, TRACK_ARG);
   await page.click('#startBtn');
   await page.waitForTimeout(300);
 
@@ -68,10 +70,21 @@ const server = http.createServer((req, res) => {
         let ds = ahead.s - c.s; if (ds < -TRACK.total / 2) ds += TRACK.total; if (ds > TRACK.total / 2) ds -= TRACK.total;
         input.gas = ds > 9; input.brake = ds < 5;
       } else {
-        const cA = TRACK.pointAt(c.s + c.v * 0.55).curv;
-        const tight = Math.abs(cA) > 1e-6 && 1 / Math.abs(cA) < 130;
-        input.gas = !(tight && c.v > 67.5);
-        input.brake = false;
+        // grip-aware pedal: lift when the corner ahead demands more lateral
+        // accel than the (downforce-boosted, banked) cap provides; brake if
+        // the overshoot is large (short tracks)
+        const sA = c.s + c.v * 0.55;
+        const pA = TRACK.pointAt(sA);
+        input.gas = true; input.brake = false;
+        if (Math.abs(pA.curv) > 1e-6) {
+          const R = 1 / Math.abs(pA.curv);
+          const mu = 1 + 0.00016 * c.v * c.v;
+          const tb = Math.tan(TRACK.bankAt(sA));
+          const cap = 9.81 * (mu + tb) / Math.max(0.25, 1 - mu * tb);
+          const need = c.v * c.v / R;
+          if (need > cap * 0.92) input.gas = false;
+          if (need > cap * 1.18) input.brake = true;
+        }
       }
     };
   });
