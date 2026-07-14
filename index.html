@@ -1215,7 +1215,9 @@ const CAR_ST = [
   [ 0.34, 0.875,0.917,0.18, 1.10 ],  // windshield mid — belt keeps rising gently, roof rakes up
   [ 0.02, 0.835,0.942,0.185,1.22 ],  // A-pillar top
   [-0.60, 0.825,0.992,0.195,1.26 ],  // roof peak — more window/cabin presence
-  [-1.00, 0.84, 1.023,0.20, 1.22 ],  // fastback glass start
+  [-1.00, 0.91, 1.023,0.20, 1.22 ],  // fastback glass start — kept close to the rear
+                                      // axle/deck width so the quarter panel doesn't
+                                      // pinch in right next to the wheel
   [-1.40, 0.95, 1.055,0.205,1.055],  // rear axle — quarter-panel bulge, belt/roof rejoin
   [-1.75, 0.92, 1.02, 0.205,1.02 ],  // deck start (flatter, taller deck per era proportions)
   [-2.10, 0.885,0.99, 0.19, 0.99 ],
@@ -1230,12 +1232,6 @@ const RINGF = [
 const NK = RINGF.length;
 function carU(x){ return 0.02 + (2.51 - x)/5.02 * 0.76; }   // nose 0.02 → tail 0.78
 function carV(k){ return 0.03 + k/(NK-1) * 0.94; }
-// wheel arch relief: the fender loft is a plain revolved tube with no real cutout,
-// so its outboard peak (z=w at RINGF's widest point) can reach past the wheel's
-// inboard face and poke through the wheel disc near the hub. Recede the lower-
-// outboard ring points near each axle so the body clears the wheel cleanly —
-// this also reads as a shaped arch instead of a flat slab over the tire.
-const WHEEL_AXLE_X = [1.40, -1.40], WHEEL_NOTCH_Z = 0.60, WHEEL_NOTCH_RANGE = 0.40;
 // heightFrac at/below this rides the beltline curve (yLow -> beltY); above it
 // rides the roof rise (beltY -> roofY). 0.80 matches RINGF's k=4, right where
 // the side-glass band starts, so the glass sits exactly where the roof rise begins.
@@ -1244,20 +1240,9 @@ function ringPts(st){
   const [x,w,beltY,yL,roofY]=st;
   return RINGF.map(f=>{
     const hf=f[0];
-    const py = hf<=SHOULDER ? yL+(hf/SHOULDER)*(beltY-yL)
-                            : beltY+((hf-SHOULDER)/(1-SHOULDER))*(roofY-beltY);
+    let py = hf<=SHOULDER ? yL+(hf/SHOULDER)*(beltY-yL)
+                          : beltY+((hf-SHOULDER)/(1-SHOULDER))*(roofY-beltY);
     let pz = f[1]*w;
-    // stop at the shoulder (k=4, hf=0.80): notching that point too pulls in the
-    // beltline/character-line crease itself, which reads as a dent right above
-    // the wheel now that the beltline is a straight line. Only the true rocker/
-    // lower-fender points below it need to recede to clear the wheel.
-    for(const wx of hf < 0.70 ? WHEEL_AXLE_X : []){
-      const dx = Math.abs(x-wx);
-      if(dx < WHEEL_NOTCH_RANGE && Math.abs(pz) > WHEEL_NOTCH_Z){
-        const t = 1 - dx/WHEEL_NOTCH_RANGE;
-        pz += (Math.sign(pz)*WHEEL_NOTCH_Z - pz)*t;
-      }
-    }
     return [x, py, pz];
   });
 }
