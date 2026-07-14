@@ -282,17 +282,29 @@ function cornerCap(mu, bank){
 /* ---------- roster / cars ---------- */
 const rng = mulberry32(12345);
 const rngR = mulberry32(999);        // runtime events (qual spread, spins) — separate stream
+/* ---- era-correct Gen-4 body palette: every car's base color is one of these ---- */
+const CAR_PALETTE = {
+  red:   [0.7529,0.0000,0.0000],   // #C00000
+  blue:  [0.0000,0.2196,0.9412],   // #0038F0
+  yellow:[0.9686,0.8314,0.0000],   // #F7D400
+  black: [0.1200,0.1200,0.1300],   // near-black (pure #000 reads as a texture void)
+  white: [0.9500,0.9500,0.9600],   // near-white (pure #FFF blows out under GL lighting)
+  silver:[0.7843,0.7843,0.7843],   // #C8C8C8
+  orange:[1.0000,0.4784,0.0000],   // #FF7A00
+  green: [0.0392,0.5608,0.0000],   // #0A8F00
+  purple:[0.3529,0.1725,0.6275]    // #5A2CA0
+};
 const ROSTER = [
-  {name:'B. HOLLISTER', num:28, col:[0.89,0.23,0.18]}, {name:'D. MCCREADY', num:7,  col:[0.18,0.49,0.89]},
-  {name:'R. LAFONTAINE',num:44, col:[0.22,0.70,0.29]}, {name:'T. VANCE',    num:3,  col:[0.09,0.09,0.10]},
-  {name:'C. DELGADO',   num:91, col:[0.94,0.66,0.09]}, {name:'W. STROUD',   num:15, col:[0.56,0.27,0.68]},
-  {name:'E. KOWALSKI',  num:62, col:[0.05,0.71,0.65]}, {name:'J. WHITFIELD',num:5,  col:[0.85,0.85,0.87]},
-  {name:'M. OKONKWO',   num:12, col:[0.75,0.12,0.55]}, {name:'A. CERVANTES',num:18, col:[0.95,0.45,0.10]},
-  {name:'P. LINDQVIST', num:24, col:[0.15,0.25,0.55]}, {name:'G. THIBODEAUX',num:31,col:[0.45,0.60,0.20]},
-  {name:'H. NAKAGAWA',  num:37, col:[0.60,0.10,0.12]}, {name:'S. MCALLISTER',num:48,col:[0.20,0.55,0.85]},
-  {name:'D. FONTAINE',  num:53, col:[0.90,0.75,0.50]}, {name:'K. BRENNAN',  num:66, col:[0.30,0.30,0.34]},
-  {name:'V. ROSSI',     num:73, col:[0.80,0.65,0.10]}, {name:'L. HARGROVE', num:82, col:[0.10,0.45,0.40]},
-  {name:'C. BJORNSTAD', num:88, col:[0.55,0.75,0.90]}
+  {name:'B. HOLLISTER', num:28, col:CAR_PALETTE.red},    {name:'D. MCCREADY', num:7,  col:CAR_PALETTE.blue},
+  {name:'R. LAFONTAINE',num:44, col:CAR_PALETTE.green},  {name:'T. VANCE',    num:3,  col:CAR_PALETTE.black},
+  {name:'C. DELGADO',   num:91, col:CAR_PALETTE.orange}, {name:'W. STROUD',   num:15, col:CAR_PALETTE.purple},
+  {name:'E. KOWALSKI',  num:62, col:CAR_PALETTE.blue},   {name:'J. WHITFIELD',num:5,  col:CAR_PALETTE.white},
+  {name:'M. OKONKWO',   num:12, col:CAR_PALETTE.purple}, {name:'A. CERVANTES',num:18, col:CAR_PALETTE.orange},
+  {name:'P. LINDQVIST', num:24, col:CAR_PALETTE.blue},   {name:'G. THIBODEAUX',num:31,col:CAR_PALETTE.green},
+  {name:'H. NAKAGAWA',  num:37, col:CAR_PALETTE.red},    {name:'S. MCALLISTER',num:48,col:CAR_PALETTE.silver},
+  {name:'D. FONTAINE',  num:53, col:CAR_PALETTE.yellow}, {name:'K. BRENNAN',  num:66, col:CAR_PALETTE.black},
+  {name:'V. ROSSI',     num:73, col:CAR_PALETTE.yellow}, {name:'L. HARGROVE', num:82, col:CAR_PALETTE.green},
+  {name:'C. BJORNSTAD', num:88, col:CAR_PALETTE.silver}
 ];
 const FIELD = ROSTER.length + 1;      // 19 AI + player
 function makeCar(isPlayer, idx){
@@ -1193,15 +1205,15 @@ const CAR_ST = [
   [ 1.70, 0.92, 0.685,0.12],   // fender leading edge
   [ 1.40, 0.95, 0.735,0.14],   // front axle — fender bulge (full 75in width)
   [ 1.05, 0.93, 0.795,0.16],
-  [ 0.68, 0.91, 0.855,0.175],  // cowl / windshield base
+  [ 0.68, 0.91, 0.89, 0.175],  // cowl / windshield base
   [ 0.34, 0.875,1.075,0.18],   // windshield mid (long rake)
   [ 0.02, 0.835,1.275,0.185],  // A-pillar top
   [-0.60, 0.825,1.295,0.195],  // roof (51in peak)
   [-1.00, 0.84, 1.255,0.20],   // fastback glass start
   [-1.40, 0.95, 1.055,0.205],  // rear axle — quarter-panel bulge
-  [-1.75, 0.92, 0.965,0.205],  // deck start
-  [-2.10, 0.885,0.945,0.19],
-  [-2.34, 0.845,0.935,0.17],
+  [-1.75, 0.92, 1.02, 0.205],  // deck start (flatter, taller deck per era proportions)
+  [-2.10, 0.885,0.99, 0.19],
+  [-2.34, 0.845,0.955,0.17],
   [-2.51, 0.76, 0.92, 0.15]    // tail (spoiler base)
 ];
 /* ring cross-section fractions: [heightFrac, widthFrac] bottom-right→top→bottom-left */
@@ -1378,22 +1390,36 @@ function drawWord(c2, txt, cx2, cy2, cell, color, rot, flipX){
 }
 const SPONSORS = ['LAKE HILL','TALON OIL','REDLINE COLA','IRONWOOD','COMET FUEL',
                   'STAMPEDE','NORTHSTAR','VULCAN TOOLS','CASCADE BREW','BLUE PEAK'];
-const ACCENT2 = [[0.97,0.97,0.97],[0.10,0.10,0.12],[0.95,0.78,0.12],[0.85,0.20,0.15],
-                 [0.15,0.40,0.80],[0.10,0.60,0.35],[0.90,0.45,0.10],[0.55,0.25,0.65]];
+const ACCENT2 = [CAR_PALETTE.white, CAR_PALETTE.black, CAR_PALETTE.yellow, CAR_PALETTE.red,
+                 CAR_PALETTE.blue, CAR_PALETTE.green, CAR_PALETTE.orange, CAR_PALETTE.purple];
 function mixC(a,b,t){ return [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t]; }
+/* era-correct (2003-2005) flame lick: a tapering trail of overlapping circles
+   curving off the nose along the lower fender — procedural, not traced artwork */
+function drawFlameLick(c2x, baseU, baseV, len, amp, dir, col){
+  c2x.fillStyle = col;
+  const n = 9;
+  for(let i=0;i<n;i++){
+    const t = i/(n-1);
+    const x = baseU + len*t;
+    const y = baseV + dir*Math.sin(t*Math.PI*0.85)*amp*(1-t*0.25);
+    const r = (1-t)*amp*0.85 + 3;
+    c2x.beginPath(); c2x.arc(x,y,r,0,Math.PI*2); c2x.fill();
+  }
+}
 function paintLivery(c2, body, accent, num, pace, idx){
   const u=(f)=>f*TX, v=(f)=>f*TX;
   const rgb=(a,m)=>'rgb('+Math.round(a[0]*255*(m||1))+','+Math.round(a[1]*255*(m||1))+','+Math.round(a[2]*255*(m||1))+')';
-  // base + vertical panel shading (baked light: roof bright, rockers dark)
-  c2.fillStyle=rgb(body,0.94); c2.fillRect(0,0,TX,TX);
-  const shade=[[0.00,0.10,0.55],[0.10,0.20,0.80],[0.20,0.34,1.00],[0.34,0.44,1.06],
-               [0.44,0.56,1.12],[0.56,0.66,1.06],[0.66,0.80,1.00],[0.80,0.90,0.80],[0.90,1.00,0.55]];
-  for(const [a,b,m] of shade){ c2.fillStyle=rgb(body, 0.94*m>1?1:0.94*m);
+  // base + 3-tone flat panel shading (shadow/base/highlight only, hard edges, no ramps):
+  // rockers get the shadow tone, the roof+hood band gets the highlight tone, sides stay base.
+  const SHADOW_M=0.70, BASE_M=0.94, HILITE_M=1.08;
+  c2.fillStyle=rgb(body,BASE_M); c2.fillRect(0,0,TX,TX);
+  const shade3=[[0.00,0.11,SHADOW_M],[0.89,1.00,SHADOW_M],[0.40,0.60,HILITE_M]];
+  for(const [a,b,m] of shade3){ c2.fillStyle=rgb(body, m>1?1:m);
     c2.fillRect(0, v(a), TX, v(b-a)+1); }
   const U0=u(0.02), U1=u(0.78);
   if(!pace){
     // stripe package (accent): twin side stripes + hood/deck runners
-    const style = (idx||0) % 4;
+    const style = (idx||0) % 5;
     const acc2 = ACCENT2[((idx||0)*3+1) % ACCENT2.length];
     if(style===0){
       // twin side stripes + hood band (classic)
@@ -1427,7 +1453,7 @@ function paintLivery(c2, body, accent, num, pace, idx){
       }
       c2.fillStyle=rgb(acc2);
       c2.fillRect(u(0.40), v(0.052), u(0.010), v(0.896));
-    } else {
+    } else if(style===3){
       // halo: accent roof + nose cap + twin pinstripes
       c2.fillStyle=rgb(accent);
       c2.fillRect(U0, v(0.40), u(0.10), v(0.20));                  // hood front wash
@@ -1437,6 +1463,15 @@ function paintLivery(c2, body, accent, num, pace, idx){
       c2.fillRect(U0, v(0.196), U1-U0, v(0.012));
       c2.fillRect(U0, v(0.828), U1-U0, v(0.012));
       c2.fillRect(U0, v(0.792), U1-U0, v(0.012));
+    } else {
+      // flames (era-correct 2003-2005): licks along the lower door, both sides —
+      // start just clear of the front wheel arch (~u=0.24) and end well short of
+      // the rear arch (~u=0.56) so the graphic isn't hidden behind the wheels
+      const flU0 = u(0.26);
+      for(const [vSide,dir] of [[0.145,-1],[0.855,1]]){
+        drawFlameLick(c2, flU0, v(vSide), u(0.26), v(0.075), dir, rgb(accent));
+        drawFlameLick(c2, flU0, v(vSide+dir*0.01), u(0.18), v(0.045), dir, rgb(acc2));
+      }
     }
   }
   // rocker + seam dark
@@ -1450,6 +1485,12 @@ function paintLivery(c2, body, accent, num, pace, idx){
       c2.beginPath(); c2.arc(u(ux), v(vy), u(0.052), 0, Math.PI*2); c2.fill();
     }
   }
+  // rubber/dirt buildup smudge trailing behind the rear wheel arches only
+  c2.save(); c2.globalAlpha=0.35; c2.fillStyle='rgb(10,10,12)';
+  for(const vy of [0.055, 0.945]){
+    c2.beginPath(); c2.ellipse(u(carU(-1.395))+u(0.035), v(vy), u(0.05), u(0.035), 0, 0, Math.PI*2); c2.fill();
+  }
+  c2.restore();
   // ---- glass ----
   const uWS0=u(carU(0.68)), uWS1=u(carU(0.02));
   const uSG0=u(carU(0.30)), uSG1=u(carU(-0.95));
@@ -1547,9 +1588,9 @@ function buildCarTexture(car, pace){
   const cv2 = document.createElement('canvas');
   cv2.width = TX; cv2.height = TX;
   const c2 = cv2.getContext('2d');
-  const body = pace ? [0.93,0.93,0.95] : car.col;
+  const body = pace ? CAR_PALETTE.white : car.col;
   const lum = body[0]*0.5+body[1]*0.4+body[2]*0.1;
-  const accent = pace ? [0.9,0.6,0.1] : (lum > 0.5 ? [0.06,0.06,0.08] : [0.97,0.97,0.97]);
+  const accent = pace ? CAR_PALETTE.orange : (lum > 0.5 ? CAR_PALETTE.black : CAR_PALETTE.white);
   paintLivery(c2, body, accent, pace?0:car.num, !!pace, pace?0:(car.idx||0));
   const tex = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, tex);
