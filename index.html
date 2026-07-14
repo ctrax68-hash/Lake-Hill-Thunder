@@ -1305,13 +1305,23 @@ function buildCarMesh(num, pace){
   }
   // shadow
   q([-2.7,0.02,-1.15],[ 2.7,0.02,-1.15],[ 2.7,0.02, 1.15],[-2.7,0.02, 1.15], SW.shadow);
-  // spoiler (60 in angled blade)
+  // spoiler (60 in angled blade) — the body loft is a rounded tube, not a flat
+  // decklid, so a full-width blade at fixed height would float clear of the
+  // quarter panels; narrow it to where the deck is actually near peak height,
+  // and add small corner risers down to the deck so the mount reads as
+  // intentional (real Gen-4 spoilers sit on short riser blocks) rather than
+  // a detached plate floating over the trunk.
   {
-    const z=0.76, x0=-2.42, y0=0.935, x1=-2.60, y1=1.16, th=0.03;
+    const z=0.50, x0=-2.42, y0=0.935, x1=-2.60, y1=1.16, th=0.03;
     q([x0,y0,-z],[x0,y0,z],[x1,y1,z],[x1,y1,-z], SW.body);
     q([x0,y0-th, z],[x0,y0-th,-z],[x1,y1-th,-z],[x1,y1-th, z], SW.dark);
     q([x0,y0,-z],[x1,y1,-z],[x1,y1-th,-z],[x0,y0-th,-z], SW.dark);
     q([x1,y1, z],[x0,y0, z],[x0,y0-th, z],[x1,y1-th, z], SW.dark);
+    const deckY = 0.865;                                     // deck surface under the spoiler root at x0
+    for(const rz of [z, -z]){
+      q([x0-0.05,deckY,rz-0.05],[x0-0.05,deckY,rz+0.05],[x0,y0,rz+0.05],[x0,y0,rz-0.05], SW.dark);
+      q([x0-0.05,deckY,rz+0.05],[x0-0.05,deckY,rz-0.05],[x0-0.05,y0,rz-0.05],[x0-0.05,y0,rz+0.05], SW.dark);
+    }
   }
   if(pace) q([-0.45,1.29,-0.34],[0.05,1.29,-0.34],[0.05,1.29,0.34],[-0.45,1.29,0.34], SW.amber),
            q([-0.45,1.29,-0.34],[-0.45,1.42,-0.34],[0.05,1.42,-0.34],[0.05,1.29,-0.34], SW.amber),
@@ -1351,58 +1361,30 @@ function buildCarMesh(num, pace){
 }
 
 /* ---------- livery painter (restricted API: fillRect/arc/transforms) ---------- */
-function segDigitRects(fx, n, x, y, w, h){   // 7-seg via fillRect, callable under transforms
-  const tt = w*0.26, bits = SEGBITS[n];
-  const R=(x0,y0,x1,y1)=>fx(x+x0, y+h-y1, x1-x0, y1-y0);
-  if(bits&1)  R(tt*0.5, h-tt, w-tt*0.5, h);
-  if(bits&2)  R(0, h/2+tt*0.25, tt, h-tt*0.5);
-  if(bits&4)  R(w-tt, h/2+tt*0.25, w, h-tt*0.5);
-  if(bits&8)  R(tt*0.5, h/2-tt/2, w-tt*0.5, h/2+tt/2);
-  if(bits&16) R(0, tt*0.5, tt, h/2-tt*0.25);
-  if(bits&32) R(w-tt, tt*0.5, w, h/2-tt*0.25);
-  if(bits&64) R(tt*0.5, 0, w-tt*0.5, tt);
-}
+// real vinyl-style lettering via canvas text (bold condensed sans, thick
+// contrast outline for the car number) instead of a blocky pixel/7-seg font —
+// reads like actual race-car numbering rather than a scoreboard display.
 function drawNum(c2, num, cx2, cy2, hgt, fill, outline, rot, flipX, flipY){
-  const s=String(num), dw=hgt*0.62, gap=dw*0.24, tw=s.length*dw+(s.length-1)*gap;
+  const s=String(num);
   c2.save();
   c2.translate(cx2, cy2);
   if(rot) c2.rotate(rot);
   c2.transform(flipX?-1:1, 0, -0.16, flipY?-1:1, 0, 0);       // italic lean + flips
-  const draw=(off,color)=>{
-    c2.fillStyle=color;
-    let x=-tw/2;
-    for(const ch of s){
-      segDigitRects((a,b,w2,h2)=>c2.fillRect(a-off,b-off,w2+2*off,h2+2*off), +ch, x, -hgt/2, dw, hgt);
-      x+=dw+gap;
-    }
-  };
-  draw(hgt*0.06, outline);
-  draw(0, fill);
+  c2.font = '900 '+Math.round(hgt*1.3)+'px Arial, sans-serif';
+  c2.textAlign='center'; c2.textBaseline='middle';
+  c2.lineJoin='round'; c2.miterLimit=2; c2.lineWidth=hgt*0.22;
+  c2.strokeStyle=outline; c2.strokeText(s, 0, 0);
+  c2.fillStyle=fill; c2.fillText(s, 0, 0);
   c2.restore();
 }
-/* ---- 3x5 pixel font (rows top→bottom, 3-bit masks) for sponsor wordmarks ---- */
-const FONT35 = {
-  A:[2,5,7,5,5], B:[6,5,6,5,6], C:[3,4,4,4,3], D:[6,5,5,5,6], E:[7,4,6,4,7],
-  F:[7,4,6,4,4], G:[3,4,5,5,3], H:[5,5,7,5,5], I:[7,2,2,2,7], J:[1,1,1,5,2],
-  K:[5,6,4,6,5], L:[4,4,4,4,7], M:[5,7,7,5,5], N:[6,5,5,5,5], O:[2,5,5,5,2],
-  P:[6,5,6,4,4], Q:[2,5,5,6,3], R:[6,5,6,6,5], S:[3,4,2,1,6], T:[7,2,2,2,2],
-  U:[5,5,5,5,7], V:[5,5,5,5,2], W:[5,5,7,7,5], X:[5,5,2,5,5], Y:[5,5,2,2,2],
-  Z:[7,1,2,4,7], ' ':[0,0,0,0,0], '-':[0,0,7,0,0], '.':[0,0,0,0,2]
-};
 function drawWord(c2, txt, cx2, cy2, cell, color, rot, flipX){
-  const wGlyph = 4*cell, tw = txt.length*wGlyph - cell;
   c2.save();
   c2.translate(cx2, cy2);
   if(rot) c2.rotate(rot);
   if(flipX) c2.transform(-1,0,0,1,0,0);
-  c2.fillStyle = color;
-  let x = -tw/2;
-  for(const ch of txt){
-    const g = FONT35[ch] || FONT35[' '];
-    for(let r=0;r<5;r++) for(let b=0;b<3;b++)
-      if(g[r] & (4>>b)) c2.fillRect(x+b*cell, -2.5*cell+r*cell, cell+0.35, cell+0.35);
-    x += wGlyph;
-  }
+  c2.font = '700 '+Math.round(cell*7)+'px Arial, sans-serif';
+  c2.textAlign='center'; c2.textBaseline='middle';
+  c2.fillStyle=color; c2.fillText(txt, 0, 0);
   c2.restore();
 }
 const SPONSORS = ['LAKE HILL','TALON OIL','REDLINE COLA','IRONWOOD','COMET FUEL',
@@ -1518,8 +1500,12 @@ function paintLivery(c2, body, accent, num, pace, idx){
   c2.fillStyle='rgb(16,20,30)';
   c2.fillRect(uWS0, v(0.30), uWS1-uWS0, v(0.40));                 // windshield
   c2.fillRect(uRG0, v(0.30), uRG1-uRG0, v(0.40));                 // rear glass
-  c2.fillRect(uSG0, v(0.300), uSG1-uSG0, v(0.115));               // side glass R
-  c2.fillRect(uSG0, v(0.585), uSG1-uSG0, v(0.115));               // side glass L
+  // side glass — kept shorter than the windshield/rear glass so the roof rail
+  // (the ring's rounded top, which is what a broadside/chase-cam view actually
+  // sees along the greenhouse) shows body color instead of reading as one
+  // solid black band from cowl to fastback
+  c2.fillRect(uSG0, v(0.335), uSG1-uSG0, v(0.075));               // side glass R
+  c2.fillRect(uSG0, v(0.590), uSG1-uSG0, v(0.075));               // side glass L
   // glass top-light gradient hint (subtle)
   c2.fillStyle='rgb(26,33,46)';
   c2.fillRect(uWS0, v(0.47), uWS1-uWS0, v(0.06));
@@ -1530,18 +1516,18 @@ function paintLivery(c2, body, accent, num, pace, idx){
   // driver window net (left side glass, diagonal weave)
   c2.save();
   c2.fillStyle='rgb(8,8,10)';
-  c2.fillRect(uSG0, v(0.585), (uSG1-uSG0)*0.55, v(0.115));
+  c2.fillRect(uSG0, v(0.590), (uSG1-uSG0)*0.55, v(0.075));
   c2.fillStyle='rgb(60,60,64)';
   for(let i=0;i<6;i++){
-    c2.fillRect(uSG0+4+i*((uSG1-uSG0)*0.55-8)/5, v(0.590), 2, v(0.105));
-    c2.fillRect(uSG0+2, v(0.593)+i*v(0.099)/5, (uSG1-uSG0)*0.55-4, 2);
+    c2.fillRect(uSG0+4+i*((uSG1-uSG0)*0.55-8)/5, v(0.593), 2, v(0.069));
+    c2.fillRect(uSG0+2, v(0.596)+i*v(0.063)/5, (uSG1-uSG0)*0.55-4, 2);
   }
   c2.restore();
   // A/B pillar dark edges
   c2.fillStyle='rgb(14,14,16)';
   c2.fillRect(uWS0-2, v(0.30), 4, v(0.40));
-  c2.fillRect(uSG1-2, v(0.30), 4, v(0.115));
-  c2.fillRect(uSG1-2, v(0.585), 4, v(0.115));
+  c2.fillRect(uSG1-2, v(0.335), 4, v(0.075));
+  c2.fillRect(uSG1-2, v(0.590), 4, v(0.075));
   // roof flaps
   c2.fillStyle=rgb(body,0.72);
   c2.fillRect(u(carU(-0.45)), v(0.435), u(0.045), v(0.052));
