@@ -1199,9 +1199,9 @@ const TX = 512;
    low wide nose, fender bulges over both axles (x=±1.395), pinched
    greenhouse, long raked windshield, fastback rear glass, long flat deck. */
 const CAR_ST = [
-  [ 2.51, 0.68, 0.43, 0.13],   // bumper cap (low sloped nose)
-  [ 2.34, 0.80, 0.51, 0.11],
-  [ 2.04, 0.88, 0.61, 0.11],   // nose fascia
+  [ 2.51, 0.50, 0.40, 0.13],   // bumper cap (low, narrow, pointed nose tip)
+  [ 2.34, 0.66, 0.485,0.11],
+  [ 2.04, 0.82, 0.585,0.11],   // nose fascia — gradual taper into the fender, not a flare
   [ 1.70, 0.92, 0.685,0.12],   // fender leading edge
   [ 1.40, 0.95, 0.735,0.14],   // front axle — fender bulge (full 75in width)
   [ 1.05, 0.93, 0.795,0.16],
@@ -1224,9 +1224,26 @@ const RINGF = [
 const NK = RINGF.length;
 function carU(x){ return 0.02 + (2.51 - x)/5.02 * 0.76; }   // nose 0.02 → tail 0.78
 function carV(k){ return 0.03 + k/(NK-1) * 0.94; }
+// wheel arch relief: the fender loft is a plain revolved tube with no real cutout,
+// so its outboard peak (z=w at RINGF's widest point) can reach past the wheel's
+// inboard face and poke through the wheel disc near the hub. Recede the lower-
+// outboard ring points near each axle so the body clears the wheel cleanly —
+// this also reads as a shaped arch instead of a flat slab over the tire.
+const WHEEL_AXLE_X = [1.40, -1.40], WHEEL_NOTCH_Z = 0.60, WHEEL_NOTCH_RANGE = 0.40;
 function ringPts(st){
   const [x,w,yT,yL]=st, h=yT-yL;
-  return RINGF.map(f=>[x, yL+f[0]*h, f[1]*w]);
+  return RINGF.map(f=>{
+    const py = yL+f[0]*h;
+    let pz = f[1]*w;
+    for(const wx of WHEEL_AXLE_X){
+      const dx = Math.abs(x-wx);
+      if(dx < WHEEL_NOTCH_RANGE && Math.abs(pz) > WHEEL_NOTCH_Z){
+        const t = 1 - dx/WHEEL_NOTCH_RANGE;
+        pz += (Math.sign(pz)*WHEEL_NOTCH_Z - pz)*t;
+      }
+    }
+    return [x, py, pz];
+  });
 }
 /* swatch texels for geometry parts */
 const SW = { tire:[0.955,0.06], rim:[0.955,0.16], chrome:[0.955,0.26],
@@ -1302,11 +1319,11 @@ function buildCarMesh(num, pace){
            q([0.05,1.29,-0.34],[0.05,1.42,-0.34],[0.05,1.42,0.34],[0.05,1.29,0.34], SW.amber),
            q([-0.45,1.42,-0.34],[-0.45,1.42,0.34],[0.05,1.42,0.34],[0.05,1.42,-0.34], SW.amber);
   // wheels: tire barrel + face rings
-  const wR=0.34, wW=0.27, wz=0.80;
+  const wR=0.34, wW=0.27, wz=0.80, WSEG=18;
   function wheel(cxp, sgn){
     const zo = sgn*(wz+wW/2), zi = sgn*(wz-wW/2);
-    for(let k=0;k<10;k++){
-      const a0=k/10*Math.PI*2, a1=(k+1)/10*Math.PI*2;
+    for(let k=0;k<WSEG;k++){
+      const a0=k/WSEG*Math.PI*2, a1=(k+1)/WSEG*Math.PI*2;
       const p0=[cxp+Math.cos(a0)*wR, wR+Math.sin(a0)*wR, zo];
       const p1=[cxp+Math.cos(a1)*wR, wR+Math.sin(a1)*wR, zo];
       const q0=[p0[0],p0[1],zi], q1=[p1[0],p1[1],zi];
@@ -1478,11 +1495,14 @@ function paintLivery(c2, body, accent, num, pace, idx){
   c2.fillStyle='rgb(18,18,20)';
   c2.fillRect(0, 0, TX, v(0.052));
   c2.fillRect(0, v(0.948), TX, v(0.052)+1);
-  // wheel arches (dark discs at axle u positions, clipped by rocker rows)
-  c2.fillStyle='rgb(12,12,14)';
+  // wheel arches: soft graduated shadow (body-tint ring, then dark core) so the
+  // fender reads as a shadowed opening rather than a flat black hole
   for(const ux of [carU(1.395), carU(-1.395)]){
     for(const vy of [0.055, 0.945]){
-      c2.beginPath(); c2.arc(u(ux), v(vy), u(0.052), 0, Math.PI*2); c2.fill();
+      c2.fillStyle=rgb(body,0.9); c2.beginPath(); c2.arc(u(ux), v(vy), u(0.071), 0, Math.PI*2); c2.fill();      // fender lip (full body tone, crisp edge)
+      c2.fillStyle=rgb(body,0.55); c2.beginPath(); c2.arc(u(ux), v(vy), u(0.064), 0, Math.PI*2); c2.fill();
+      c2.fillStyle=rgb(body,0.25); c2.beginPath(); c2.arc(u(ux), v(vy), u(0.056), 0, Math.PI*2); c2.fill();
+      c2.fillStyle='rgb(10,10,12)'; c2.beginPath(); c2.arc(u(ux), v(vy), u(0.047), 0, Math.PI*2); c2.fill();
     }
   }
   // rubber/dirt buildup smudge trailing behind the rear wheel arches only
