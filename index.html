@@ -1195,26 +1195,32 @@ function addNumber(B, num, put, w, h, col){
    198in x 75in x 51in, 110in wheelbase, 60in angled spoiler.
    ===================================================================== */
 const TX = 512;
-/* loft stations: [x, halfWidth, yTop, yLow] — Gen-4 stock car silhouette:
+/* loft stations: [x, halfWidth, beltY, yLow, roofY] — Gen-4 stock car silhouette:
    low wide nose, fender bulges over both axles (x=±1.395), pinched
-   greenhouse, long raked windshield, fastback rear glass, long flat deck. */
+   greenhouse, long raked windshield, fastback rear glass, long flat deck.
+   beltY is the door/quarter-panel beltline height — it rises only gently and
+   continuously from the fender to the decklid, the way a real character line
+   does. roofY is an *additional* rise above the belt, used only across the
+   greenhouse (cowl through fastback) so the cabin humps up on its own instead
+   of the whole beltline (and the yellow panel below it) rising and falling
+   with the roof. Everywhere else roofY == beltY (no extra rise). */
 const CAR_ST = [
-  [ 2.51, 0.50, 0.40, 0.13],   // bumper cap (low, narrow, pointed nose tip)
-  [ 2.34, 0.66, 0.485,0.11],
-  [ 2.04, 0.82, 0.585,0.11],   // nose fascia — gradual taper into the fender, not a flare
-  [ 1.70, 0.92, 0.685,0.12],   // fender leading edge
-  [ 1.40, 0.95, 0.735,0.14],   // front axle — fender bulge (full 75in width)
-  [ 1.05, 0.93, 0.795,0.16],
-  [ 0.68, 0.91, 0.89, 0.175],  // cowl / windshield base
-  [ 0.34, 0.875,1.03, 0.18],   // windshield mid — real rake, not flattened to a decal
-  [ 0.02, 0.835,1.14, 0.185],  // A-pillar top
-  [-0.60, 0.825,1.18, 0.195],  // roof — lower than stock but keeps real greenhouse volume
-  [-1.00, 0.84, 1.15, 0.20],   // fastback glass start
-  [-1.40, 0.95, 1.055,0.205],  // rear axle — quarter-panel bulge
-  [-1.75, 0.92, 1.02, 0.205],  // deck start (flatter, taller deck per era proportions)
-  [-2.10, 0.885,0.99, 0.19],
-  [-2.34, 0.845,0.955,0.17],
-  [-2.51, 0.76, 0.92, 0.15]    // tail (spoiler base)
+  [ 2.51, 0.50, 0.40, 0.13, 0.40 ],  // bumper cap (low, narrow, pointed nose tip)
+  [ 2.34, 0.66, 0.485,0.11, 0.485],
+  [ 2.04, 0.82, 0.585,0.11, 0.585],  // nose fascia — gradual taper into the fender, not a flare
+  [ 1.70, 0.92, 0.685,0.12, 0.685],  // fender leading edge
+  [ 1.40, 0.95, 0.735,0.14, 0.735],  // front axle — fender bulge (full 75in width)
+  [ 1.05, 0.93, 0.795,0.16, 0.795],
+  [ 0.68, 0.91, 0.89, 0.175,0.89 ],  // cowl / windshield base — belt and roof still equal here
+  [ 0.34, 0.875,0.917,0.18, 1.03 ],  // windshield mid — belt keeps rising gently, roof rakes up
+  [ 0.02, 0.835,0.942,0.185,1.14 ],  // A-pillar top
+  [-0.60, 0.825,0.992,0.195,1.18 ],  // roof peak
+  [-1.00, 0.84, 1.023,0.20, 1.15 ],  // fastback glass start
+  [-1.40, 0.95, 1.055,0.205,1.055],  // rear axle — quarter-panel bulge, belt/roof rejoin
+  [-1.75, 0.92, 1.02, 0.205,1.02 ],  // deck start (flatter, taller deck per era proportions)
+  [-2.10, 0.885,0.99, 0.19, 0.99 ],
+  [-2.34, 0.845,0.955,0.17, 0.955],
+  [-2.51, 0.76, 0.92, 0.15, 0.92 ]   // tail (spoiler base)
 ];
 /* ring cross-section fractions: [heightFrac, widthFrac] bottom-right→top→bottom-left */
 const RINGF = [
@@ -1230,10 +1236,16 @@ function carV(k){ return 0.03 + k/(NK-1) * 0.94; }
 // outboard ring points near each axle so the body clears the wheel cleanly —
 // this also reads as a shaped arch instead of a flat slab over the tire.
 const WHEEL_AXLE_X = [1.40, -1.40], WHEEL_NOTCH_Z = 0.60, WHEEL_NOTCH_RANGE = 0.40;
+// heightFrac at/below this rides the beltline curve (yLow -> beltY); above it
+// rides the roof rise (beltY -> roofY). 0.80 matches RINGF's k=4, right where
+// the side-glass band starts, so the glass sits exactly where the roof rise begins.
+const SHOULDER = 0.80;
 function ringPts(st){
-  const [x,w,yT,yL]=st, h=yT-yL;
+  const [x,w,beltY,yL,roofY]=st;
   return RINGF.map(f=>{
-    const py = yL+f[0]*h;
+    const hf=f[0];
+    const py = hf<=SHOULDER ? yL+(hf/SHOULDER)*(beltY-yL)
+                            : beltY+((hf-SHOULDER)/(1-SHOULDER))*(roofY-beltY);
     let pz = f[1]*w;
     for(const wx of WHEEL_AXLE_X){
       const dx = Math.abs(x-wx);
