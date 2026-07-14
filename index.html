@@ -1236,6 +1236,23 @@ function carV(k){ return 0.03 + k/(NK-1) * 0.94; }
 // rides the roof rise (beltY -> roofY). 0.80 matches RINGF's k=4, right where
 // the side-glass band starts, so the glass sits exactly where the roof rise begins.
 const SHOULDER = 0.80;
+// wheel arch relief: verified numerically that only RINGF's k=0,1,2 (hf<=0.28)
+// actually reach into the wheel's cylindrical volume near the hub — k=3 (hf=0.56)
+// and above are already clear at every axle-adjacent station. Earlier attempts
+// corrected a much taller band (up to the beltline/stripe height), which is what
+// made the correction visible as a dent — the livery's accent stripe was painted
+// right through the corrected zone. Restricting the fix to hf<=0.30 keeps it
+// entirely below where any livery graphic is now drawn (moved to v>=0.26, see
+// paintLivery), so the correction is invisible under normal paint.
+//
+// The wheel's rotation axis is Z (it's a barrel/coin standing on the X-Y plane),
+// so its inner face (WHEEL_INNER_Z) fully spans the wheel's Y-radius uniformly —
+// pulling a body point's Z below that threshold guarantees the wheel occludes
+// it, without needing a true radial distance calc (which has no solution when
+// the point's Y is already within the wheel's radius of its own center, since
+// then no amount of Z motion alone reaches true 3D clearance).
+const WHEEL_AXLE_X = [1.40, -1.40], WHEEL_NOTCH_RANGE = 0.45;
+const WHEEL_INNER_Z = 0.62;
 function ringPts(st){
   const [x,w,beltY,yL,roofY]=st;
   return RINGF.map(f=>{
@@ -1243,6 +1260,13 @@ function ringPts(st){
     let py = hf<=SHOULDER ? yL+(hf/SHOULDER)*(beltY-yL)
                           : beltY+((hf-SHOULDER)/(1-SHOULDER))*(roofY-beltY);
     let pz = f[1]*w;
+    if(hf <= 0.30) for(const wx of WHEEL_AXLE_X){
+      const dx = Math.abs(x-wx);
+      if(dx < WHEEL_NOTCH_RANGE && Math.abs(pz) > WHEEL_INNER_Z){
+        const t = 1 - dx/WHEEL_NOTCH_RANGE;
+        pz += (Math.sign(pz)*WHEEL_INNER_Z - pz)*t;
+      }
+    }
     return [x, py, pz];
   });
 }
@@ -1429,12 +1453,14 @@ function paintLivery(c2, body, accent, num, pace, idx){
     const style = (idx||0) % 5;
     const acc2 = ACCENT2[((idx||0)*3+1) % ACCENT2.length];
     if(style===0){
-      // twin side stripes + hood band (classic)
+      // twin side stripes + hood band (classic). Kept at v>=0.26 — below that
+      // is the wheel-arch relief zone (see ringPts/WHEEL_CLEAR), so painting a
+      // crisp straight stripe any lower would visibly trace the correction.
       c2.fillStyle=rgb(accent);
-      c2.fillRect(U0, v(0.145), U1-U0, v(0.030));
-      c2.fillRect(U0, v(0.205), U1-U0, v(0.014));
-      c2.fillRect(U0, v(0.825), U1-U0, v(0.030));
-      c2.fillRect(U0, v(0.781), U1-U0, v(0.014));
+      c2.fillRect(U0, v(0.260), U1-U0, v(0.030));
+      c2.fillRect(U0, v(0.300), U1-U0, v(0.014));
+      c2.fillRect(U0, v(0.710), U1-U0, v(0.030));
+      c2.fillRect(U0, v(0.686), U1-U0, v(0.014));
       c2.fillRect(u(0.05), v(0.470), u(0.24), v(0.060));
     } else if(style===1){
       // forward slash: skewed accent band sweeping down across the sides
@@ -1446,8 +1472,8 @@ function paintLivery(c2, body, accent, num, pace, idx){
       c2.fillRect(u(0.57), 0, u(0.028), TX);
       c2.restore();
       c2.fillStyle=rgb(accent);
-      c2.fillRect(U0, v(0.145), U1-U0, v(0.016));
-      c2.fillRect(U0, v(0.839), U1-U0, v(0.016));
+      c2.fillRect(U0, v(0.260), U1-U0, v(0.016));
+      c2.fillRect(U0, v(0.724), U1-U0, v(0.016));
     } else if(style===2){
       // two-tone: rear half fades to accent in stepped bands
       for(let sBand=0;sBand<4;sBand++){
@@ -1466,10 +1492,10 @@ function paintLivery(c2, body, accent, num, pace, idx){
       c2.fillRect(U0, v(0.40), u(0.10), v(0.20));                  // hood front wash
       c2.fillRect(u(0.36), v(0.435), u(0.185), v(0.13));           // roof panel
       c2.fillStyle=rgb(acc2);
-      c2.fillRect(U0, v(0.160), U1-U0, v(0.012));
-      c2.fillRect(U0, v(0.196), U1-U0, v(0.012));
-      c2.fillRect(U0, v(0.828), U1-U0, v(0.012));
-      c2.fillRect(U0, v(0.792), U1-U0, v(0.012));
+      c2.fillRect(U0, v(0.260), U1-U0, v(0.012));
+      c2.fillRect(U0, v(0.296), U1-U0, v(0.012));
+      c2.fillRect(U0, v(0.728), U1-U0, v(0.012));
+      c2.fillRect(U0, v(0.692), U1-U0, v(0.012));
     } else {
       // flames (era-correct 2003-2005): licks along the lower door, both sides —
       // start just clear of the front wheel arch (~u=0.24) and end well short of
