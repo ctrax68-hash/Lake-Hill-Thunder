@@ -1377,12 +1377,19 @@ function drawNum(c2, num, cx2, cy2, hgt, fill, outline, rot, flipX, flipY){
   c2.fillStyle=fill; c2.fillText(s, 0, 0);
   c2.restore();
 }
-function drawWord(c2, txt, cx2, cy2, cell, color, rot, flipX){
+function drawWord(c2, txt, cx2, cy2, cell, color, rot, flipX, maxW){
   c2.save();
   c2.translate(cx2, cy2);
   if(rot) c2.rotate(rot);
   if(flipX) c2.transform(-1,0,0,1,0,0);
-  c2.font = '700 '+Math.round(cell*7)+'px Arial, sans-serif';
+  let fs = Math.round(cell*7);
+  c2.font = '700 '+fs+'px Arial, sans-serif';
+  if(maxW){
+    // shrink to fit so longer sponsor names never overflow their panel and
+    // get cropped by the wheel arch or the edge of the body panel
+    const w = c2.measureText(txt).width;
+    if(w > maxW){ fs = Math.max(8, Math.floor(fs*maxW/w)); c2.font = '700 '+fs+'px Arial, sans-serif'; }
+  }
   c2.textAlign='center'; c2.textBaseline='middle';
   c2.fillStyle=color; c2.fillText(txt, 0, 0);
   c2.restore();
@@ -1497,13 +1504,14 @@ function paintLivery(c2, body, accent, num, pace, idx){
   const uWS0=u(carU(0.68)), uWS1=u(carU(0.02));
   const uSG0=u(carU(0.30)), uSG1=u(carU(-0.95));
   const uRG0=u(carU(-1.00)), uRG1=u(carU(-1.75));
+  // windshield, side glass, and rear glass all share the same v-band (0.335-0.665)
+  // so the tinted glass reads as one consistent-height beltline running from the
+  // cowl through the doors to the decklid, instead of the windshield/rear glass
+  // ballooning taller than the side windows.
+  const GV0=0.335, GVH=0.330;
   c2.fillStyle='rgb(16,20,30)';
-  c2.fillRect(uWS0, v(0.30), uWS1-uWS0, v(0.40));                 // windshield
-  c2.fillRect(uRG0, v(0.30), uRG1-uRG0, v(0.40));                 // rear glass
-  // side glass — kept shorter than the windshield/rear glass so the roof rail
-  // (the ring's rounded top, which is what a broadside/chase-cam view actually
-  // sees along the greenhouse) shows body color instead of reading as one
-  // solid black band from cowl to fastback
+  c2.fillRect(uWS0, v(GV0), uWS1-uWS0, v(GVH));                   // windshield
+  c2.fillRect(uRG0, v(GV0), uRG1-uRG0, v(GVH));                   // rear glass
   c2.fillRect(uSG0, v(0.335), uSG1-uSG0, v(0.075));               // side glass R
   c2.fillRect(uSG0, v(0.590), uSG1-uSG0, v(0.075));               // side glass L
   // glass top-light gradient hint (subtle)
@@ -1512,7 +1520,7 @@ function paintLivery(c2, body, accent, num, pace, idx){
   c2.fillRect(uRG0, v(0.48), uRG1-uRG0, v(0.04));
   // windshield header banner
   c2.fillStyle='rgb(235,235,238)';
-  c2.fillRect(uWS1-u(0.02), v(0.34), u(0.02), v(0.32));
+  c2.fillRect(uWS1-u(0.02), v(GV0+0.02), u(0.02), v(GVH-0.02));
   // driver window net (left side glass, diagonal weave)
   c2.save();
   c2.fillStyle='rgb(8,8,10)';
@@ -1525,7 +1533,7 @@ function paintLivery(c2, body, accent, num, pace, idx){
   c2.restore();
   // A/B pillar dark edges
   c2.fillStyle='rgb(14,14,16)';
-  c2.fillRect(uWS0-2, v(0.30), 4, v(0.40));
+  c2.fillRect(uWS0-2, v(GV0), 4, v(GVH));
   c2.fillRect(uSG1-2, v(0.335), 4, v(0.075));
   c2.fillRect(uSG1-2, v(0.590), 4, v(0.075));
   // roof flaps
@@ -1539,21 +1547,24 @@ function paintLivery(c2, body, accent, num, pace, idx){
     // reads for a viewer on the car's right; sideways from the chase cam.
     // Centered on the roof panel proper (between windshield end and rear glass).
     drawNum(c2, num, u(carU(-0.49)), v(0.50), u(0.105), white, dark, Math.PI, false, false);
-    // right door (v<0.5): unwrap flips both axes vs viewer → 180°. Sized/positioned
-    // to clear the side-glass band (starts at v=0.335) rather than crowd into it.
-    drawNum(c2, num, u(carU(-0.10)), v(0.195), v(0.105), white, dark, Math.PI, false, false);
+    // right door (v<0.5): unwrap flips both axes vs viewer → 180°. Sits just
+    // under the side-glass band (starts at v=0.335) without a big gap of
+    // bare body color, but without crowding into the window either.
+    drawNum(c2, num, u(carU(-0.10)), v(0.235), v(0.105), white, dark, Math.PI, false, false);
     // left door (v>0.5): upright
-    drawNum(c2, num, u(carU(-0.10)), v(0.805), v(0.105), white, dark, 0, false, false);
+    drawNum(c2, num, u(carU(-0.10)), v(0.765), v(0.105), white, dark, 0, false, false);
     // ---- sponsor wordmarks (fictional, 3x5 pixel font) ----
     const short = SPONSORS[(idx||0) % SPONSORS.length].split(' ')[0];
     const lumA = accent[0]*0.5+accent[1]*0.4+accent[2]*0.1;
     const wcol = lumA > 0.5 ? rgb(accent) : 'rgb(248,248,248)';
-    // rear quarters, high on the panel so the 3D tires don't occlude
-    drawWord(c2, short, u(carU(-2.02)), v(0.262), v(0.012), wcol, Math.PI, false);
-    drawWord(c2, short, u(carU(-2.02)), v(0.738), v(0.012), wcol, 0, false);
+    // rear quarters, high on the panel so the 3D tires don't occlude. Capped to
+    // the panel's actual available length (wheel arch to tail) so longer
+    // sponsor names shrink to fit instead of overflowing into the wheel well.
+    drawWord(c2, short, u(carU(-2.02)), v(0.262), v(0.012), wcol, Math.PI, false, u(0.15));
+    drawWord(c2, short, u(carU(-2.02)), v(0.738), v(0.012), wcol, 0, false, u(0.15));
     // hood + deck: text runs laterally, tops toward the nose (read from ahead)
-    drawWord(c2, short, u(carU(1.35)), v(0.50), v(0.016), wcol, -Math.PI/2, false);
-    drawWord(c2, short, u(carU(-2.10)), v(0.50), v(0.012), wcol, -Math.PI/2, false);
+    drawWord(c2, short, u(carU(1.35)), v(0.50), v(0.016), wcol, -Math.PI/2, true, u(0.60));
+    drawWord(c2, short, u(carU(-2.10)), v(0.50), v(0.012), wcol, -Math.PI/2, true, u(0.60));
     // contingency decal rows on both front fenders (white-bordered chips)
     const DEC=[[218,52,42],[238,198,44],[64,110,214],[240,240,240],[46,168,92],[236,120,30],[150,60,200],[40,180,190]];
     for(const vv of [0.105, 0.79]){
