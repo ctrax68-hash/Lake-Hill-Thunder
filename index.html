@@ -1212,10 +1212,10 @@ const CAR_ST = [
   [ 1.40, 0.95, 0.735,0.14, 0.735],  // front axle — fender bulge (full 75in width)
   [ 1.05, 0.93, 0.795,0.16, 0.795],
   [ 0.68, 0.91, 0.89, 0.175,0.89 ],  // cowl / windshield base — belt and roof still equal here
-  [ 0.34, 0.875,0.917,0.18, 1.03 ],  // windshield mid — belt keeps rising gently, roof rakes up
-  [ 0.02, 0.835,0.942,0.185,1.14 ],  // A-pillar top
-  [-0.60, 0.825,0.992,0.195,1.18 ],  // roof peak
-  [-1.00, 0.84, 1.023,0.20, 1.15 ],  // fastback glass start
+  [ 0.34, 0.875,0.917,0.18, 1.10 ],  // windshield mid — belt keeps rising gently, roof rakes up
+  [ 0.02, 0.835,0.942,0.185,1.22 ],  // A-pillar top
+  [-0.60, 0.825,0.992,0.195,1.26 ],  // roof peak — more window/cabin presence
+  [-1.00, 0.84, 1.023,0.20, 1.22 ],  // fastback glass start
   [-1.40, 0.95, 1.055,0.205,1.055],  // rear axle — quarter-panel bulge, belt/roof rejoin
   [-1.75, 0.92, 1.02, 0.205,1.02 ],  // deck start (flatter, taller deck per era proportions)
   [-2.10, 0.885,0.99, 0.19, 0.99 ],
@@ -1247,7 +1247,11 @@ function ringPts(st){
     const py = hf<=SHOULDER ? yL+(hf/SHOULDER)*(beltY-yL)
                             : beltY+((hf-SHOULDER)/(1-SHOULDER))*(roofY-beltY);
     let pz = f[1]*w;
-    for(const wx of WHEEL_AXLE_X){
+    // stop at the shoulder (k=4, hf=0.80): notching that point too pulls in the
+    // beltline/character-line crease itself, which reads as a dent right above
+    // the wheel now that the beltline is a straight line. Only the true rocker/
+    // lower-fender points below it need to recede to clear the wheel.
+    for(const wx of hf < 0.70 ? WHEEL_AXLE_X : []){
       const dx = Math.abs(x-wx);
       if(dx < WHEEL_NOTCH_RANGE && Math.abs(pz) > WHEEL_NOTCH_Z){
         const t = 1 - dx/WHEEL_NOTCH_RANGE;
