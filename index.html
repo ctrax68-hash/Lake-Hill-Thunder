@@ -7,56 +7,78 @@
 <meta name="mobile-web-app-capable" content="yes">
 <title>Lake Hill Thunder</title>
 <style>
-  :root { --safeL:env(safe-area-inset-left,0px); --safeR:env(safe-area-inset-right,0px);
-      --safeT:env(safe-area-inset-top,0px); --safeB:env(safe-area-inset-bottom,0px); }
+  :root {
+    --safeL:env(safe-area-inset-left,0px); --safeR:env(safe-area-inset-right,0px);
+    --safeT:env(safe-area-inset-top,0px); --safeB:env(safe-area-inset-bottom,0px);
+    /* ---- Gen-4 broadcast design tokens ---- */
+    --c-black:#000000; --c-white:#ffffff; --c-yellow:#F7D400; --c-blue:#1A4FFF;
+    --c-steel:#2A2A2A; --c-orange:#FF7A00; --c-red:#D62828; --c-graycool:#C8C8C8;
+    --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-6:24px;
+    --bw-thin:1px; --bw-med:2px;
+    --font-head:'Arial Narrow','Segoe UI Condensed',Impact,sans-serif;
+    --font-data:'Consolas','Courier New',monospace;
+  }
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent;
       user-select:none; -webkit-user-select:none; touch-action:none; }
-  html,body { width:100%; height:100%; overflow:hidden; background:#0a0c12;
-      font-family:"Courier New",monospace; overscroll-behavior:none; }
+  html,body { width:100%; height:100%; overflow:hidden; background:var(--c-black);
+      font-family:var(--font-data); overscroll-behavior:none; }
   canvas { position:fixed; inset:0; display:block; }
   #hud { pointer-events:none; z-index:2; }
   #gl  { z-index:1; }
 
-  /* ---- touch controls (landscape layout) ---- */
+  /* ---- touch controls (landscape layout): flat black, 2px blue rule, sharp corners ---- */
   .ctl { position:fixed; z-index:5; display:flex; align-items:center; justify-content:center;
-      border-radius:16px; font-weight:bold; font-size:26px; color:#dfe6f0;
-      background:rgba(24,28,40,0.42); border:2px solid rgba(255,255,255,0.16);
-      backdrop-filter:blur(2px); }
-  .ctl.pressed { background:rgba(255,210,61,0.35); border-color:#ffd23d; color:#fff; }
+      border-radius:0; font-family:var(--font-head); font-weight:bold; font-size:22px;
+      letter-spacing:1px; color:var(--c-white);
+      background:rgba(0,0,0,0.62); border:var(--bw-med) solid var(--c-blue); }
+  .ctl.pressed { background:var(--c-blue); border-color:var(--c-white); color:var(--c-white); }
+  #bL, #bR { display:flex; }
+  #bL span, #bR span { width:0; height:0; border-top:11px solid transparent; border-bottom:11px solid transparent; }
+  #bL span { border-right:16px solid currentColor; }
+  #bR span { border-left:16px solid currentColor; }
   #bL { left:calc(14px + var(--safeL));  bottom:calc(14px + var(--safeB)); width:88px; height:76px; }
   #bR { left:calc(112px + var(--safeL)); bottom:calc(14px + var(--safeB)); width:88px; height:76px; }
   #bB { right:calc(112px + var(--safeR)); bottom:calc(14px + var(--safeB)); width:88px; height:76px; font-size:15px;
-        background:rgba(120,30,30,0.42); }
+        border-color:var(--c-red); }
+  #bB.pressed { background:var(--c-red); border-color:var(--c-white); }
   #bG { right:calc(14px + var(--safeR)); bottom:calc(14px + var(--safeB)); width:88px; height:96px; font-size:16px;
-        background:rgba(30,90,40,0.5); }
+        border-color:var(--c-yellow); }
+  #bG.pressed { background:var(--c-yellow); color:var(--c-black); border-color:var(--c-white); }
+  #bP.pressed { background:var(--c-orange); border-color:var(--c-white); }
 
-  /* ---- overlays ---- */
+  /* ---- overlays: flat black, no gradient/glow ---- */
   .overlay { position:fixed; inset:0; z-index:10; display:flex; flex-direction:column;
-      align-items:center; justify-content:center; gap:14px;
-      background:radial-gradient(ellipse at 50% 30%, #17203a 0%, #0a0c12 75%); }
-  .title { color:#ffd23d; font-size:34px; font-weight:bold; letter-spacing:3px;
-      text-shadow:0 0 22px rgba(255,180,40,0.55), 3px 3px 0 #7a2410; text-align:center; }
-  .subtitle { color:#8fa0bc; font-size:13px; letter-spacing:2px; margin-top:-8px; }
-  .mbtn { min-width:230px; padding:13px 22px; font-family:inherit; font-size:16px;
-      font-weight:bold; letter-spacing:1px; color:#e8ecf2; background:#1d2536;
-      border:2px solid #3a4a6a; border-radius:10px; }
-  .mbtn:active { background:#2a3550; }
-  #startBtn { background:#8a2015; border-color:#ff5a33; color:#fff; font-size:19px; }
-  .hint { color:#5f6d85; font-size:11px; text-align:center; line-height:1.7; max-width:340px; }
+      align-items:center; justify-content:center; gap:var(--sp-3);
+      background:var(--c-black); }
+  .title { color:var(--c-yellow); font-family:var(--font-head); font-size:36px; font-weight:bold;
+      letter-spacing:4px; text-align:center; border-top:var(--bw-med) solid var(--c-yellow);
+      border-bottom:var(--bw-med) solid var(--c-yellow); padding:var(--sp-2) 0; }
+  .subtitle { color:var(--c-graycool); font-family:var(--font-head); font-size:13px; letter-spacing:2px; }
+  .mbtn { min-width:230px; padding:13px 22px; font-family:var(--font-head); font-size:16px;
+      font-weight:bold; letter-spacing:1px; color:var(--c-white); background:var(--c-black);
+      border:var(--bw-med) solid var(--c-blue); border-radius:0; }
+  .mbtn:active { background:var(--c-blue); }
+  #startBtn { background:var(--c-black); border-color:var(--c-yellow); color:var(--c-yellow); font-size:19px; }
+  #startBtn:active { background:var(--c-yellow); color:var(--c-black); }
+  .hint { color:var(--c-graycool); font-family:var(--font-head); font-size:11px; text-align:center;
+      line-height:1.7; max-width:340px; }
   #results { display:none; }
-  #resList { column-count:2; column-gap:26px; }
+  #resList { column-count:2; column-gap:var(--sp-6); font-family:var(--font-data); }
   .resRow { display:grid; grid-template-columns:26px 38px 124px 66px; gap:5px;
-      color:#c8d2e2; font-size:12px; line-height:1.5; break-inside:avoid; }
-  .resRow.me { color:#ffd23d; font-weight:bold; }
-  #resTitle { color:#7CFC9A; font-size:22px; font-weight:bold; letter-spacing:2px; text-align:center; }
+      color:var(--c-white); font-size:12px; line-height:1.6; break-inside:avoid;
+      border-bottom:1px solid var(--c-steel); }
+  .resRow.me { color:var(--c-yellow); font-weight:bold; }
+  #resTitle { color:var(--c-white); background:var(--c-blue); font-family:var(--font-head);
+      font-size:22px; font-weight:bold; letter-spacing:2px; text-align:center;
+      padding:var(--sp-2) var(--sp-4); }
 
   /* ---- portrait rotate prompt ---- */
   #rotate { position:fixed; inset:0; z-index:50; display:none; flex-direction:column;
-      align-items:center; justify-content:center; gap:18px; background:#0a0c12; }
-  #rotate .phone { width:46px; height:78px; border:4px solid #ffd23d; border-radius:9px;
-      animation:rot 1.6s ease-in-out infinite; }
+      align-items:center; justify-content:center; gap:18px; background:var(--c-black); }
+  #rotate .phone { width:46px; height:78px; border:4px solid var(--c-yellow); border-radius:0;
+      animation:rot 1.6s linear infinite; }
   @keyframes rot { 0%,25% { transform:rotate(0deg);} 60%,100% { transform:rotate(90deg);} }
-  #rotate p { color:#e8ecf2; font-size:16px; letter-spacing:2px; }
+  #rotate p { color:var(--c-white); font-family:var(--font-head); font-size:16px; letter-spacing:2px; }
   @media (orientation: portrait) { #rotate { display:flex; } }
 
   #glFail { display:none; }
@@ -66,8 +88,8 @@
 <canvas id="gl"></canvas>
 <canvas id="hud"></canvas>
 
-<div id="bL" class="ctl">&#9664;</div>
-<div id="bR" class="ctl">&#9654;</div>
+<div id="bL" class="ctl"><span></span></div>
+<div id="bR" class="ctl"><span></span></div>
 <div id="bB" class="ctl">BRAKE</div>
 <div id="bG" class="ctl">GAS</div>
 
@@ -93,7 +115,7 @@
 <button id="qSkip" class="mbtn" style="display:none; position:fixed; top:14px; left:50%;
   transform:translateX(-50%); z-index:6; min-width:150px; padding:8px 14px; font-size:13px;">SKIP QUALIFYING</button>
 <button id="bP" class="ctl" style="display:none; right:112px; bottom:98px; width:88px; height:44px;
-  font-size:15px; background:rgba(180,140,20,0.4);">PIT</button>
+  font-size:15px; border-color:var(--c-orange);">PIT</button>
 
 <div id="rotate"><div class="phone"></div><p>ROTATE YOUR PHONE</p></div>
 
@@ -1773,14 +1795,85 @@ function drawGL(){
 function fmtT(t){ if(!t||t<=0) return '--:--.--';
   const m=Math.floor(t/60), s=t-m*60;
   return m+':'+(s<10?'0':'')+s.toFixed(2); }
+/* ---- Gen-4 broadcast design tokens (mirrors the CSS :root custom properties) ---- */
+const THEME = {
+  black:'#000000', white:'#ffffff', yellow:'#F7D400', blue:'#1A4FFF',
+  steel:'#2A2A2A', orange:'#FF7A00', red:'#D62828', graycool:'#C8C8C8',
+  sp1:4, sp2:8, sp3:12, sp4:16, sp6:24,
+  fontHead:"bold 13px 'Arial Narrow',sans-serif", fontData:"bold 13px monospace"
+};
 function rr(x,y,w,h,r){ cx.beginPath();
   cx.moveTo(x+r,y); cx.arcTo(x+w,y,x+w,y+h,r); cx.arcTo(x+w,y+h,x,y+h,r);
   cx.arcTo(x,y+h,x,y,r); cx.arcTo(x,y,x+w,y,r); cx.closePath(); }
+function sharpRect(x,y,w,h){ cx.beginPath(); cx.rect(x,y,w,h); }
+function panel(x,y,w,h,borderCol,borderW){       // flat black broadcast panel, sharp corners
+  cx.fillStyle='rgba(0,0,0,0.82)'; sharpRect(x,y,w,h); cx.fill();
+  if(borderCol){ cx.strokeStyle=borderCol; cx.lineWidth=borderW||1; sharpRect(x+0.5,y+0.5,w-1,h-1); cx.stroke(); }
+}
 function colCSS(c){ return `rgb(${Math.round(c[0]*255)},${Math.round(c[1]*255)},${Math.round(c[2]*255)})`; }
 function dispCol(c){                 // lift near-black car colors so UI chips/text stay visible on dark panels
   const l = 0.299*c[0] + 0.587*c[1] + 0.114*c[2];
   if(l >= 0.22) return c;
   return [c[0]+(1-c[0])*0.5, c[1]+(1-c[1])*0.5, c[2]+(1-c[2])*0.5];
+}
+/* ---- SPEED module: header-font label / monospace data / thin blue frame ---- */
+function drawSpeedModule(v){
+  const w=100, h=76, x=W-w-16-SAFE.r, y=H-h-96-SAFE.b;
+  panel(x,y,w,h,THEME.blue,2);
+  cx.textAlign='center';
+  cx.fillStyle=THEME.white; cx.font="bold 11px 'Arial Narrow',sans-serif";
+  cx.fillText('SPEED', x+w/2, y+14);
+  const mph = Math.round(v*2.237);
+  cx.fillStyle=THEME.white; cx.font='bold 40px monospace';
+  cx.fillText(String(mph), x+w/2, y+45);
+  cx.fillStyle=THEME.yellow; cx.font="bold 13px 'Arial Narrow',sans-serif";
+  cx.fillText('MPH', x+w/2, y+66);
+}
+/* ---- segmented diagnostic bar: discrete blocks, not a smooth fill ---- */
+function drawSegBar(x,y,w,h,frac,segN,color){
+  const gap=2, segW=(w-gap*(segN-1))/segN;
+  const filled = Math.round(Math.max(0,Math.min(1,frac))*segN);
+  for(let i=0;i<segN;i++){
+    cx.fillStyle = i<filled ? color : THEME.steel;
+    cx.fillRect(x+i*(segW+gap), y, segW, h);
+  }
+}
+/* ---- unified race-state banner: one visual treatment, one shared slide-in timer ---- */
+let bannerState = { key:null, t0:0 };
+/* ---- procedural flag icon: green / yellow(caution) / checkered(victory) ---- */
+const FLAG_ICON = { pace:'yellow', caution:'yellow', green:'green', victory:'checkered' };
+const FLAG_GREEN = '#1F9D55';   // content-accurate flag color; UI chrome itself stays on-palette
+function drawFlagIcon(x,y,s,pattern){
+  cx.save();
+  if(pattern==='checkered'){
+    const n=4, cell=s/n;
+    for(let r=0;r<n;r++) for(let cIdx=0;cIdx<n;cIdx++){
+      cx.fillStyle = (r+cIdx)%2===0 ? THEME.white : THEME.black;
+      cx.fillRect(x+cIdx*cell, y+r*cell, cell, cell);
+    }
+  } else {
+    cx.fillStyle = pattern==='green' ? FLAG_GREEN : THEME.yellow;
+    cx.fillRect(x,y,s,s);
+  }
+  cx.strokeStyle=THEME.white; cx.lineWidth=1; cx.strokeRect(x+0.5,y+0.5,s-1,s-1);
+  cx.fillStyle=THEME.graycool; cx.fillRect(x-3,y,3,s);   // flagpole
+  cx.restore();
+}
+function drawStateBanner(key, text, tone, y){
+  if(bannerState.key !== key){ bannerState.key = key; bannerState.t0 = performance.now(); }
+  const age = (performance.now()-bannerState.t0)/1000;
+  const slide = Math.min(1, age/0.25);
+  const ease = 1-(1-slide)*(1-slide);
+  const icon = FLAG_ICON[key];
+  const iconW = icon ? 26 : 0;
+  const w = Math.max(220, text.length*11+70) + iconW, h=30;
+  const yy = y - (1-ease)*24;
+  cx.globalAlpha = ease;
+  panel(W/2-w/2, yy, w, h, tone, 2);
+  if(icon) drawFlagIcon(W/2-w/2+10, yy+7, 16, icon);
+  cx.fillStyle = tone; cx.font="bold 15px 'Arial Narrow',sans-serif"; cx.textAlign='center';
+  cx.fillText(text, W/2 + iconW/2, yy+h/2+1);
+  cx.globalAlpha = 1;
 }
 function drawHUD(){
   cx.clearRect(0,0,W,H);
@@ -1795,23 +1888,23 @@ function drawHUD(){
   for(let i=0;i<Math.min(8, S.order.length);i++) list.push(i);
   if(playerRank >= 8) list[7] = playerRank;
   const rows = list.length;
-  const th=22, tw=128, tx=10+SAFE.l, ty=14+SAFE.t;
-  cx.fillStyle='rgba(8,10,16,0.72)';
-  rr(tx,ty,tw,26+rows*th,8); cx.fill();
-  cx.fillStyle = S.flag==='yellow' ? '#ffd23d' : '#ffd23d';
-  cx.font='bold 13px monospace'; cx.textAlign='left';
-  cx.fillText(S.flag==='yellow' ? 'CAUTION' : 'LAKE HILL 400', tx+10, ty+14);
+  const th=22, tw=132, tx=12+SAFE.l, ty=12+SAFE.t, headH=22;
+  panel(tx,ty+headH,tw,rows*th+8,THEME.white,1);
+  cx.fillStyle = THEME.yellow;
+  sharpRect(tx,ty,tw,headH); cx.fill();
+  cx.fillStyle=THEME.black; cx.font="bold 12px 'Arial Narrow',sans-serif"; cx.textAlign='left';
+  cx.fillText(S.flag==='yellow' ? 'CAUTION' : 'LAKE HILL 400', tx+8, ty+headH/2+1);
   // broadcast-style: alternate names and intervals every few seconds
   const showGaps = S.mode==='race' && S.flag==='green' && Math.floor(S.t/5)%2===1;
   const lapEst = (S.order[0] && S.order[0].lastLapT) || TRACK.total/48;
   for(let r=0;r<rows;r++){
-    const i = list[r], c = S.order[i], y = ty+26+r*th+th/2;
-    if(c===P){ cx.fillStyle='rgba(255,210,61,0.18)'; cx.fillRect(tx+2,y-th/2+1,tw-4,th-2); }
-    cx.fillStyle='#9aa3b2'; cx.font='bold 12px monospace';
+    const i = list[r], c = S.order[i], y = ty+headH+4+r*th+th/2;
+    if(c===P){ cx.fillStyle=THEME.yellow; cx.fillRect(tx+1,y-th/2+1,tw-2,th-2); }
+    cx.fillStyle = c===P ? THEME.black : THEME.graycool; cx.font='bold 12px monospace';
     cx.fillText(String(i+1), tx+8, y);
     cx.fillStyle=colCSS(dispCol(c.col));
     cx.fillRect(tx+26, y-7, 5, 14);
-    cx.fillStyle = c===P ? '#ffd23d' : '#e8ecf2'; cx.font='11px monospace';
+    cx.fillStyle = c===P ? THEME.black : THEME.white; cx.font='11px monospace';
     let tag = c.isPlayer ? 'YOU' : c.name.split(' ').pop();
     if(c.out) tag = 'OUT';
     else if(c.pit>0) tag = 'PIT';
@@ -1822,85 +1915,68 @@ function drawHUD(){
     } else if(showGaps && i===0) tag = 'LEADER';
     cx.fillText('#'+c.num+' '+tag.slice(0,9), tx+36, y);
   }
-  // --- lap banner (top center) ---
-  cx.fillStyle='rgba(8,10,16,0.72)';
-  rr(W/2-78, 10+SAFE.t, 156, 34, 8); cx.fill();
-  cx.fillStyle='#e8ecf2'; cx.font='bold 17px monospace'; cx.textAlign='center';
+  // --- lap counter (top center) + LAST/BEST strip beneath ---
+  const lw=160, lx=W/2-lw/2, ly=10+SAFE.t;
+  panel(lx,ly,lw,32,THEME.white,1);
+  cx.fillStyle=THEME.yellow; sharpRect(lx,ly,lw,3); cx.fill();
+  cx.fillStyle=THEME.white; cx.font='bold 16px monospace'; cx.textAlign='center';
   const lapNo = Math.min(S.laps, Math.max(1, P.lap<1 ? 1 : P.lap+1));
-  cx.fillText('LAP '+(P.done?S.laps:lapNo)+' / '+S.laps, W/2, 27+SAFE.t);
-  // --- lap times (top right) ---
-  const rx = W-176-SAFE.r;
-  cx.fillStyle='rgba(8,10,16,0.72)';
-  rr(rx, 10+SAFE.t, 166, 52, 8); cx.fill();
-  cx.textAlign='left'; cx.font='12px monospace';
-  cx.fillStyle='#9aa3b2'; cx.fillText('LAST', rx+10, 24+SAFE.t);
-  cx.fillStyle='#e8ecf2'; cx.fillText(fmtT(P.lastLapT), rx+58, 24+SAFE.t);
-  cx.fillStyle='#9aa3b2'; cx.fillText('BEST', rx+10, 46+SAFE.t);
-  cx.fillStyle='#7CFC9A'; cx.fillText(fmtT(P.bestLapT), rx+58, 46+SAFE.t);
-  // --- speed (bottom center-right, big MPH like NT2003) ---
-  const mph = Math.round(P.v*2.237);
-  const spX = W-24-SAFE.r, spY = H-152-SAFE.b;   // above the GAS/BRAKE cluster (buttons top out ~H-110)
-  cx.textAlign='right';
-  cx.font='bold 46px monospace'; cx.fillStyle='#ffffff';
-  cx.strokeStyle='rgba(0,0,0,0.7)'; cx.lineWidth=5;
-  cx.strokeText(String(mph), spX, spY);
-  cx.fillText(String(mph), spX, spY);
-  cx.font='bold 15px monospace'; cx.fillStyle='#ffd23d';
-  cx.strokeText('MPH', spX, spY+30); cx.fillText('MPH', spX, spY+30);
-  // --- tire / fuel / damage bars + DRAFT flag ---
-  const bw=110, bx=W/2-bw/2, byBase=H-14-SAFE.b, rowH=13;
+  cx.fillText('LAP '+(P.done?S.laps:lapNo)+' / '+S.laps, W/2, ly+19);
+  const sy = ly+38;
+  panel(lx,sy,lw,26,THEME.white,1);
+  cx.textAlign='left'; cx.font="bold 9px 'Arial Narrow',sans-serif";
+  cx.fillStyle=THEME.graycool; cx.fillText('LAST', lx+8, sy+9);
+  cx.fillStyle=THEME.graycool; cx.fillText('BEST', lx+lw/2+8, sy+9);
+  cx.font='bold 12px monospace';
+  cx.fillStyle=THEME.white; cx.fillText(fmtT(P.lastLapT), lx+8, sy+20);
+  cx.fillStyle=THEME.yellow; cx.fillText(fmtT(P.bestLapT), lx+lw/2+8, sy+20);
+  // --- speed module (bottom-right, above the pedal cluster) ---
+  drawSpeedModule(P.v);
+  // --- tire / fuel / damage segmented bars + DRAFT flag ---
+  const bw=110, bx=W/2-bw/2, byBase=H-14-SAFE.b, rowH=15;
   cx.textAlign='left';
-  cx.fillStyle='rgba(8,10,16,0.6)'; rr(bx-46,byBase-3*rowH-4,bw+52,3*rowH+8,6); cx.fill();
+  panel(bx-48,byBase-3*rowH-6,bw+56,3*rowH+10,THEME.white,1);
   const bar=(row,label,frac,col)=>{
-    const y = byBase - (3-row)*rowH + rowH/2 - 2;
-    cx.fillStyle='#9aa3b2'; cx.font='9px monospace'; cx.fillText(label, bx-40, y);
-    cx.fillStyle='#2a2f3a'; cx.fillRect(bx,y-4,bw,8);
-    cx.fillStyle=col; cx.fillRect(bx,y-4,bw*Math.max(0,Math.min(1,frac)),8);
+    const y = byBase - (3-row)*rowH + rowH/2 - 5;
+    cx.fillStyle=THEME.graycool; cx.font="bold 9px 'Arial Narrow',sans-serif"; cx.fillText(label, bx-42, y+5);
+    drawSegBar(bx,y,bw,9,frac,8,col);
   };
   const wr = 1-P.wear;
-  bar(1,'TIRE', wr, wr>0.5 ? '#7CFC9A' : wr>0.25 ? '#ffd23d' : '#ff5544');
-  bar(2,'FUEL', P.fuel, P.fuel>0.3 ? '#57a7ff' : P.fuel>0.12 ? '#ffd23d' : '#ff5544');
+  bar(1,'TIRE', wr, wr>0.5 ? THEME.yellow : wr>0.25 ? THEME.orange : THEME.red);
+  bar(2,'FUEL', P.fuel, P.fuel>0.3 ? THEME.blue : P.fuel>0.12 ? THEME.orange : THEME.red);
   const dOK = 1-P.dmg;
-  bar(3,'CAR',  dOK, dOK>0.6 ? '#7CFC9A' : dOK>0.3 ? '#ffd23d' : '#ff5544');
+  bar(3,'CAR',  dOK, dOK>0.6 ? THEME.blue : dOK>0.3 ? THEME.orange : THEME.red);
+  const draftY = 118+SAFE.t;
   if(P.draftF>0.05){
-    cx.fillStyle='rgba(60,190,90,'+(0.55+0.4*P.draftF)+')';
-    rr(W/2-42, 52, 84, 24, 6); cx.fill();
-    cx.fillStyle='#08130a'; cx.font='bold 13px monospace'; cx.textAlign='center';
-    cx.fillText('DRAFT', W/2, 64);
+    panel(W/2-46, draftY, 92, 24, THEME.yellow, 2);
+    cx.fillStyle=THEME.yellow; cx.font="bold 13px 'Arial Narrow',sans-serif"; cx.textAlign='center';
+    cx.fillText('DRAFT', W/2, draftY+13);
   }
   // --- minimap (bottom-left above steer buttons) ---
   drawMinimap();
-  if(S.mode==='pace'){
-    cx.fillStyle='rgba(200,170,20,0.92)';
-    rr(W/2-118, 52, 236, 28, 7); cx.fill();
-    cx.fillStyle='#141403'; cx.font='bold 14px monospace'; cx.textAlign='center';
-    cx.fillText('PACE LAP \u2014 HOLD FORMATION', W/2, 66);
+  // --- unified race-state banner (one call site, one visual system): clear of the
+  // lap counter / LAST-BEST strip above (which end at ~74+SAFE.t) ---
+  const bannerY = 82+SAFE.t;
+  if(S.mode==='pace') drawStateBanner('pace','PACE LAP — HOLD FORMATION',THEME.yellow,bannerY);
+  else if(S.mode==='race' && S.flag==='yellow'){
+    const lead = S.order[0];
+    const togo = Math.max(0, S.cautionUntilLap - (lead ? lead.lap : 0));
+    drawStateBanner('caution', togo<=0 ? 'CAUTION — GREEN NEXT TIME BY' : 'CAUTION — FIELD SLOWED', THEME.yellow, bannerY);
   }
-  if(S.mode==='race' && S.flag==='yellow') drawCautionBanner();
-  if(S.greenT>0) drawGreenFlag();
-  // milestone / fastest-lap banner pop-ups
-  if(S.msgT > 0){
-    const a = Math.min(1, S.msgT/0.4);
-    cx.fillStyle='rgba(8,10,16,'+(0.8*a)+')';
-    rr(W/2-130, H*0.20, 260, 30, 8); cx.fill();
-    cx.fillStyle='rgba(124,252,154,'+a+')'; cx.font='bold 15px monospace'; cx.textAlign='center';
-    cx.fillText(S.msgTxt, W/2, H*0.20+15);
-  }
-  if(S.mode==='victory'){
-    cx.font='bold 40px monospace'; cx.textAlign='center';
-    cx.fillStyle='#ffd23d'; cx.strokeStyle='rgba(0,0,0,0.75)'; cx.lineWidth=6;
-    cx.strokeText('CHECKERED FLAG!', W/2, H*0.28);
-    cx.fillText('CHECKERED FLAG!', W/2, H*0.28);
-  }
+  else if(S.greenT>0) drawStateBanner('green','GREEN GREEN GREEN!',THEME.blue,bannerY);
+  else if(S.msgT>0) drawStateBanner('msg', S.msgTxt, THEME.white, bannerY);
+  else if(S.mode==='victory') drawStateBanner('victory','CHECKERED FLAG!',THEME.yellow,bannerY);
+  else bannerState.key = null;
   // spotter radio caption (above the status bars)
   if(S.spotT > 0 && S.spotTxt){
     const a = Math.min(1, S.spotT/0.4);
-    cx.font='bold 16px monospace'; cx.textAlign='center';
-    const cw = Math.max(200, S.spotTxt.length*11 + 60);
-    cx.fillStyle='rgba(8,10,16,'+(0.7*a)+')';
-    rr(W/2-cw/2, H-98-SAFE.b, cw, 24, 6); cx.fill();
-    cx.fillStyle='rgba(255,180,60,'+a+')';
-    cx.fillText('« '+S.spotTxt+' »', W/2, H-86-SAFE.b);
+    cx.font="bold 14px 'Arial Narrow',sans-serif"; cx.textAlign='center';
+    const cw = Math.max(200, S.spotTxt.length*10 + 60);
+    cx.globalAlpha = a;
+    panel(W/2-cw/2, H-98-SAFE.b, cw, 24, THEME.orange, 1);
+    cx.fillStyle=THEME.orange;
+    cx.fillText(S.spotTxt, W/2, H-86-SAFE.b);
+    cx.globalAlpha = 1;
   }
 }
 let MMPTS=null, MMSC=0.115;
@@ -1912,55 +1988,26 @@ function drawMinimap(){
       bx=Math.max(bx,Math.abs(p.x)); by=Math.max(by,Math.abs(p.y)); }
     MMSC = Math.min((mw-18)/2/bx, (mh-14)/2/by);          // auto-fit any track size
   }
-  cx.fillStyle='rgba(8,10,16,0.55)'; rr(mx,my,mw,mh,8); cx.fill();
+  panel(mx,my,mw,mh,THEME.white,1);
   const sc = MMSC, ox=mx+mw/2, oy=my+mh/2;
-  cx.strokeStyle='#5b6472'; cx.lineWidth=3; cx.beginPath();
+  cx.strokeStyle=THEME.graycool; cx.lineWidth=2; cx.beginPath();
   MMPTS.forEach((p,i)=>{ const X=ox+p[0]*sc, Y=oy+p[1]*sc; i?cx.lineTo(X,Y):cx.moveTo(X,Y); });
   cx.closePath(); cx.stroke();
   for(const c of S.cars){
-    cx.fillStyle = c.isPlayer ? '#ffd23d' : colCSS(dispCol(c.col));
+    cx.fillStyle = c.isPlayer ? THEME.yellow : colCSS(dispCol(c.col));
     cx.beginPath(); cx.arc(ox+c.x*sc, oy+c.y*sc, c.isPlayer?3.4:2.4, 0, Math.PI*2); cx.fill();
   }
 }
-function drawGreenFlag(){
-  const a = Math.min(1, S.greenT/0.5);
-  cx.textAlign='center'; cx.textBaseline='middle';
-  cx.font='bold 44px monospace';
-  cx.fillStyle = 'rgba(70,220,110,'+a+')';
-  cx.strokeStyle='rgba(0,0,0,'+(0.75*a)+')'; cx.lineWidth=7;
-  cx.strokeText('GREEN GREEN GREEN!', W/2, H*0.34);
-  cx.fillText('GREEN GREEN GREEN!', W/2, H*0.34);
-}
-function drawCautionBanner(){
-  const pulse = 0.72 + 0.28*Math.sin(S.t*5);
-  cx.fillStyle='rgba(235,195,20,'+pulse.toFixed(2)+')';
-  rr(W/2-118, 52, 236, 28, 7); cx.fill();
-  cx.fillStyle='#141403'; cx.font='bold 14px monospace'; cx.textAlign='center';
-  const lead = S.order[0];
-  const togo = Math.max(0, S.cautionUntilLap - (lead ? lead.lap : 0));
-  cx.fillText(togo <= 0 ? 'CAUTION — GREEN NEXT TIME BY' : 'CAUTION — FIELD SLOWED', W/2, 66);
-}
 function drawQualHUD(){
   const P = S.player;
-  cx.fillStyle='rgba(8,10,16,0.72)';
-  rr(W/2-110, 10+SAFE.t, 220, 34, 8); cx.fill();
-  cx.fillStyle='#e8ecf2'; cx.font='bold 15px monospace'; cx.textAlign='center';
+  panel(W/2-110, 10+SAFE.t, 220, 34, THEME.white, 1);
+  cx.fillStyle=THEME.white; cx.font="bold 14px 'Arial Narrow',sans-serif"; cx.textAlign='center';
   cx.fillText(P.lap < 0 ? 'QUALIFYING — OUT LAP' : 'QUALIFYING — FLYING LAP', W/2, 27+SAFE.t);
-  cx.fillStyle='rgba(8,10,16,0.72)';
-  rr(W/2-70, 50+SAFE.t, 140, 30, 8); cx.fill();
+  panel(W/2-70, 50+SAFE.t, 140, 30, THEME.white, 1);
   cx.font='bold 18px monospace';
-  cx.fillStyle='#7CFC9A';
+  cx.fillStyle=THEME.yellow;
   cx.fillText(P.lap >= 0 ? fmtT(S.t - P.lapStartT) : '--:--.--', W/2, 65+SAFE.t);
-  // speed
-  const mph = Math.round(P.v*2.237);
-  const spX = W-24-SAFE.r, spY = H-152-SAFE.b;
-  cx.textAlign='right';
-  cx.font='bold 46px monospace'; cx.fillStyle='#ffffff';
-  cx.strokeStyle='rgba(0,0,0,0.7)'; cx.lineWidth=5;
-  cx.strokeText(String(mph), spX, spY);
-  cx.fillText(String(mph), spX, spY);
-  cx.font='bold 15px monospace'; cx.fillStyle='#ffd23d';
-  cx.strokeText('MPH', spX, spY+30); cx.fillText('MPH', spX, spY+30);
+  drawSpeedModule(P.v);
 }
 function showResults(){
   const el = document.getElementById('results');
