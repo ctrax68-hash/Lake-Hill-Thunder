@@ -510,16 +510,22 @@ function stepCar(c){
     const cFF = TRACK.pointAt(c.s + Math.max(6, c.v*0.3)).curv;
     steerIn = Math.max(-1, Math.min(1, (c.v*cFF)/Math.max(0.05, c.v*0.24) + dHp*1.5));
     if(c.v < vT - 0.3){ thr=0.4; brk=0; } else if(c.v > vT + 0.4){ thr=0; brk=0.8; } else { thr=0.15; brk=0; }
-  } else if(S.mode==='race' && S.flag==='yellow' && !c.isPlayer){
-    // ---- caution: fall in single file behind the pace car ----
+  } else if(S.mode==='race' && S.flag==='yellow'){
+    // ---- caution: fall in single file behind the pace car (computer takes
+    // over for the player here too, same as every AI car — no manual input
+    // is read again until the green flag drops) ----
     let ahead=null, ad=1e9;
     for(const o of S.cars){ if(o===c || o.pit>0 || o.spinT>0 || o.done) continue;
       let ds=o.s-c.s; if(ds<-TRACK.total/2)ds+=TRACK.total; if(ds>TRACK.total/2)ds-=TRACK.total;
       if(ds>0.5 && ds<ad){ ad=ds; ahead=o; } }
     let vT;
-    if(ahead && ad<30) vT = ahead.v + (ad - 9)*0.5;
+    // clamp to 0: with a tight gap and a near-stopped car ahead, the raw
+    // formula goes negative, which permanently brake-locks both cars (the
+    // follower never gets a positive throttle, so the gap never opens back
+    // up) — a real pile-up that doesn't recover on its own under caution.
+    if(ahead && ad<30) vT = Math.max(0, ahead.v + (ad - 9)*0.5);
     else { let dp=PACE.s-c.s; if(dp<-TRACK.total/2)dp+=TRACK.total; if(dp>TRACK.total/2)dp-=TRACK.total;
-      vT = (dp>0 && dp<90) ? PACE.v + (dp-16)*0.4 : 44; }
+      vT = (dp>0 && dp<90) ? Math.max(0, PACE.v + (dp-16)*0.4) : 44; }
     const lane = 0;
     const LAy = Math.max(12, c.v*0.62);
     const pTy = TRACK.pointAt(c.s + LAy);
@@ -559,7 +565,6 @@ function stepCar(c){
     if(S.tilt) steerIn = Math.max(-1, Math.min(1, S.tiltG/22));
     steerIn *= 1 - 0.10*Math.min(1, c.v/85);       // calm the wheel at speed (full lock must still reach the corner grip limit)
     steerIn += c.dmg*0.02;                         // bent bodywork pulls gently toward the wall
-    if(S.mode==='race' && S.flag==='yellow' && c.v > 42){ thr = 0; brk = Math.max(brk, 0.5); }  // forced pacing
   } else {
     const vT = targetSpeed(c) * (c.done?0.55:1);
     const pHere = TRACK.pointAt(c.s);
@@ -2192,7 +2197,6 @@ function tick(){
           S.cautionUntilLap = lead.lap + 2;
           PACE.state='lead'; PACE.lat=0; PACE.v=38;
           PACE.s = (lead.s + 90) % TRACK.total;
-          S.yellowRank = S.order.indexOf(S.player);  // race-control snapshot
           break;
         }
       }
@@ -2200,16 +2204,15 @@ function tick(){
       S.yellowT += DT;
       stepPace();
       PACE.v = 38;
-      // race control: player improving position under yellow (vs. non-pitting cars) = penalty
-      if(S.yellowT > 3 && !S.player.dtPending && S.player.pit===0 && !S.player.done){
-        const rank = S.order.indexOf(S.player);
-        const pittersAhead = S.order.slice(0, S.yellowRank).filter(c=>c.pit>0 || c.out).length;
-        if(rank < S.yellowRank - pittersAhead - 0){
-          S.player.dtPending = true;
-          S.msgTxt = 'PENALTY — PASSED UNDER YELLOW'; S.msgT = 3.2;
-          spotterSay('PENALTY — DRIVE-THROUGH');
-        }
-      }
+      // NOTE: there used to be a "passed under yellow" penalty check here for
+      // the player. It made sense back when the player kept manual control
+      // (just speed-capped) during caution, since a human could deliberately
+      // out-drive the field to gain track position. Now that the computer
+      // fully drives the player under yellow — identical single-file pacing
+      // logic to every AI car — the player can no longer manually cheat, and
+      // the natural rank "noise" from gap/bunching dynamics (which AI cars
+      // experience amongst themselves all the time, unpenalized) started
+      // false-triggering drive-through penalties on totally fair restarts.
       const lead = S.order[0];
       if(lead.lap >= S.cautionUntilLap && S.yellowT > 8){
         // one-to-go is done: green as the leader reaches the line zone
