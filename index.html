@@ -17,6 +17,9 @@
     --bw-thin:1px; --bw-med:2px;
     --font-head:'Arial Narrow','Segoe UI Condensed',Impact,sans-serif;
     --font-data:'Consolas','Courier New',monospace;
+    /* subtle depth polish — a "lifted card" shadow, not a glow, and kept
+       small/low-opacity so the flat/sharp broadcast identity stays intact */
+    --shadow-panel: 0 2px 6px rgba(0,0,0,0.35);
   }
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent;
       user-select:none; -webkit-user-select:none; touch-action:none; }
@@ -30,7 +33,8 @@
   .ctl { position:fixed; z-index:5; display:flex; align-items:center; justify-content:center;
       border-radius:0; font-family:var(--font-head); font-weight:bold; font-size:22px;
       letter-spacing:1px; color:var(--c-white);
-      background:rgba(0,0,0,0.62); border:var(--bw-med) solid var(--c-blue); }
+      background:linear-gradient(180deg, rgba(255,255,255,0.05), rgba(0,0,0,0.05)), rgba(0,0,0,0.62);
+      border:var(--bw-med) solid var(--c-blue); box-shadow:var(--shadow-panel); }
   .ctl.pressed { background:var(--c-blue); border-color:var(--c-white); color:var(--c-white); }
   #bL, #bR { display:flex; }
   #bL span, #bR span { width:0; height:0; border-top:11px solid transparent; border-bottom:11px solid transparent; }
@@ -52,11 +56,13 @@
       background:var(--c-black); }
   .title { color:var(--c-yellow); font-family:var(--font-head); font-size:36px; font-weight:bold;
       letter-spacing:4px; text-align:center; border-top:var(--bw-med) solid var(--c-yellow);
-      border-bottom:var(--bw-med) solid var(--c-yellow); padding:var(--sp-2) 0; }
+      border-bottom:var(--bw-med) solid var(--c-yellow); padding:var(--sp-2) 0;
+      text-shadow:0 2px 4px rgba(0,0,0,0.5); }
   .subtitle { color:var(--c-graycool); font-family:var(--font-head); font-size:13px; letter-spacing:2px; }
   .mbtn { min-width:230px; padding:13px 22px; font-family:var(--font-head); font-size:16px;
-      font-weight:bold; letter-spacing:1px; color:var(--c-white); background:var(--c-black);
-      border:var(--bw-med) solid var(--c-blue); border-radius:0; }
+      font-weight:bold; letter-spacing:1px; color:var(--c-white);
+      background:linear-gradient(180deg, rgba(255,255,255,0.04), rgba(0,0,0,0.04)), var(--c-black);
+      border:var(--bw-med) solid var(--c-blue); border-radius:0; box-shadow:var(--shadow-panel); }
   .mbtn:active { background:var(--c-blue); }
   #startBtn { background:var(--c-black); border-color:var(--c-yellow); color:var(--c-yellow); font-size:19px; }
   #startBtn:active { background:var(--c-yellow); color:var(--c-black); }
@@ -68,9 +74,9 @@
       color:var(--c-white); font-size:12px; line-height:1.6; break-inside:avoid;
       border-bottom:1px solid var(--c-steel); }
   .resRow.me { color:var(--c-yellow); font-weight:bold; }
-  #resTitle { color:var(--c-white); background:var(--c-blue); font-family:var(--font-head);
-      font-size:22px; font-weight:bold; letter-spacing:2px; text-align:center;
-      padding:var(--sp-2) var(--sp-4); }
+  #resTitle { color:var(--c-white); background:linear-gradient(180deg, rgba(255,255,255,0.06), rgba(0,0,0,0.06)), var(--c-blue);
+      font-family:var(--font-head); font-size:22px; font-weight:bold; letter-spacing:2px; text-align:center;
+      padding:var(--sp-2) var(--sp-4); box-shadow:var(--shadow-panel); }
 
   /* ---- portrait rotate prompt ---- */
   #rotate { position:fixed; inset:0; z-index:50; display:none; flex-direction:column;
@@ -967,6 +973,45 @@ function readSafeArea(){
   SAFE.t = px(s.getPropertyValue('--safeT'));
   SAFE.b = px(s.getPropertyValue('--safeB'));
 }
+/* ---------- post-fx framebuffers (declared before the first resize() call
+   below, which allocates them) ---------- */
+let SCENE_FBO=null, BLOOM_A=null, BLOOM_B=null, FSQUAD=null;
+function makeFBO(w, h, withDepth){
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  const fb = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+  let rb = null;
+  if(withDepth){
+    rb = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, rb);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, w, h);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, rb);
+  }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  return { fb, tex, rb, w, h };
+}
+function freeFBO(o){ if(!o) return; gl.deleteFramebuffer(o.fb); gl.deleteTexture(o.tex); if(o.rb) gl.deleteRenderbuffer(o.rb); }
+function resizePostFX(){
+  if(!gl || cv.width<=0 || cv.height<=0) return;
+  freeFBO(SCENE_FBO); freeFBO(BLOOM_A); freeFBO(BLOOM_B);
+  SCENE_FBO = makeFBO(cv.width, cv.height, true);
+  const half = (cv.width*cv.height > 1.5e6) ? 0.25 : 0.5;
+  const bw = Math.max(1, Math.round(cv.width*half)), bh = Math.max(1, Math.round(cv.height*half));
+  BLOOM_A = makeFBO(bw, bh, false);
+  BLOOM_B = makeFBO(bw, bh, false);
+  if(!FSQUAD){
+    FSQUAD = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, FSQUAD);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,-1, 1,1, -1,1]), gl.STATIC_DRAW);
+  }
+}
 function resize(){
   DPR = Math.min(2, window.devicePixelRatio||1);
   W = window.innerWidth; H = window.innerHeight;
@@ -975,7 +1020,7 @@ function resize(){
   hud.width = W*DPR; hud.height = H*DPR;
   hud.style.width = W+'px'; hud.style.height = H+'px';
   cx.setTransform(DPR,0,0,DPR,0,0);
-  if(gl) gl.viewport(0,0,cv.width,cv.height);
+  if(gl){ gl.viewport(0,0,cv.width,cv.height); resizePostFX(); }
   readSafeArea();
 }
 window.addEventListener('resize', resize); resize();
@@ -997,27 +1042,41 @@ function makeProg(vs, fs){
 let PROG=null, SKYPROG=null;
 if(gl){
 PROG = makeProg(`
-  attribute vec3 aPos; attribute vec3 aNrm; attribute vec4 aCol; attribute vec2 aUV;
+  attribute vec3 aPos; attribute vec3 aNrm; attribute vec4 aCol; attribute vec2 aUV; attribute float aSpec;
   uniform mat4 uProj, uView, uModel;
-  uniform vec3 uSun; uniform vec3 uPaint;
-  varying vec3 vCol; varying float vFog; varying float vLit; varying vec2 vUV;
+  uniform vec3 uSun; uniform vec3 uPaint; uniform vec3 uSkyTint, uGroundTint; uniform vec3 uEyePos;
+  varying vec3 vCol; varying float vFog; varying vec3 vLit; varying vec2 vUV; varying float vSpec; varying vec3 vTint;
   void main(){
     vec4 wp = uModel * vec4(aPos, 1.0);
     vec3 n = normalize(mat3(uModel) * aNrm);
-    float lit = 0.46 + 0.62 * max(0.0, dot(n, uSun));
+    // hemisphere ambient (sky tint up top, ground tint underneath) replaces
+    // the old flat constant so surfaces aren't uniformly lit regardless of
+    // which way they face, plus the existing single directional sun term
+    vec3 lit = mix(uGroundTint, uSkyTint, n.y*0.5+0.5) + 0.62 * max(0.0, dot(n, uSun));
     vec3 base = (aCol.a < 0.5) ? uPaint : aCol.rgb;
-    vCol = base * lit; vLit = lit; vUV = aUV;
+    vCol = base * lit; vLit = lit; vUV = aUV; vTint = aCol.rgb;
+    vec3 eyeDir = normalize(uEyePos - wp.xyz);
+    vec3 h = normalize(uSun + eyeDir);
+    vSpec = pow(max(0.0, dot(n, h)), mix(8.0, 64.0, aSpec)) * aSpec;
     vec4 vp = uView * wp;
     vFog = clamp((length(vp.xyz) - 140.0) / 560.0, 0.0, 1.0);
     gl_Position = uProj * vp;
   }`, `
   precision mediump float;
-  varying vec3 vCol; varying float vFog; varying float vLit; varying vec2 vUV;
+  varying vec3 vCol; varying float vFog; varying vec3 vLit; varying vec2 vUV; varying float vSpec; varying vec3 vTint;
   uniform sampler2D uTex; uniform float uAlpha;
   void main(){
     vec3 fogC = vec3(0.72, 0.80, 0.90);
-    vec3 base = (vUV.x >= 0.0) ? texture2D(uTex, vUV).rgb * vLit : vCol;
-    gl_FragColor = vec4(mix(base, fogC, vFog*0.85), uAlpha);
+    vec3 base; float texAlpha = 1.0;
+    if(vUV.x >= 0.0){
+      vec4 texel = texture2D(uTex, vUV);
+      base = texel.rgb * vTint * vLit;   // vTint is (1,1,1) for cars/world — only particles tint their sprite
+      texAlpha = texel.a;                // opaque (1.0) for car/world atlases; the particle sprite's soft falloff
+    } else {
+      base = vCol;
+    }
+    base += vSpec * vec3(1.0, 0.98, 0.92);   // near-white, sun-tinted highlight — additive, not paint-tinted
+    gl_FragColor = vec4(mix(base, fogC, vFog*0.85), uAlpha * texAlpha);
   }`);
 SKYPROG = makeProg(`
   attribute vec2 aP; varying float vY;
@@ -1029,10 +1088,52 @@ SKYPROG = makeProg(`
     gl_FragColor = vec4(mix(uHorizon, uZenith, pow(t, 0.75)), 1.0);
   }`);
 }
+/* ---------- post-processing: scene renders into SCENE_FBO, then a small
+   chain of full-screen passes (bright-pass/blur into BLOOM_A/B, then a
+   final composite) blits to the real backbuffer. BLURPROG's uDir=(0,0)
+   doubles as a plain bright-pass/downsample (all 5 taps land on the same
+   texel, weights sum to 1.0, so it's a clean copy+threshold with no blur).
+   uBloomStrength starts at 0 / vignette starts disabled (VIS-6 turns the
+   real look on) so this stage is verifiable as a no-op passthrough first. */
+let POSTPROG=null, BLURPROG=null;
+if(gl){
+POSTPROG = makeProg(`
+  attribute vec2 aP; varying vec2 vUV;
+  void main(){ vUV = aP*0.5+0.5; gl_Position = vec4(aP, 0.0, 1.0); }`, `
+  precision mediump float; varying vec2 vUV;
+  uniform sampler2D uScene, uBloom;
+  uniform float uBloomStrength, uLift, uGain, uGamma, uSaturation;
+  uniform float uVignetteInner, uVignetteOuter;
+  void main(){
+    vec3 scene = texture2D(uScene, vUV).rgb;
+    vec3 bloom = texture2D(uBloom, vUV).rgb;
+    vec3 color = scene + bloom * uBloomStrength;
+    color = pow(max(vec3(0.0), color*uGain + uLift), vec3(1.0/uGamma));
+    float luma = dot(color, vec3(0.299,0.587,0.114));
+    color = mix(vec3(luma), color, uSaturation);
+    float d = length(vUV - 0.5) * 1.4142;
+    color *= 1.0 - smoothstep(uVignetteInner, uVignetteOuter, d);
+    gl_FragColor = vec4(color, 1.0);
+  }`);
+BLURPROG = makeProg(`
+  attribute vec2 aP; varying vec2 vUV;
+  void main(){ vUV = aP*0.5+0.5; gl_Position = vec4(aP, 0.0, 1.0); }`, `
+  precision mediump float; varying vec2 vUV;
+  uniform sampler2D uTex; uniform vec2 uDir; uniform float uThreshold;
+  void main(){
+    vec3 sum  = texture2D(uTex, vUV).rgb * 0.227027;
+    sum += texture2D(uTex, vUV + uDir*1.3846).rgb * 0.3162162;
+    sum += texture2D(uTex, vUV - uDir*1.3846).rgb * 0.3162162;
+    sum += texture2D(uTex, vUV + uDir*3.2308).rgb * 0.0702703;
+    sum += texture2D(uTex, vUV - uDir*3.2308).rgb * 0.0702703;
+    if(uThreshold > 0.0) sum = max(vec3(0.0), sum - uThreshold);
+    gl_FragColor = vec4(sum, 1.0);
+  }`);
+}
 
 /* ---------- mesh builder ---------- */
 function Builder(){
-  this.pos=[]; this.nrm=[]; this.col=[]; this.uv=[];
+  this.pos=[]; this.nrm=[]; this.col=[]; this.uv=[]; this.spec=[];
 }
 Builder.prototype.tri = function(a,b,c, col, paint){
   const u = v3sub(b,a), v = v3sub(c,a);
@@ -1043,12 +1144,13 @@ Builder.prototype.tri = function(a,b,c, col, paint){
     this.nrm.push(n[0],n[1],n[2]);
     this.col.push(col[0],col[1],col[2],al);
     this.uv.push(-1,-1);
+    this.spec.push(0.05);            // matte — track/grandstand/fence surfaces
   }
 };
 Builder.prototype.triNUV = function(a,b,c, na,nb,nc, ua,ub,uc){
   this.pos.push(a[0],a[1],a[2], b[0],b[1],b[2], c[0],c[1],c[2]);
   this.nrm.push(na[0],na[1],na[2], nb[0],nb[1],nb[2], nc[0],nc[1],nc[2]);
-  for(let i=0;i<3;i++) this.col.push(1,1,1,1);
+  for(let i=0;i<3;i++){ this.col.push(1,1,1,1); this.spec.push(0.05); }
   this.uv.push(ua[0],ua[1], ub[0],ub[1], uc[0],uc[1]);
 };
 Builder.prototype.quad = function(a,b,c,d, col, paint){   // a-b-c-d CCW
@@ -1075,7 +1177,7 @@ Builder.prototype.bake = function(){
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(arr), gl.STATIC_DRAW);
     return b;
   };
-  return { pos: mk(this.pos), nrm: mk(this.nrm), col: mk(this.col), uv: mk(this.uv), n: this.pos.length/3 };
+  return { pos: mk(this.pos), nrm: mk(this.nrm), col: mk(this.col), uv: mk(this.uv), spec: mk(this.spec), n: this.pos.length/3 };
 };
 
 /* ---------- colors (from spec palette) ---------- */
@@ -1411,8 +1513,14 @@ const SW = { tire:[0.955,0.06], rim:[0.955,0.16], chrome:[0.955,0.26],
              dark:[0.955,0.36], amber:[0.955,0.46], shadow:[0.955,0.56],
              body:[0.955,0.66] };
 
+function specFor(sw){                // specular intensity for a livery swatch
+  if(sw===SW.chrome) return 0.9;
+  if(sw===SW.rim) return 0.6;
+  if(sw===SW.tire) return 0.03;      // matte rubber
+  return 0.2;                        // dark/amber/shadow/body swatches
+}
 function buildCarMesh(num, pace){
-  const pos=[], nrm=[], col=[], uv=[];
+  const pos=[], nrm=[], col=[], uv=[], spec=[];
   const rings = CAR_ST.map(ringPts);
   // smooth per-vertex normals from surface tangents
   const NRM = rings.map((r,i)=> r.map((p,k)=>{
@@ -1426,7 +1534,10 @@ function buildCarMesh(num, pace){
     return n;
   }));
   function vert(p, n, u, v){ pos.push(p[0],p[1],p[2]); nrm.push(n[0],n[1],n[2]);
-    col.push(1,1,1,1); uv.push(u, v); }
+    col.push(1,1,1,1); uv.push(u, v);
+    // glass band (kept in sync with paintLivery's GV0=0.335/GVH=0.330) reads
+    // near-mirror; the rest of the body paint gets a moderate clearcoat gloss
+    spec.push((v>=0.335 && v<=0.665) ? 0.85 : 0.30); }
   function quadS(i0,k0,i1,k1,i2,k2,i3,k3){                   // smooth loft quad
     const P=[[i0,k0],[i1,k1],[i2,k2],[i3,k3]];
     const tri=(a,b,c)=>{ for(const [i,k] of [a,b,c])
@@ -1440,7 +1551,7 @@ function buildCarMesh(num, pace){
   for(let i=0;i<rings.length-1;i++){
     const a=rings[i][NK-1], b=rings[i][0], c=rings[i+1][0], d=rings[i+1][NK-1];
     for(const p of [a,b,c, a,c,d]){ pos.push(p[0],p[1],p[2]); nrm.push(0,-1,0);
-      col.push(1,1,1,1); uv.push(SW.dark[0],SW.dark[1]); }
+      col.push(1,1,1,1); uv.push(SW.dark[0],SW.dark[1]); spec.push(0.2); }
   }
   // nose / tail cap fans → painted islands
   function cap(i, cx2, fwd, isl){
@@ -1450,7 +1561,7 @@ function buildCarMesh(num, pace){
       const tris = fwd>0 ? [[cx2,mid,0],a,b] : [[cx2,mid,0],b,a];
       for(const p of tris){
         pos.push(p===tris[0]?cx2:p[0], p===tris[0]?mid:p[1], p===tris[0]?0:p[2]);
-        nrm.push(fwd,0,0); col.push(1,1,1,1);
+        nrm.push(fwd,0,0); col.push(1,1,1,1); spec.push(0.3);
         const zz = p===tris[0]?0:p[2], yy = p===tris[0]?mid:p[1];
         uv.push(isl[0] + zz/2.0*(-0.085*fwd), isl[1] + (mid-yy)/1.5*0.40);
       }
@@ -1461,8 +1572,9 @@ function buildCarMesh(num, pace){
   // helper for solid-swatch boxes/quads
   function q(a,b,c,d, sw){
     const u=v3sub(b,a), v=v3sub(c,a), n=v3norm(v3cross(u,v));
+    const sp = specFor(sw);
     for(const p of [a,b,c, a,c,d]){ pos.push(p[0],p[1],p[2]); nrm.push(n[0],n[1],n[2]);
-      col.push(1,1,1,1); uv.push(sw[0],sw[1]); }
+      col.push(1,1,1,1); uv.push(sw[0],sw[1]); spec.push(sp); }
   }
   // shadow
   q([-2.7,0.02,-1.15],[ 2.7,0.02,-1.15],[ 2.7,0.02, 1.15],[-2.7,0.02, 1.15], SW.shadow);
@@ -1490,7 +1602,7 @@ function buildCarMesh(num, pace){
            q([0.05,1.29,-0.34],[0.05,1.42,-0.34],[0.05,1.42,0.34],[0.05,1.29,0.34], SW.amber),
            q([-0.45,1.42,-0.34],[-0.45,1.42,0.34],[0.05,1.42,0.34],[0.05,1.42,-0.34], SW.amber);
   // wheels: tire barrel + face rings
-  const wR=0.34, wW=0.27, wz=0.80, WSEG=18;
+  const wR=0.34, wW=0.27, wz=0.80, WSEG=30;   // was 18 — rounder wheels, pairs with the new specular highlight on rim/chrome
   function wheel(cxp, sgn){
     const zo = sgn*(wz+wW/2), zi = sgn*(wz-wW/2);
     for(let k=0;k<WSEG;k++){
@@ -1498,8 +1610,8 @@ function buildCarMesh(num, pace){
       const p0=[cxp+Math.cos(a0)*wR, wR+Math.sin(a0)*wR, zo];
       const p1=[cxp+Math.cos(a1)*wR, wR+Math.sin(a1)*wR, zo];
       const q0=[p0[0],p0[1],zi], q1=[p1[0],p1[1],zi];
-      const push=(pts,n2,sw)=>{ for(const p of pts){ pos.push(p[0],p[1],p[2]);
-        nrm.push(n2[0],n2[1],n2[2]); col.push(1,1,1,1); uv.push(sw[0],sw[1]); } };
+      const push=(pts,n2,sw)=>{ const sp=specFor(sw); for(const p of pts){ pos.push(p[0],p[1],p[2]);
+        nrm.push(n2[0],n2[1],n2[2]); col.push(1,1,1,1); uv.push(sw[0],sw[1]); spec.push(sp); } };
       const rad=[Math.cos((a0+a1)/2),Math.sin((a0+a1)/2)];
       if(sgn>0) push([p0,p1,q1, p0,q1,q0],[rad[0],rad[1],0],SW.tire);
       else      push([p1,p0,q0, p1,q0,q1],[rad[0],rad[1],0],SW.tire);
@@ -1518,7 +1630,7 @@ function buildCarMesh(num, pace){
   const mk = (arr) => { const b = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, b);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(arr), gl.STATIC_DRAW); return b; };
-  return { pos:mk(pos), nrm:mk(nrm), col:mk(col), uv:mk(uv), n:pos.length/3 };
+  return { pos:mk(pos), nrm:mk(nrm), col:mk(col), uv:mk(uv), spec:mk(spec), n:pos.length/3 };
 }
 
 /* ---------- livery painter (restricted API: fillRect/arc/transforms) ---------- */
@@ -1795,7 +1907,8 @@ function buildCarTexture(car, pace){
   const tex = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, tex);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv2);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
@@ -1877,10 +1990,20 @@ function paintWorldAtlas(){
   paintFenceBand(c2, ATLAS.fence.x, ATLAS.fence.y, ATLAS.fence.w, ATLAS.fence.h);
   paintCrowdTile(c2, ATLAS.crowd.x, ATLAS.crowd.y, ATLAS.crowd.w, ATLAS.crowd.h, TRACK.stadium.crowdPalette);
   paintSponsorTiles(c2, ATLAS.sponsor.x, ATLAS.sponsor.y, ATLAS.sponsor.w, ATLAS.sponsor.h, ATLAS.sponsor.count);
+  // gutter blur across the shared region boundaries so mipmap downsampling
+  // doesn't bleed one region's color into its neighbor (wall|fence, the
+  // wall/fence|crowd seam, and the crowd|sponsor seam) — done last, after
+  // all regions are painted, so nothing overwrites it afterward.
+  const gutter = (x,y,w,h) => { c2.save(); c2.beginPath(); c2.rect(x,y,w,h); c2.clip();
+    c2.filter = 'blur(3px)'; c2.drawImage(cv, 0, 0); c2.filter = 'none'; c2.restore(); };
+  gutter(ATLAS.wall.w-6, 0, 12, ATLAS.wall.h);                    // wall | fence vertical seam
+  gutter(0, ATLAS.wall.h-6, WX, 12);                              // wall/fence | crowd horizontal seam
+  gutter(0, ATLAS.sponsor.y-6, WX, 12);                           // crowd/unused | sponsor horizontal seam
   const tex = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, tex);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   // CLAMP (not REPEAT): this is a shared atlas packing several regions into
   // one texture, so wall/fence quads reuse one fixed UV rect per slice
@@ -1964,11 +2087,35 @@ function emitFX(dt){
     p.vx*=0.96; p.vz*=0.96;
   }
 }
-let PBUF=null;
+let PBUF=null, PARTICLE_TEX=null;
+function buildParticleSprite(){          // soft radial-gradient billboard, replaces the flat unsoftened quad
+  const s = 64;
+  const cv2 = document.createElement('canvas'); cv2.width=s; cv2.height=s;
+  const c2 = cv2.getContext('2d');
+  const g = c2.createRadialGradient(s/2,s/2,0, s/2,s/2,s/2);
+  g.addColorStop(0, 'rgba(255,255,255,1)');
+  g.addColorStop(0.5, 'rgba(255,255,255,0.55)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  c2.fillStyle = g; c2.fillRect(0,0,s,s);
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv2);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return tex;
+}
 function drawParticles(view, U, A){
   if(!PARTS.length) return;
-  const pos=[], nrm=[], col=[], uv=[];
+  if(!PARTICLE_TEX) PARTICLE_TEX = buildParticleSprite();
   const R=[view[0],view[4],view[8]], Up=[view[1],view[5],view[9]];
+  // smoke/dust (soft alpha blend) and sparks (additive, glowing) are two
+  // separate batches — same p.size<0.15 split already used elsewhere for
+  // spark/smoke behavior — since each needs a different gl.blendFunc.
+  const smoke = {pos:[],nrm:[],col:[],uv:[],spec:[]}, spark = {pos:[],nrm:[],col:[],uv:[],spec:[]};
+  const quadUVs = [[0,0],[1,0],[1,1], [0,0],[1,1],[0,1]];
   for(const p of PARTS){
     const g = 1 - p.age/p.life;
     let s = p.size;
@@ -1978,24 +2125,34 @@ function drawParticles(view, U, A){
     const cB=[p.x + R[0]*s - Up[0]*s, p.y + R[1]*s - Up[1]*s, p.z + R[2]*s - Up[2]*s];
     const cC=[p.x + R[0]*s + Up[0]*s, p.y + R[1]*s + Up[1]*s, p.z + R[2]*s + Up[2]*s];
     const cD=[p.x - R[0]*s + Up[0]*s, p.y - R[1]*s + Up[1]*s, p.z - R[2]*s + Up[2]*s];
-    for(const q of [cA,cB,cC, cA,cC,cD]){
-      pos.push(q[0],q[1],q[2]); nrm.push(0,1,0);
-      col.push(p.col[0],p.col[1],p.col[2],1); uv.push(-1,-1);
+    const verts = [cA,cB,cC, cA,cC,cD];
+    const bat = p.size < 0.15 ? spark : smoke;
+    for(let i=0;i<6;i++){
+      const q = verts[i], uvv = quadUVs[i];
+      bat.pos.push(q[0],q[1],q[2]); bat.nrm.push(0,1,0);
+      bat.col.push(p.col[0],p.col[1],p.col[2],1); bat.uv.push(uvv[0],uvv[1]); bat.spec.push(0.0);
     }
   }
-  if(!PBUF) PBUF = { pos:gl.createBuffer(), nrm:gl.createBuffer(), col:gl.createBuffer(), uv:gl.createBuffer() };
+  const mkBufs = () => ({ pos:gl.createBuffer(), nrm:gl.createBuffer(), col:gl.createBuffer(), uv:gl.createBuffer(), spec:gl.createBuffer() });
+  if(!PBUF) PBUF = { smoke: mkBufs(), spark: mkBufs() };
   const up=(b,arr)=>{ gl.bindBuffer(gl.ARRAY_BUFFER,b); gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(arr),gl.DYNAMIC_DRAW); };
-  up(PBUF.pos,pos); up(PBUF.nrm,nrm); up(PBUF.col,col); up(PBUF.uv,uv);
-  gl.uniformMatrix4fv(U('uModel'), false, m4ident());
-  gl.uniform3f(U('uPaint'), 1,1,1);
-  gl.uniform1f(U('uAlpha'), 0.38);
-  gl.bindTexture(gl.TEXTURE_2D, WHITE_TEX);
-  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-  gl.depthMask(false);
   const bindA=(b,name,n)=>{ gl.bindBuffer(gl.ARRAY_BUFFER,b);
     gl.enableVertexAttribArray(A(name)); gl.vertexAttribPointer(A(name),n,gl.FLOAT,false,0,0); };
-  bindA(PBUF.pos,'aPos',3); bindA(PBUF.nrm,'aNrm',3); bindA(PBUF.col,'aCol',4); bindA(PBUF.uv,'aUV',2);
-  gl.drawArrays(gl.TRIANGLES, 0, pos.length/3);
+  gl.uniformMatrix4fv(U('uModel'), false, m4ident());
+  gl.uniform3f(U('uPaint'), 1,1,1);
+  gl.bindTexture(gl.TEXTURE_2D, PARTICLE_TEX);
+  gl.enable(gl.BLEND);
+  gl.depthMask(false);
+  function drawBatch(bat, buf, alpha, sfactor, dfactor){
+    if(!bat.pos.length) return;
+    up(buf.pos,bat.pos); up(buf.nrm,bat.nrm); up(buf.col,bat.col); up(buf.uv,bat.uv); up(buf.spec,bat.spec);
+    gl.uniform1f(U('uAlpha'), alpha);
+    gl.blendFunc(sfactor, dfactor);
+    bindA(buf.pos,'aPos',3); bindA(buf.nrm,'aNrm',3); bindA(buf.col,'aCol',4); bindA(buf.uv,'aUV',2); bindA(buf.spec,'aSpec',1);
+    gl.drawArrays(gl.TRIANGLES, 0, bat.pos.length/3);
+  }
+  drawBatch(smoke, PBUF.smoke, 0.38, gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  drawBatch(spark, PBUF.spark, 0.9, gl.SRC_ALPHA, gl.ONE);
   gl.depthMask(true); gl.disable(gl.BLEND);
   gl.uniform1f(U('uAlpha'), 1.0);
 }
@@ -2052,6 +2209,10 @@ function updateCamera(){
 let skyBuf=null;
 function drawGL(){
   if(!gl) return;
+  if(!SCENE_FBO) resizePostFX();
+  if(!SCENE_FBO) return;      // zero-size canvas (e.g. hidden tab) — skip the frame
+  gl.bindFramebuffer(gl.FRAMEBUFFER, SCENE_FBO.fb);
+  gl.viewport(0,0,SCENE_FBO.w,SCENE_FBO.h);
   gl.clearColor(0.78,0.86,0.94,1);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   // sky gradient
@@ -2080,6 +2241,9 @@ function drawGL(){
   gl.uniformMatrix4fv(U('uProj'), false, proj);
   gl.uniformMatrix4fv(U('uView'), false, view);
   gl.uniform3f(U('uSun'), 0.42, 0.80, 0.42);
+  gl.uniform3f(U('uSkyTint'), sky.horizon[0]*0.5, sky.horizon[1]*0.5, sky.horizon[2]*0.5);
+  gl.uniform3f(U('uGroundTint'), 0.20, 0.19, 0.16);
+  gl.uniform3f(U('uEyePos'), cam.pos ? cam.pos[0] : 0, cam.pos ? cam.pos[1] : 10, cam.pos ? cam.pos[2] : 0);
   const A = n => gl.getAttribLocation(PROG, n);
   if(!WHITE_TEX){
     WHITE_TEX = gl.createTexture();
@@ -2107,6 +2271,9 @@ function drawGL(){
     gl.bindBuffer(gl.ARRAY_BUFFER, m.uv);
     gl.enableVertexAttribArray(A('aUV'));
     gl.vertexAttribPointer(A('aUV'), 2, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, m.spec);
+    gl.enableVertexAttribArray(A('aSpec'));
+    gl.vertexAttribPointer(A('aSpec'), 1, gl.FLOAT, false, 0, 0);
     gl.drawArrays(gl.TRIANGLES, 0, m.n);
   }
   if(!WORLD){ WORLD = buildWorld(); WORLD_TEX = paintWorldAtlas(); }
@@ -2120,6 +2287,67 @@ function drawGL(){
     drawMesh(CARBUFS.pace.mesh, carModelMat(PACE), [0.93,0.93,0.95], CARBUFS.pace.tex);
   }
   drawParticles(view, U, A);
+  runPostFX();
+}
+function runPostFX(){
+  gl.disable(gl.DEPTH_TEST); gl.depthMask(false);
+  // bright-pass + downsample: BLURPROG with uDir=(0,0) is a plain copy (all
+  // 5 taps land on the same texel, weights sum to 1.0), so paired with
+  // uThreshold it becomes threshold+downsample in one pass — rendering
+  // SCENE_FBO's full-res texture into BLOOM_A's half/quarter-res viewport
+  // does the downsampling for free via the texture sample itself.
+  gl.useProgram(BLURPROG);
+  gl.bindBuffer(gl.ARRAY_BUFFER, FSQUAD);
+  const aPB = gl.getAttribLocation(BLURPROG,'aP');
+  gl.enableVertexAttribArray(aPB);
+  gl.vertexAttribPointer(aPB, 2, gl.FLOAT, false, 0, 0);
+  const Ub = n => gl.getUniformLocation(BLURPROG, n);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.uniform1i(Ub('uTex'), 0);
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, BLOOM_A.fb);
+  gl.viewport(0,0,BLOOM_A.w,BLOOM_A.h);
+  gl.bindTexture(gl.TEXTURE_2D, SCENE_FBO.tex);
+  gl.uniform2f(Ub('uDir'), 0, 0);
+  gl.uniform1f(Ub('uThreshold'), 0.72);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, BLOOM_B.fb);            // horizontal blur: A -> B
+  gl.viewport(0,0,BLOOM_B.w,BLOOM_B.h);
+  gl.bindTexture(gl.TEXTURE_2D, BLOOM_A.tex);
+  gl.uniform2f(Ub('uDir'), 1/BLOOM_A.w, 0);
+  gl.uniform1f(Ub('uThreshold'), 0.0);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, BLOOM_A.fb);            // vertical blur: B -> A
+  gl.viewport(0,0,BLOOM_A.w,BLOOM_A.h);
+  gl.bindTexture(gl.TEXTURE_2D, BLOOM_B.tex);
+  gl.uniform2f(Ub('uDir'), 0, 1/BLOOM_B.h);
+  gl.uniform1f(Ub('uThreshold'), 0.0);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  // final composite: additive bloom + lift-gamma-gain color grade + vignette
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0,0,cv.width,cv.height);
+  gl.useProgram(POSTPROG);
+  gl.bindBuffer(gl.ARRAY_BUFFER, FSQUAD);
+  const aP = gl.getAttribLocation(POSTPROG,'aP');
+  gl.enableVertexAttribArray(aP);
+  gl.vertexAttribPointer(aP, 2, gl.FLOAT, false, 0, 0);
+  const Up = n => gl.getUniformLocation(POSTPROG, n);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, SCENE_FBO.tex);
+  gl.uniform1i(Up('uScene'), 0);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, BLOOM_A.tex);
+  gl.uniform1i(Up('uBloom'), 1);
+  gl.uniform1f(Up('uBloomStrength'), 0.45);
+  gl.uniform1f(Up('uLift'), 0.0);
+  gl.uniform1f(Up('uGain'), 1.04);
+  gl.uniform1f(Up('uGamma'), 0.94);
+  gl.uniform1f(Up('uSaturation'), 1.10);
+  gl.uniform1f(Up('uVignetteInner'), 0.55);
+  gl.uniform1f(Up('uVignetteOuter'), 0.95);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+  gl.enable(gl.DEPTH_TEST); gl.depthMask(true);
 }
 
 /* ---------- HUD (2D overlay, NT2003 broadcast style) ---------- */
@@ -2137,8 +2365,14 @@ function rr(x,y,w,h,r){ cx.beginPath();
   cx.moveTo(x+r,y); cx.arcTo(x+w,y,x+w,y+h,r); cx.arcTo(x+w,y+h,x,y+h,r);
   cx.arcTo(x,y+h,x,y,r); cx.arcTo(x,y,x+w,y,r); cx.closePath(); }
 function sharpRect(x,y,w,h){ cx.beginPath(); cx.rect(x,y,w,h); }
-function panel(x,y,w,h,borderCol,borderW){       // flat black broadcast panel, sharp corners
+function panel(x,y,w,h,borderCol,borderW){       // flat black broadcast panel, sharp corners, subtle depth
+  cx.save();
+  cx.shadowColor='rgba(0,0,0,0.45)'; cx.shadowBlur=7; cx.shadowOffsetY=2;
   cx.fillStyle='rgba(0,0,0,0.82)'; sharpRect(x,y,w,h); cx.fill();
+  cx.restore();
+  const grad = cx.createLinearGradient(x,y,x,y+h);        // 5% tint, breaks up pure-flat banding
+  grad.addColorStop(0,'rgba(255,255,255,0.05)'); grad.addColorStop(1,'rgba(0,0,0,0.05)');
+  cx.fillStyle=grad; sharpRect(x,y,w,h); cx.fill();
   if(borderCol){ cx.strokeStyle=borderCol; cx.lineWidth=borderW||1; sharpRect(x+0.5,y+0.5,w-1,h-1); cx.stroke(); }
 }
 function colCSS(c){ return `rgb(${Math.round(c[0]*255)},${Math.round(c[1]*255)},${Math.round(c[2]*255)})`; }
@@ -2201,6 +2435,20 @@ function drawStateBanner(key, text, tone, y){
   const yy = y - (1-ease)*24;
   cx.globalAlpha = ease;
   panel(W/2-w/2, yy, w, h, tone, 2);
+  // brief flash right as the banner appears, plus a slow sustained pulse
+  // while the state is actually active (caution flag up / victory) — both
+  // just modulate the border glow, reusing the same age timer and tone
+  // color already driving the rest of this banner (no parallel timer)
+  const flash = Math.exp(-age*4) * Math.max(0, Math.sin(age*20));
+  const sustained = (S.flag==='yellow' || S.mode==='victory') ? Math.sin(performance.now()/1000*2)*0.5+0.5 : 0;
+  const glow = flash*10 + sustained*5;
+  if(glow > 0.3){
+    cx.save();
+    cx.shadowColor = tone; cx.shadowBlur = glow;
+    cx.strokeStyle = tone; cx.lineWidth = 2;
+    sharpRect(W/2-w/2+0.5, yy+0.5, w-1, h-1); cx.stroke();
+    cx.restore();
+  }
   if(icon) drawFlagIcon(W/2-w/2+10, yy+7, 16, icon);
   cx.fillStyle = tone; cx.font="bold 15px 'Arial Narrow',sans-serif"; cx.textAlign='center';
   cx.fillText(text, W/2 + iconW/2, yy+h/2+1);
