@@ -147,16 +147,36 @@ const G = 9.81, RHO = 1.225;
 const TRACKS = [
   { name:'THUNDER OVAL',     RL:140, RR:120, bankL:18, bankR:16, D:392, sBank:4, ramp: 90,
     sub:'1.6 KM &bull; 18&deg;/16&deg; BANKING',
-    theme:{ wall:[1.0,0.267,0.0],  grass:[0.176,0.314,0.086] } },
+    theme:{ wall:[1.0,0.267,0.0],  grass:[0.176,0.314,0.086] },
+    stadium:{ standTier:{front:5,back:3,corner:2}, standDensity:0.85, standReach:'partial',
+      standScale:{tierD:3.2, tierH:2.1},
+      standRoof:true, jumbotron:false, pylon:false, sponsorDensity:0.25,
+      sky:{ horizon:[0.78,0.86,0.94], zenith:[0.20,0.45,0.85], silhouette:'none' },
+      crowdPalette:[[0.75,0.2,0.2],[0.2,0.35,0.75],[0.85,0.8,0.25],[0.8,0.8,0.82],[0.25,0.6,0.3],[0.5,0.3,0.6]] } },
   { name:'MILLTOWN BULLRING',RL:100, RR:100, bankL:14, bankR:14, D:110, sBank:5, ramp: 50,
     sub:'0.85 KM &bull; 14&deg; BANKING',
-    theme:{ wall:[0.88,0.88,0.90], grass:[0.15,0.27,0.08] } },
+    theme:{ wall:[0.88,0.88,0.90], grass:[0.15,0.27,0.08] },
+    stadium:{ standTier:{front:4,back:4,corner:4}, standDensity:1.0, standReach:'full',
+      standScale:{tierD:2.4, tierH:1.6},
+      standRoof:true, jumbotron:false, pylon:false, sponsorDensity:0.35,
+      sky:{ horizon:[0.80,0.85,0.92], zenith:[0.24,0.42,0.80], silhouette:'none' },
+      crowdPalette:[[0.75,0.2,0.2],[0.2,0.35,0.75],[0.85,0.8,0.25],[0.8,0.8,0.82],[0.25,0.6,0.3],[0.5,0.3,0.6]] } },
   { name:'CEDAR VALLEY',     RL:190, RR:160, bankL:14, bankR:12, D:500, sBank:4, ramp:100,
     sub:'2.1 KM &bull; 14&deg;/12&deg; BANKING',
-    theme:{ wall:[0.16,0.38,0.62], grass:[0.20,0.33,0.10] } },
+    theme:{ wall:[0.16,0.38,0.62], grass:[0.20,0.33,0.10] },
+    stadium:{ standTier:{front:3,back:2,corner:1}, standDensity:0.55, standReach:'partial',
+      standScale:{tierD:3.0, tierH:1.9},
+      standRoof:false, jumbotron:false, pylon:false, sponsorDensity:0.18,
+      sky:{ horizon:[0.80,0.88,0.90], zenith:[0.35,0.55,0.80], silhouette:'hills' },
+      crowdPalette:[[0.75,0.2,0.2],[0.2,0.35,0.75],[0.85,0.8,0.25],[0.8,0.8,0.82],[0.25,0.6,0.3],[0.5,0.3,0.6]] } },
   { name:'BIG SABLE SPEEDWAY',RL:240, RR:240, bankL:23, bankR:23, D:546, sBank:5, ramp:120,
     sub:'2.6 KM &bull; 23&deg; BANKING',
-    theme:{ wall:[0.85,0.12,0.10], grass:[0.19,0.34,0.11] } }
+    theme:{ wall:[0.85,0.12,0.10], grass:[0.19,0.34,0.11] },
+    stadium:{ standTier:{front:10,back:8,corner:6}, standDensity:0.95, standReach:'full',
+      standScale:{tierD:4.0, tierH:2.6},
+      standRoof:true, jumbotron:true, pylon:true, sponsorDensity:0.30,
+      sky:{ horizon:[0.75,0.83,0.93], zenith:[0.18,0.40,0.80], silhouette:'none' },
+      crowdPalette:[[0.75,0.2,0.2],[0.2,0.35,0.75],[0.85,0.8,0.25],[0.8,0.8,0.82],[0.25,0.6,0.3],[0.5,0.3,0.6]] } }
 ];
 function buildTrack(spec){
   const RL = spec.RL, bankL = spec.bankL*Math.PI/180;   // LEFT end = T1/T2
@@ -247,7 +267,7 @@ function buildTrack(spec){
     }
   }
   return { segs, total, halfW, sFinish, pointAt, bankAt, project,
-           name: spec.name, sub: spec.sub, theme: spec.theme };
+           name: spec.name, sub: spec.sub, theme: spec.theme, stadium: spec.stadium };
 }
 let TRACK = buildTrack(TRACKS[0]);
 
@@ -993,21 +1013,20 @@ PROG = makeProg(`
   }`, `
   precision mediump float;
   varying vec3 vCol; varying float vFog; varying float vLit; varying vec2 vUV;
-  uniform sampler2D uTex; uniform float uUseTex; uniform float uAlpha;
+  uniform sampler2D uTex; uniform float uAlpha;
   void main(){
     vec3 fogC = vec3(0.72, 0.80, 0.90);
-    vec3 base = (uUseTex > 0.5) ? texture2D(uTex, vUV).rgb * vLit : vCol;
+    vec3 base = (vUV.x >= 0.0) ? texture2D(uTex, vUV).rgb * vLit : vCol;
     gl_FragColor = vec4(mix(base, fogC, vFog*0.85), uAlpha);
   }`);
 SKYPROG = makeProg(`
   attribute vec2 aP; varying float vY;
   void main(){ vY = aP.y; gl_Position = vec4(aP, 0.999, 1.0); }`, `
   precision mediump float; varying float vY;
+  uniform vec3 uHorizon, uZenith;
   void main(){
-    vec3 top = vec3(0.20, 0.45, 0.85);
-    vec3 hor = vec3(0.78, 0.86, 0.94);
     float t = clamp(vY*0.5+0.5, 0.0, 1.0);
-    gl_FragColor = vec4(mix(hor, top, pow(t, 0.75)), 1.0);
+    gl_FragColor = vec4(mix(uHorizon, uZenith, pow(t, 0.75)), 1.0);
   }`);
 }
 
@@ -1034,6 +1053,11 @@ Builder.prototype.triNUV = function(a,b,c, na,nb,nc, ua,ub,uc){
 };
 Builder.prototype.quad = function(a,b,c,d, col, paint){   // a-b-c-d CCW
   this.tri(a,b,c,col,paint); this.tri(a,c,d,col,paint);
+};
+Builder.prototype.quadUV = function(a,b,c,d, ua,ub,uc,ud){   // a-b-c-d CCW, atlas-textured
+  const u = v3sub(b,a), v = v3sub(c,a), n = v3norm(v3cross(u,v));
+  this.triNUV(a,b,c, n,n,n, ua,ub,uc);
+  this.triNUV(a,c,d, n,n,n, ua,uc,ud);
 };
 Builder.prototype.box = function(x0,y0,z0,x1,y1,z1,col,paint){
   const p=(x,y,z)=>[x,y,z];
@@ -1066,12 +1090,69 @@ const COL = {
 
 /* ---------- world mesh (track, walls, stands) ---------- */
 const rng2 = mulberry32(777);           // scenery only — keeps AI RNG untouched
-let WORLD=null, CARBUFS={}, WHITE_TEX=null;
+let WORLD=null, WORLD_TEX=null, CARBUFS={}, WHITE_TEX=null;
 function crossPt(s, lat, raise){ const p = pos3(s,lat); p[1]+=(raise||0); return p; }
+/* ---------- grandstand: parameterized so each track's stadium theme drives
+   reach/density/tier-count/roof instead of one hardcoded frontstretch block.
+   Tessellation is capped independently of the track's own N=460 so a long
+   zone (e.g. Big Sable's corners) can't balloon triangle count. ---- */
+function addStand(B, sStart, sEnd, tiers, opts){
+  const zoneLen = sEnd - sStart;
+  const steps = Math.min(40, Math.max(16, Math.round(zoneLen/12)));
+  const baseLat = WALL_LAT + 6, baseH = 1.2;
+  const tierD = opts.tierD, tierH = opts.tierH, palette = opts.palette;
+  const crowdUV = atlasUV(ATLAS.crowd);
+  for(let i=0;i<steps;i++){
+    if(opts.density < 1 && rng2() > opts.density) continue;      // gaps/tunnels
+    const sa = sStart + zoneLen*i/steps, sb = sStart + zoneLen*(i+1)/steps;
+    for(let t=0;t<tiers;t++){
+      const latB = baseLat + t*tierD, latT = latB + tierD;
+      const hB = baseH + t*tierH, hT = hB + tierH;
+      const riseH = hB + tierH*0.28;
+      // riser (near-vertical, stepped) + seat (sloped) — 2 quads/tier for
+      // an actual tiered-seating silhouette instead of one flat ramp
+      const ra=crossPt(sa,latB,hB), rb=crossPt(sb,latB,hB);
+      const rc=crossPt(sb,latB,riseH), rd=crossPt(sa,latB,riseH);
+      B.quad(ra,rb,rc,rd, mixC(palette[Math.floor(rng2()*palette.length)],[0,0,0],0.3));
+      const sA=crossPt(sa,latB,riseH), sB=crossPt(sb,latB,riseH);
+      const sC=crossPt(sb,latT,hT), sD=crossPt(sa,latT,hT);
+      if(t < 2){                                  // front tiers: crowd texture
+        B.quadUV(sA,sB,sC,sD,
+          [crowdUV[0],crowdUV[1]],[crowdUV[2],crowdUV[1]],[crowdUV[2],crowdUV[3]],[crowdUV[0],crowdUV[3]]);
+      } else {                                    // upper tiers: flat swatch (fog hides banding)
+        B.quad(sA,sB,sC,sD, palette[Math.floor(rng2()*palette.length)]);
+      }
+    }
+    if(opts.roof){
+      const topLat = baseLat + tiers*tierD, topH = baseH + tiers*tierH;
+      const ra=crossPt(sa,topLat,topH), rb=crossPt(sb,topLat,topH);
+      const rc=crossPt(sb,topLat+2.0,topH+0.2), rd=crossPt(sa,topLat+2.0,topH+0.2);
+      B.quad(ra,rb,rc,rd,[0.55,0.56,0.6]);
+    }
+  }
+}
+function addHillSilhouette(B){
+  const R = 1400, N = 48, baseH = 0;
+  const shade = mixC([0.72,0.80,0.90], [0.30,0.42,0.32], 0.4);
+  for(let i=0;i<N;i++){
+    const a0=i/N*Math.PI*2, a1=(i+1)/N*Math.PI*2;
+    const x0=Math.cos(a0)*R, z0=Math.sin(a0)*R, x1=Math.cos(a1)*R, z1=Math.sin(a1)*R;
+    const h0=50+rng2()*90, h1=50+rng2()*90;
+    B.quad([x0,baseH,z0],[x1,baseH,z1],[x1,baseH+h1,z1],[x0,baseH+h0,z0], shade);
+  }
+}
 function buildWorld(){
   const B = new Builder();
   const N = 460, dS = TRACK.total/N;
-  const WALL_H = 1.35;
+  const WALL_H = 1.35, FENCE_H = 0.85;
+  const st = TRACK.stadium;
+  const wallUV = atlasUV(ATLAS.wall), fenceUV = atlasUV(ATLAS.fence);
+  // per-block (not per-slice) sponsor-vs-diamond decision so a sponsor panel
+  // spans several consecutive wall slices instead of flickering slice-to-slice
+  const SP_BLOCK = 10, spBlocks = [];
+  for(let b=0;b<Math.ceil(N/SP_BLOCK);b++){
+    spBlocks.push(rng2() < st.sponsorDensity ? Math.floor(rng2()*ATLAS.sponsor.count) : -1);
+  }
   for(let i=0;i<N;i++){
     const s0=i*dS, s1=(i+1)*dS;
     const inCor = Math.abs(TRACK.pointAt(s0+dS/2).curv) > 1e-6;
@@ -1093,13 +1174,23 @@ function buildWorld(){
     // shoulder pad from track edge to wall base
     B.quad(crossPt(s0,TRACK.halfW), crossPt(s0,WALL_LAT),
            crossPt(s1,WALL_LAT), crossPt(s1,TRACK.halfW), COL.apron);
-    // outer wall: orange face + white cap (spec barrier orange)
+    // outer wall: diamond-pattern or sponsor-signage face (atlas-textured) + white cap
     const w00=crossPt(s0,WALL_LAT), w01=crossPt(s1,WALL_LAT);
     const w10=crossPt(s0,WALL_LAT,WALL_H), w11=crossPt(s1,WALL_LAT,WALL_H);
-    B.quad(w00,w01,w11,w10, TRACK.theme.wall);
+    const spI = spBlocks[Math.floor(i/SP_BLOCK)];
+    const faceUV = spI>=0 ? atlasSponsorUV(spI) : wallUV;
+    B.quadUV(w00,w01,w11,w10,
+      [faceUV[0],faceUV[3]],[faceUV[2],faceUV[3]],[faceUV[2],faceUV[1]],[faceUV[0],faceUV[1]]);
     B.quad(w10,w11,crossPt(s1,WALL_LAT+0.4,WALL_H),crossPt(s0,WALL_LAT+0.4,WALL_H), COL.wallWh);
     B.quad(crossPt(s0,WALL_LAT+0.4,WALL_H),crossPt(s1,WALL_LAT+0.4,WALL_H),
            crossPt(s1,WALL_LAT+0.4),crossPt(s0,WALL_LAT+0.4), COL.wallWh);
+    // catch fence band above the wall cap — solid textured crosshatch, not
+    // real geometry (the shader discards texture alpha so true see-through
+    // holes aren't possible; a light crosshatch band reads as fencing instead)
+    const fc0=crossPt(s0,WALL_LAT+0.4,WALL_H), fc1=crossPt(s1,WALL_LAT+0.4,WALL_H);
+    const fc2=crossPt(s1,WALL_LAT+0.4,WALL_H+FENCE_H), fc3=crossPt(s0,WALL_LAT+0.4,WALL_H+FENCE_H);
+    B.quadUV(fc0,fc1,fc2,fc3,
+      [fenceUV[0],fenceUV[3]],[fenceUV[2],fenceUV[3]],[fenceUV[2],fenceUV[1]],[fenceUV[0],fenceUV[1]]);
   }
   // start/finish checkers across the track
   {
@@ -1114,32 +1205,30 @@ function buildWorld(){
   }
   // giant infield + surrounding grass, tessellated so vertex fog stays local
   {
-    const EXT=900, CELLS=60, st=2*EXT/CELLS;
+    const EXT=900, CELLS=60, cell=2*EXT/CELLS;
     for(let gx=0;gx<CELLS;gx++) for(let gz=0;gz<CELLS;gz++){
-      const x0=-EXT+gx*st, z0=-EXT+gz*st, x1=x0+st, z1=z0+st;
+      const x0=-EXT+gx*cell, z0=-EXT+gz*cell, x1=x0+cell, z1=z0+cell;
       B.quad([x0,0,z1],[x1,0,z1],[x1,0,z0],[x0,0,z0], TRACK.theme.grass);
     }
   }
-  // grandstand along frontstretch (outside of segs[0])
+  // Cedar Valley's scenic backdrop: a distant, low-poly hill silhouette well
+  // beyond the grass extent, colored to match the shader's fixed fog color
+  // (fogC in the fragment shader) so it blends at the horizon with no fog
+  // special-casing needed — pure geometry, no shader dependency.
+  if(st.sky.silhouette==='hills') addHillSilhouette(B);
+  // grandstands: generic per-zone, driven entirely by TRACK.stadium so each
+  // track's reach/density/tier-count/roof/scale differs with zero per-track
+  // branching here (front+back always seated, corners only if reach='full')
   {
-    const g = TRACK.segs[0];
-    const s0 = g.s0 + g.len*0.12, s1 = g.s0 + g.len*0.88;
-    const steps = 26;
-    for(let i=0;i<steps;i++){
-      const sa = s0 + (s1-s0)*i/steps, sb = s0 + (s1-s0)*(i+1)/steps;
-      for(let t=0;t<5;t++){                     // 5 tiers
-        const latB = WALL_LAT + 6 + t*3.2, latT = latB + 3.2;
-        const hB = 1.2 + t*2.1, hT = hB + 2.1;
-        const a=crossPt(sa,latB,hB), b=crossPt(sb,latB,hB);
-        const c=crossPt(sb,latT,hT), d=crossPt(sa,latT,hT);
-        // crowd face: random color blocks
-        const cc=[[0.75,0.2,0.2],[0.2,0.35,0.75],[0.85,0.8,0.25],[0.8,0.8,0.82],[0.25,0.6,0.3],[0.5,0.3,0.6]][Math.floor(rng2()*6)];
-        B.quad(a,b,c,d, cc);
-      }
-      // roof
-      const ra=crossPt(sa,WALL_LAT+6+5*3.2,1.2+5*2.1), rb=crossPt(sb,WALL_LAT+6+5*3.2,1.2+5*2.1);
-      const rc=crossPt(sb,WALL_LAT+6+5*3.2+2.0,1.2+5*2.1+0.2), rd=crossPt(sa,WALL_LAT+6+5*3.2+2.0,1.2+5*2.1+0.2);
-      B.quad(ra,rb,rc,rd,[0.55,0.56,0.6]);
+    const st = TRACK.stadium;
+    const opts = { density: st.standDensity, roof: st.standRoof,
+                   tierD: st.standScale.tierD, tierH: st.standScale.tierH, palette: st.crowdPalette };
+    const seg0 = TRACK.segs[0], seg1 = TRACK.segs[1], seg2 = TRACK.segs[2], seg3 = TRACK.segs[3];
+    addStand(B, seg0.s0+seg0.len*0.12, seg0.s0+seg0.len*0.88, st.standTier.front, opts);
+    addStand(B, seg2.s0+seg2.len*0.12, seg2.s0+seg2.len*0.88, st.standTier.back, opts);
+    if(st.standReach==='full'){
+      addStand(B, seg1.s0, seg1.s0+seg1.len, st.standTier.corner, opts);
+      addStand(B, seg3.s0, seg3.s0+seg3.len, st.standTier.corner, opts);
     }
   }
   // flag stand over start/finish
@@ -1152,10 +1241,52 @@ function buildWorld(){
     const mz0=Math.min(pL[2],pR[2])-0.5, mz1=Math.max(pL[2],pR[2])+0.5;
     B.box(mx0, 7.5, mz0, mx1, 8.6, mz1, [0.85,0.12,0.1]);
   }
-  // scattered infield billboards/haulers for depth
+  // scoring pylon + jumbotron (Big Sable only) — numeric content is real
+  // addNumber/addDigitQuads 3D geometry (a segmented-LED look, matching a
+  // real pylon) rather than atlas-textured, so it's a static build-time
+  // snapshot, not a per-frame texture repaint. jumboPos is used below to
+  // keep the scattered infield billboards clear of the jumbotron footprint.
+  let jumboPos = null;
+  if(st.pylon){
+    const sP = TRACK.sFinish + 15, latP = WALL_LAT + 3;
+    const p = TRACK.pointAt(sP), basePt = pos3(sP, latP);
+    const tanX=Math.cos(p.hdg), tanZ=Math.sin(p.hdg), latX=-Math.sin(p.hdg), latZ=Math.cos(p.hdg);
+    const PY_W = 0.7, PY_H = 16;
+    B.box(basePt[0]-PY_W/2, 0, basePt[2]-PY_W/2, basePt[0]+PY_W/2, PY_H, basePt[2]+PY_W/2, COL.chrome);
+    const panelNums = ROSTER.slice(0,6).map(r=>r.num);
+    panelNums.forEach((num,i)=>{
+      const rowY = PY_H*0.9 - i*1.35;
+      const put = (x,y) => [ basePt[0] + tanX*x + latX*0.4, rowY + y, basePt[2] + tanZ*x + latZ*0.4 ];
+      addNumber(B, num, put, 1.7, 1.05, i===0 ? [0.95,0.85,0.1] : [0.9,0.9,0.92]);
+    });
+  }
+  if(st.jumbotron){
+    const seg0 = TRACK.segs[0], seg2 = TRACK.segs[2];
+    const cx = (seg0.A.x+seg0.B.x+seg2.A.x+seg2.B.x)/4, cz = (seg0.A.y+seg0.B.y+seg2.A.y+seg2.B.y)/4;
+    jumboPos = [cx, cz];
+    const JB_W = 14, JB_H = 8, baseH = 6;
+    B.box(cx-0.4, 0, cz-0.4, cx+0.4, baseH, cz+0.4, COL.chrome);   // support pillar
+    B.box(cx-JB_W/2, baseH, cz-1.0, cx+JB_W/2, baseH+JB_H, cz+1.0, [0.08,0.08,0.10]);  // screen bezel
+    // "leaderboard" rows, facing the frontstretch. No back-face culling in
+    // this scene, so the content is still visible (mirror-reversed) from the
+    // far side too — a real second mirrored panel would need each digit's
+    // internal shape re-authored, not just its position negated, so a single
+    // front-facing panel is the pragmatic choice here.
+    const rows = ROSTER.slice(0,5).map(r=>r.num);
+    rows.forEach((num,i)=>{
+      const rowY = baseH+JB_H*0.85 - i*1.3;
+      const put = (x,y) => [ cx + x, rowY + y, cz + 1.05 ];
+      addNumber(B, num, put, 4.2, 1.0, i===0 ? [0.95,0.85,0.1] : [0.85,0.9,0.95]);
+    });
+  }
+  // scattered infield billboards/haulers for depth — kept clear of the jumbotron
   for(let i=0;i<10;i++){
-    const s = rng2()*TRACK.total;
-    const p = pos3(s, APRON_IN - 14 - rng2()*40);
+    let s, p, tries=0;
+    do {
+      s = rng2()*TRACK.total;
+      p = pos3(s, APRON_IN - 14 - rng2()*40);
+      tries++;
+    } while(jumboPos && Math.hypot(p[0]-jumboPos[0], p[2]-jumboPos[1]) < 25 && tries < 8);
     const w = 5+rng2()*7, h=2.5+rng2()*1.6, ang=rng2()*Math.PI;
     const dx=Math.cos(ang)*w/2, dz=Math.sin(ang)*w/2;
     const cc=[[0.85,0.85,0.88],[0.75,0.15,0.12],[0.15,0.35,0.7]][i%3];
@@ -1671,6 +1802,95 @@ function buildCarTexture(car, pace){
   return tex;
 }
 
+/* ---------- world atlas: crowd/wall-pattern/fence/sponsor-signage texture,
+   painted once per track build (same canvas->GL-texture pattern as
+   buildCarTexture above), repeats via UV so wall/fence tiles need no
+   per-slice re-paint. Pylon/jumbotron numeric content is real 3D geometry
+   (addNumber/addDigitQuads) instead — no atlas space needed for those. ---- */
+const WX = 1024;
+const ATLAS = {
+  wall:    {x:0,   y:0,   w:512,  h:256},
+  fence:   {x:512, y:0,   w:512,  h:256},
+  crowd:   {x:0,   y:256, w:512,  h:512},
+  sponsor: {x:0,   y:768, w:1024, h:256, count:8}
+};
+function atlasUV(r){ return [r.x/WX, r.y/WX, (r.x+r.w)/WX, (r.y+r.h)/WX]; }
+function atlasSponsorUV(i){
+  const r = ATLAS.sponsor, tw = r.w/r.count;
+  const x0 = r.x + i*tw;
+  return [x0/WX, r.y/WX, (x0+tw)/WX, (r.y+r.h)/WX];
+}
+function paintWallPattern(c2, x, y, w, h, wallCol){
+  const css=(a,m)=>'rgb('+Math.round(a[0]*255*(m||1))+','+Math.round(a[1]*255*(m||1))+','+Math.round(a[2]*255*(m||1))+')';
+  const dark = mixC(wallCol, [0,0,0], 0.35);
+  c2.save();
+  c2.beginPath(); c2.rect(x,y,w,h); c2.clip();
+  c2.fillStyle = css(wallCol); c2.fillRect(x,y,w,h);
+  c2.translate(x+w/2, y+h/2); c2.rotate(Math.PI/4);
+  c2.fillStyle = css(dark);
+  const cell = h*0.28, n = Math.ceil((w+h)/cell)+2;
+  for(let r=-n;r<n;r++) for(let k=-n;k<n;k++){
+    if((r+k)%2===0) c2.fillRect(k*cell-w, r*cell-h, cell, cell);
+  }
+  c2.restore();
+}
+function paintFenceBand(c2, x, y, w, h){
+  c2.fillStyle = 'rgb(118,120,124)'; c2.fillRect(x,y,w,h);
+  c2.save();
+  c2.beginPath(); c2.rect(x,y,w,h); c2.clip();
+  c2.strokeStyle = 'rgb(205,207,210)'; c2.lineWidth = Math.max(1, h*0.05);
+  const cell = h*0.34;
+  for(let d=-h; d<w+h; d+=cell){
+    c2.beginPath(); c2.moveTo(x+d,y); c2.lineTo(x+d+h,y+h); c2.stroke();
+    c2.beginPath(); c2.moveTo(x+d,y+h); c2.lineTo(x+d+h,y); c2.stroke();
+  }
+  c2.restore();
+}
+function paintCrowdTile(c2, x, y, w, h, palette){
+  c2.fillStyle = 'rgb(38,38,42)'; c2.fillRect(x,y,w,h);
+  const cell = 8;
+  for(let py=y; py<y+h; py+=cell) for(let px=x; px<x+w; px+=cell){
+    const col = palette[Math.floor(rng2()*palette.length)];
+    const m = 0.7 + rng2()*0.4;
+    c2.fillStyle = 'rgb('+Math.round(col[0]*255*m)+','+Math.round(col[1]*255*m)+','+Math.round(col[2]*255*m)+')';
+    c2.fillRect(px, py, cell-1, cell-1);
+  }
+}
+function paintSponsorTiles(c2, x0, y0, w, h, count){
+  const tw = w/count;
+  for(let i=0;i<count;i++){
+    const tx = x0 + i*tw, light = (i%2===0);
+    c2.fillStyle = light ? 'rgb(232,232,236)' : 'rgb(18,18,22)';
+    c2.fillRect(tx, y0, tw, h);
+    c2.strokeStyle = 'rgb(10,10,12)'; c2.lineWidth = 4;
+    c2.strokeRect(tx+2, y0+2, tw-4, h-4);
+    drawWord(c2, SPONSORS[i % SPONSORS.length], tx+tw/2, y0+h/2, h*0.085,
+             light ? 'rgb(18,18,22)' : 'rgb(232,232,236)', 0, false, tw*0.86);
+  }
+}
+function paintWorldAtlas(){
+  const cv = document.createElement('canvas');
+  cv.width = WX; cv.height = WX;
+  const c2 = cv.getContext('2d');
+  c2.fillStyle = 'rgb(60,60,64)'; c2.fillRect(0,0,WX,WX);
+  paintWallPattern(c2, ATLAS.wall.x, ATLAS.wall.y, ATLAS.wall.w, ATLAS.wall.h, TRACK.theme.wall);
+  paintFenceBand(c2, ATLAS.fence.x, ATLAS.fence.y, ATLAS.fence.w, ATLAS.fence.h);
+  paintCrowdTile(c2, ATLAS.crowd.x, ATLAS.crowd.y, ATLAS.crowd.w, ATLAS.crowd.h, TRACK.stadium.crowdPalette);
+  paintSponsorTiles(c2, ATLAS.sponsor.x, ATLAS.sponsor.y, ATLAS.sponsor.w, ATLAS.sponsor.h, ATLAS.sponsor.count);
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  // CLAMP (not REPEAT): this is a shared atlas packing several regions into
+  // one texture, so wall/fence quads reuse one fixed UV rect per slice
+  // (each slice already reproduces the same tile, giving a repeating look)
+  // rather than letting U grow past the region's own bounds into a neighbor.
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return tex;
+}
+
 /* ---------- car transform: basis from track surface (interpolated pose) ---------- */
 let RALPHA = 1;                                  // render alpha within current tick
 function lerpAng(a,b,t){ let d=b-a; while(d>Math.PI)d-=2*Math.PI; while(d<-Math.PI)d+=2*Math.PI; return a+d*t; }
@@ -1768,7 +1988,6 @@ function drawParticles(view, U, A){
   up(PBUF.pos,pos); up(PBUF.nrm,nrm); up(PBUF.col,col); up(PBUF.uv,uv);
   gl.uniformMatrix4fv(U('uModel'), false, m4ident());
   gl.uniform3f(U('uPaint'), 1,1,1);
-  gl.uniform1f(U('uUseTex'), 0);
   gl.uniform1f(U('uAlpha'), 0.38);
   gl.bindTexture(gl.TEXTURE_2D, WHITE_TEX);
   gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -1846,6 +2065,9 @@ function drawGL(){
   const aP = gl.getAttribLocation(SKYPROG,'aP');
   gl.enableVertexAttribArray(aP);
   gl.vertexAttribPointer(aP, 2, gl.FLOAT, false, 0, 0);
+  const sky = TRACK.stadium.sky;
+  gl.uniform3f(gl.getUniformLocation(SKYPROG,'uHorizon'), sky.horizon[0], sky.horizon[1], sky.horizon[2]);
+  gl.uniform3f(gl.getUniformLocation(SKYPROG,'uZenith'), sky.zenith[0], sky.zenith[1], sky.zenith[2]);
   gl.depthMask(false); gl.disable(gl.DEPTH_TEST);
   gl.drawArrays(gl.TRIANGLES, 0, 6);
   gl.depthMask(true); gl.enable(gl.DEPTH_TEST);
@@ -1871,7 +2093,6 @@ function drawGL(){
   function drawMesh(m, model, paint, tex){
     gl.uniformMatrix4fv(U('uModel'), false, model);
     gl.uniform3f(U('uPaint'), paint[0], paint[1], paint[2]);
-    gl.uniform1f(U('uUseTex'), tex ? 1 : 0);
     gl.uniform1f(U('uAlpha'), 1.0);
     gl.bindTexture(gl.TEXTURE_2D, tex || WHITE_TEX);
     gl.bindBuffer(gl.ARRAY_BUFFER, m.pos);
@@ -1888,8 +2109,8 @@ function drawGL(){
     gl.vertexAttribPointer(A('aUV'), 2, gl.FLOAT, false, 0, 0);
     gl.drawArrays(gl.TRIANGLES, 0, m.n);
   }
-  if(!WORLD) WORLD = buildWorld();
-  drawMesh(WORLD, m4ident(), [1,1,1], null);
+  if(!WORLD){ WORLD = buildWorld(); WORLD_TEX = paintWorldAtlas(); }
+  drawMesh(WORLD, m4ident(), [1,1,1], WORLD_TEX);
   for(const c of S.cars){
     if(!CARBUFS[c.num]) CARBUFS[c.num] = { mesh: buildCarMesh(c.num), tex: buildCarTexture(c) };
     drawMesh(CARBUFS[c.num].mesh, carModelMat(c), c.col, CARBUFS[c.num].tex);
@@ -2388,7 +2609,7 @@ let trackIdx = 0;
 function selectTrack(i){
   trackIdx = ((i % TRACKS.length) + TRACKS.length) % TRACKS.length;
   TRACK = buildTrack(TRACKS[trackIdx]);
-  WORLD = null; MMPTS = null;                       // rebuilt lazily for the new geometry
+  WORLD = null; WORLD_TEX = null; MMPTS = null;      // rebuilt lazily for the new geometry
   document.getElementById('trkTog').textContent = 'TRACK: ' + TRACK.name;
   document.getElementById('trackSub').innerHTML = TRACK.name + ' &bull; ' + TRACK.sub;
 }
