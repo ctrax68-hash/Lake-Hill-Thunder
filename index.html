@@ -1407,6 +1407,20 @@ function drawNum(c2, num, cx2, cy2, hgt, fill, outline, rot, flipX, flipY){
   c2.fillStyle=fill; c2.fillText(s, 0, 0);
   c2.restore();
 }
+// small fictional manufacturer-style badge: solid oval + a bold contrasting
+// center bar (roundel), used next to the shrunk deck-lid number. Bold fills
+// instead of thin strokes so the shape survives at typical drafting distance
+// (no external logo assets — purely procedural, same as the rest of the livery).
+function drawBadge(c2, cx2, cy2, w, h, fill, bar, outline){
+  c2.save();
+  c2.translate(cx2, cy2);
+  c2.beginPath(); c2.ellipse(0, 0, w/2, h/2, 0, 0, Math.PI*2);
+  c2.fillStyle=fill; c2.fill();
+  c2.lineWidth=h*0.16; c2.strokeStyle=outline; c2.stroke();
+  c2.fillStyle=bar;
+  c2.fillRect(-w*0.40, -h*0.17, w*0.80, h*0.34);
+  c2.restore();
+}
 function drawWord(c2, txt, cx2, cy2, cell, color, rot, flipX, maxW){
   c2.save();
   c2.translate(cx2, cy2);
@@ -1625,9 +1639,14 @@ function paintLivery(c2, body, accent, num, pace, idx){
   c2.fillRect(u(TI[0]-0.062), v(TI[1]-0.008), u(0.124), v(0.042));   // taillight decal band
   c2.fillStyle='rgb(10,10,12)';
   c2.fillRect(u(TI[0]-0.066), v(TI[1]+0.045), u(0.132), v(0.052));   // rear valance
-  // small number decal above the taillight band
-  if(!pace) drawNum(c2, num, u(TI[0]), v(TI[1]-0.055), v(0.055),
-                    'rgb(250,250,250)', 'rgb(10,10,12)', 0, false, false);
+  // small number decal above the taillight band, with a manufacturer-style
+  // badge beneath it so the deck lid doesn't read as just an oversized number
+  if(!pace){
+    drawNum(c2, num, u(TI[0]), v(TI[1]-0.086), v(0.020),
+            'rgb(250,250,250)', 'rgb(10,10,12)', 0, false, false);
+    drawBadge(c2, u(TI[0]), v(TI[1]-0.052), u(0.036), v(0.018),
+              rgb(accent), rgb(body,0.9), 'rgb(10,10,12)');
+  }
   // ---- swatches (geometry parts sample these) ----
   const swp=(sw,cl)=>{ c2.fillStyle=cl; c2.fillRect(u(sw[0]-0.035), v(sw[1]-0.045), u(0.07), v(0.09)); };
   swp(SW.tire,'rgb(14,14,15)'); swp(SW.rim,'rgb(52,52,56)'); swp(SW.chrome,'rgb(185,188,195)');
