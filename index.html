@@ -985,6 +985,14 @@ let renderer=null, gl=false;
 try{
   renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  // Without tone mapping, HDR-range pixels (an unclamped Fresnel rim
+  // highlight at grazing viewing angles, direct-sun specular, etc.) get
+  // passed into the bloom/grade pipeline unbounded instead of gracefully
+  // rolling off toward white — contributed to the sky-line artifact and
+  // the general blown-out-highlight look on bright scenes (e.g. victory
+  // lane). ACESFilmic is the standard choice for this.
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.0;
   gl = true;
 }catch(e){ renderer = null; gl = false; }
 const scene = new THREE.Scene();
@@ -1019,7 +1027,14 @@ let composer = null, bloomPass = null;
 if(renderer){
   composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
-  bloomPass = new UnrealBloomPass(new THREE.Vector2(1,1), 0.45, 0.4, 0.72);
+  // strength/radius/threshold tuned down from 0.45/0.4/0.72 — env-map
+  // specular highlights on the clearcoat/glass car materials (added in
+  // THREE-8) pushed enough pixels past the old threshold that bright
+  // highlights (e.g. the victory-lane orbit shot) blew out to solid white,
+  // washing out the shape underneath. Raising the threshold means fewer,
+  // genuinely-bright pixels qualify; lowering strength keeps the glow
+  // subtle rather than overpowering.
+  bloomPass = new UnrealBloomPass(new THREE.Vector2(1,1), 0.32, 0.4, 0.85);
   composer.addPass(bloomPass);
   composer.addPass(new ShaderPass(GradeShader));
   composer.addPass(new OutputPass());
@@ -1162,12 +1177,12 @@ function addStand(B, sStart, sEnd, tiers, opts){
         B.quad(sA,sB,sC,sD, palette[Math.floor(rng2()*palette.length)]);
       }
     }
-    if(opts.roof){
-      const topLat = baseLat + tiers*tierD, topH = baseH + tiers*tierH;
-      const ra=crossPt(sa,topLat,topH), rb=crossPt(sb,topLat,topH);
-      const rc=crossPt(sb,topLat+2.0,topH+0.2), rd=crossPt(sa,topLat+2.0,topH+0.2);
-      B.quad(ra,rb,rc,rd,[0.55,0.56,0.6]);
-    }
+    // (no stand-roof overhang quad here — it used to start from the exact
+    // same edge (topLat, topH) the top tier's own seat quad ends on, the same
+    // coincident-edge z-fighting setup that caused the wall/fence sky-line
+    // artifact above. It was a much rarer trigger (needs a roofed stand at
+    // just the right grazing distance) but the same fix applies: drop the
+    // thin overhanging lip rather than risk the same sliver-line artifact.
   }
 }
 function addHillSilhouette(B){
@@ -1222,9 +1237,18 @@ function buildWorld(){
     const faceUV = spI>=0 ? atlasSponsorUV(spI) : wallUV;
     B.quadUV(w00,w01,w11,w10,
       [faceUV[0],faceUV[3]],[faceUV[2],faceUV[3]],[faceUV[2],faceUV[1]],[faceUV[0],faceUV[1]]);
-    B.quad(w10,w11,crossPt(s1,WALL_LAT+0.4,WALL_H),crossPt(s0,WALL_LAT+0.4,WALL_H), COL.wallWh);
-    B.quad(crossPt(s0,WALL_LAT+0.4,WALL_H),crossPt(s1,WALL_LAT+0.4,WALL_H),
-           crossPt(s1,WALL_LAT+0.4),crossPt(s0,WALL_LAT+0.4), COL.wallWh);
+    // (no separate wall-cap shelf / outward "curtain" quad here — they used
+    // to add a thin 0.4-unit lip at lat=WALL_LAT+0.4, height=WALL_H, which is
+    // the EXACT same edge the catch-fence quad below starts from. Three
+    // coincident/near-coincident surfaces sharing one edge is a textbook
+    // z-fighting setup; down a long straight, where this edge recedes to a
+    // sub-pixel sliver, that fight rasterized as a crisp dark line high in
+    // the sky — confirmed by disabling these two quads and watching the line
+    // disappear completely (root-caused via GPU-side triangle picking after
+    // texture/lighting/post-fx/mipmap/antialiasing were all ruled out — none
+    // of those changed the artifact, but removing the mesh did). The fence
+    // band below still caps the wall visually, so the lip wasn't load-bearing
+    // for the look.
     // catch fence band above the wall cap — solid textured crosshatch, not
     // real geometry (the shader discards texture alpha so true see-through
     // holes aren't possible; a light crosshatch band reads as fencing instead)
@@ -1618,7 +1642,13 @@ function buildCarMesh(num, pace){
   // half on top of everything else in the scene. A dark, glossy, non-
   // transmissive material reads as tinted glass at chase-cam distance for a
   // fraction of the cost, so it stays off rather than re-tuned down.
-  const glassMat = new THREE.MeshPhysicalMaterial({ color:0x14181f, metalness:0.1, roughness:0.05 });
+  // No explicit `color` either (defaults to white, same as bodyMat) — the
+  // livery texture already paints a dark tinted-glass look (window fill,
+  // net weave, header banner); an extra dark base color here used to
+  // multiply on top of that and crush it to a flat black void (the
+  // "hollow" car complaint). Letting the texture alone drive the look,
+  // like bodyMat does, keeps the window detail visible.
+  const glassMat = new THREE.MeshPhysicalMaterial({ metalness:0.1, roughness:0.05 });
   const mats = [bodyMat, glassMat, CAR_MAT_CHROME, CAR_MAT_TIRE];
   if(pace) mats.push(CAR_MAT_AMBER);
   for(const g of groups) geo.addGroup(g.start, g.count, g.mat);
@@ -1923,7 +1953,19 @@ const ATLAS = {
   // the crowd tile (x:512-1024, y:256-768), which nothing else uses.
   white:   {x:1000, y:500, w:8,    h:8}
 };
-function atlasUV(r){ return [r.x/WX, r.y/WX, (r.x+r.w)/WX, (r.y+r.h)/WX]; }
+function atlasUV(r){
+  // Inset a few texels from each tile's edge so geometry UVs never sample
+  // the literal tile-boundary pixel — the gutter blur below intentionally
+  // darkens those boundary rows/cols toward whichever neighboring tile is
+  // there (to hide mip-level bleeding), so a UV that lands exactly on e.g.
+  // the fence tile's bottom-left corner (touching both the wall seam and
+  // the much darker crowd tile) samples that darkened corner directly. At
+  // a grazing viewing angle a wall/fence quad's on-screen footprint can
+  // shrink to a sliver dominated by that one corner texel, reading as a
+  // crisp dark line right along the wall top.
+  const INSET = 10;
+  return [(r.x+INSET)/WX, (r.y+INSET)/WX, (r.x+r.w-INSET)/WX, (r.y+r.h-INSET)/WX];
+}
 function atlasSponsorUV(i){
   const r = ATLAS.sponsor, tw = r.w/r.count;
   const x0 = r.x + i*tw;
@@ -2005,8 +2047,18 @@ function paintWorldAtlas(){
   // UNPACK_FLIP_Y_WEBGL) — Three flips canvas textures on upload by default,
   // which would mirror every wall/fence/crowd/sponsor tile vertically.
   tex.flipY = false;
-  tex.generateMipmaps = true;
-  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  // No mipmaps: this atlas packs several unrelated tiles (wall/fence/crowd/
+  // sponsor) into one canvas, and browser mipmap generation box-filters the
+  // whole image per level with no notion of tile boundaries. At the coarse
+  // mip levels sampled when the wall/fence recedes to a sliver down a long
+  // straight, that blends toward the dark crowd tile and reads as a crisp
+  // dark line right along the wall top — confirmed by the line surviving
+  // both a composer-bypass and tone-mapping test untouched (it's baked into
+  // the texture sample, upstream of any post-processing). Padding the seams
+  // (below) only helps at fine mips; going mipmap-less trades a little
+  // grazing-angle shimmer for correctness.
+  tex.generateMipmaps = false;
+  tex.minFilter = THREE.LinearFilter;
   tex.magFilter = THREE.LinearFilter;
   // CLAMP (not REPEAT): this is a shared atlas packing several regions into
   // one texture, so wall/fence quads reuse one fixed UV rect per slice
@@ -2298,11 +2350,38 @@ function drawGL(){
     worldMesh = buildWorld();
     WORLD_TEX = paintWorldAtlas();
     worldMesh.material.map = WORLD_TEX;
+    // scene.environment (added in THREE-8) is meant for car chrome/glass/
+    // clearcoat reflections, not the track/wall/grandstand geometry — but
+    // Three applies it to every PBR material in the scene by default.
+    // Diagnosed via a controlled composer-on/off comparison at a
+    // deterministic simulation state: at grazing viewing angles down a
+    // straight (Fresnel reflectance peaks at grazing angles on any
+    // dielectric surface), the wall/flagstand picked up the procedural
+    // RoomEnvironment's brightest baked light source and blew wildly past
+    // the display range; running that through the bloom/tone-mapping
+    // pipeline produced a thin dark streak artifact right at the
+    // overexposed patch. Zeroing envMapIntensity here removes the world
+    // mesh's reflection contribution entirely without touching cars.
+    worldMesh.material.envMapIntensity = 0;
     worldMesh.material.needsUpdate = true;
     scene.add(worldMesh);
     WORLD = worldMesh;
     scene.background = buildSkyTexture(TRACK.stadium.sky);
-    scene.fog = new THREE.Fog(0xb8cce6, 140, 700);
+    // Exponential fog, not linear: a chase cam spends most of its time
+    // looking almost straight down-track, which puts long stretches of the
+    // boundary wall/fence nearly edge-on to the camera simultaneously (real
+    // perspective, not a geometry bug — confirmed by scanning the world
+    // mesh for degenerate triangles and finding none, then correlating
+    // camera position against triangle facing: over half the world mesh
+    // reads as "edge-on" whenever the cam looks down a straight). At
+    // ~250-350 units out, the old linear Fog(140,700) had barely started
+    // fading (only ~30% blended), so that edge-on band rendered as a stark,
+    // unfogged black sliver. FogExp2's falloff is much stronger at exactly
+    // that range while still leaving nearby track/car detail (well under
+    // 50 units from a normal chase distance) essentially untouched, and
+    // still fully hides Cedar Valley's hill silhouette at its intended
+    // ~1400-unit range same as before.
+    scene.fog = new THREE.FogExp2(0xb8cce6, 0.005);
     applyEnvPreset(TRACK.stadium);
   }
   updateCamera();
