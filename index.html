@@ -2195,7 +2195,7 @@ function emitFX(dt){
     p.vx*=0.96; p.vz*=0.96;
   }
 }
-let PBUF=null, PARTICLE_TEX=null;
+let PARTICLE_TEX=null;
 function buildParticleSprite(){          // soft radial-gradient billboard, replaces the flat unsoftened quad
   const s = 64;
   const cv2 = document.createElement('canvas'); cv2.width=s; cv2.height=s;
@@ -2205,64 +2205,90 @@ function buildParticleSprite(){          // soft radial-gradient billboard, repl
   g.addColorStop(0.5, 'rgba(255,255,255,0.55)');
   g.addColorStop(1, 'rgba(255,255,255,0)');
   c2.fillStyle = g; c2.fillRect(0,0,s,s);
-  const tex = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, tex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv2);
-  gl.generateMipmap(gl.TEXTURE_2D);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  const tex = new THREE.CanvasTexture(cv2);
+  tex.generateMipmaps = true;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.needsUpdate = true;
   return tex;
 }
-function drawParticles(view, U, A){
-  if(!PARTS.length) return;
+/* THREE.Points-based particles: gl_PointSize billboards each point toward
+   the camera automatically (same effect as the old renderer's manual
+   R/Up-vector quad billboarding), so this only needs position/size/color
+   attributes rewritten each frame from PARTS — emitFX/spawnP are untouched.
+   A per-vertex size attribute needs a small custom shader (PointsMaterial
+   only exposes one size for the whole batch); gl_PointSize is denominated
+   in framebuffer pixels, so uPixelsPerUnit converts a world-space diameter
+   at the point's view-space depth the same way the old billboard quads'
+   world-space corners did, keeping particle size independent of FOV changes. */
+const PART_CAP = 220;
+const PARTICLE_VS = `
+  attribute float aSize;
+  attribute vec3 aColor;
+  uniform float uPixelsPerUnit;
+  varying vec3 vColor;
+  void main(){
+    vColor = aColor;
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    gl_PointSize = aSize * uPixelsPerUnit / max(0.001, -mv.z);
+    gl_Position = projectionMatrix * mv;
+  }`;
+const PARTICLE_FS = `
+  precision mediump float;
+  varying vec3 vColor;
+  uniform sampler2D uMap;
+  uniform float uAlpha;
+  void main(){
+    vec4 texel = texture2D(uMap, gl_PointCoord);
+    gl_FragColor = vec4(vColor, uAlpha) * texel;
+  }`;
+let smokePts=null, sparkPts=null;
+function makeParticleBatch(alpha, blending){
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(PART_CAP*3), 3).setUsage(THREE.DynamicDrawUsage));
+  geo.setAttribute('aSize', new THREE.Float32BufferAttribute(new Float32Array(PART_CAP), 1).setUsage(THREE.DynamicDrawUsage));
+  geo.setAttribute('aColor', new THREE.Float32BufferAttribute(new Float32Array(PART_CAP*3), 3).setUsage(THREE.DynamicDrawUsage));
+  geo.setDrawRange(0, 0);
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { uMap:{value:PARTICLE_TEX}, uAlpha:{value:alpha}, uPixelsPerUnit:{value:500} },
+    vertexShader: PARTICLE_VS, fragmentShader: PARTICLE_FS,
+    transparent: true, depthWrite: false, blending
+  });
+  const pts = new THREE.Points(geo, mat);
+  pts.frustumCulled = false;
+  scene.add(pts);
+  return pts;
+}
+function drawParticlesThree(){
   if(!PARTICLE_TEX) PARTICLE_TEX = buildParticleSprite();
-  const R=[view[0],view[4],view[8]], Up=[view[1],view[5],view[9]];
-  // smoke/dust (soft alpha blend) and sparks (additive, glowing) are two
-  // separate batches — same p.size<0.15 split already used elsewhere for
-  // spark/smoke behavior — since each needs a different gl.blendFunc.
-  const smoke = {pos:[],nrm:[],col:[],uv:[],spec:[]}, spark = {pos:[],nrm:[],col:[],uv:[],spec:[]};
-  const quadUVs = [[0,0],[1,0],[1,1], [0,0],[1,1],[0,1]];
+  if(!smokePts){
+    smokePts = makeParticleBatch(0.38, THREE.NormalBlending);
+    sparkPts = makeParticleBatch(0.9, THREE.AdditiveBlending);
+  }
+  const pixelsPerUnit = (H*DPR) / (2*Math.tan(camera.fov*Math.PI/180/2));
+  smokePts.material.uniforms.uPixelsPerUnit.value = pixelsPerUnit;
+  sparkPts.material.uniforms.uPixelsPerUnit.value = pixelsPerUnit;
+  const buf = { smoke:{pos:smokePts.geometry.attributes.position.array, size:smokePts.geometry.attributes.aSize.array, col:smokePts.geometry.attributes.aColor.array, n:0},
+                spark:{pos:sparkPts.geometry.attributes.position.array, size:sparkPts.geometry.attributes.aSize.array, col:sparkPts.geometry.attributes.aColor.array, n:0} };
   for(const p of PARTS){
     const g = 1 - p.age/p.life;
     let s = p.size;
     if(p.size >= 0.1) s *= 1 + p.age*1.3;             // smoke grows gently
     s *= Math.min(1, g*3);                            // shrink out at end of life
-    const cA=[p.x - R[0]*s - Up[0]*s, p.y - R[1]*s - Up[1]*s, p.z - R[2]*s - Up[2]*s];
-    const cB=[p.x + R[0]*s - Up[0]*s, p.y + R[1]*s - Up[1]*s, p.z + R[2]*s - Up[2]*s];
-    const cC=[p.x + R[0]*s + Up[0]*s, p.y + R[1]*s + Up[1]*s, p.z + R[2]*s + Up[2]*s];
-    const cD=[p.x - R[0]*s + Up[0]*s, p.y - R[1]*s + Up[1]*s, p.z - R[2]*s + Up[2]*s];
-    const verts = [cA,cB,cC, cA,cC,cD];
-    const bat = p.size < 0.15 ? spark : smoke;
-    for(let i=0;i<6;i++){
-      const q = verts[i], uvv = quadUVs[i];
-      bat.pos.push(q[0],q[1],q[2]); bat.nrm.push(0,1,0);
-      bat.col.push(p.col[0],p.col[1],p.col[2],1); bat.uv.push(uvv[0],uvv[1]); bat.spec.push(0.0);
-    }
+    const bat = p.size < 0.15 ? buf.spark : buf.smoke;
+    if(bat.n >= PART_CAP) continue;
+    const i = bat.n++;
+    bat.pos[i*3]=p.x; bat.pos[i*3+1]=p.y; bat.pos[i*3+2]=p.z;
+    bat.size[i] = s*2;                                // s is a half-width in the old quad math — diameter for gl_PointSize
+    bat.col[i*3]=p.col[0]; bat.col[i*3+1]=p.col[1]; bat.col[i*3+2]=p.col[2];
   }
-  const mkBufs = () => ({ pos:gl.createBuffer(), nrm:gl.createBuffer(), col:gl.createBuffer(), uv:gl.createBuffer(), spec:gl.createBuffer() });
-  if(!PBUF) PBUF = { smoke: mkBufs(), spark: mkBufs() };
-  const up=(b,arr)=>{ gl.bindBuffer(gl.ARRAY_BUFFER,b); gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(arr),gl.DYNAMIC_DRAW); };
-  const bindA=(b,name,n)=>{ gl.bindBuffer(gl.ARRAY_BUFFER,b);
-    gl.enableVertexAttribArray(A(name)); gl.vertexAttribPointer(A(name),n,gl.FLOAT,false,0,0); };
-  gl.uniformMatrix4fv(U('uModel'), false, m4ident());
-  gl.uniform3f(U('uPaint'), 1,1,1);
-  gl.bindTexture(gl.TEXTURE_2D, PARTICLE_TEX);
-  gl.enable(gl.BLEND);
-  gl.depthMask(false);
-  function drawBatch(bat, buf, alpha, sfactor, dfactor){
-    if(!bat.pos.length) return;
-    up(buf.pos,bat.pos); up(buf.nrm,bat.nrm); up(buf.col,bat.col); up(buf.uv,bat.uv); up(buf.spec,bat.spec);
-    gl.uniform1f(U('uAlpha'), alpha);
-    gl.blendFunc(sfactor, dfactor);
-    bindA(buf.pos,'aPos',3); bindA(buf.nrm,'aNrm',3); bindA(buf.col,'aCol',4); bindA(buf.uv,'aUV',2); bindA(buf.spec,'aSpec',1);
-    gl.drawArrays(gl.TRIANGLES, 0, bat.pos.length/3);
+  for(const [pts, b] of [[smokePts,buf.smoke],[sparkPts,buf.spark]]){
+    pts.geometry.setDrawRange(0, b.n);
+    pts.geometry.attributes.position.needsUpdate = true;
+    pts.geometry.attributes.aSize.needsUpdate = true;
+    pts.geometry.attributes.aColor.needsUpdate = true;
   }
-  drawBatch(smoke, PBUF.smoke, 0.38, gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-  drawBatch(spark, PBUF.spark, 0.9, gl.SRC_ALPHA, gl.ONE);
-  gl.depthMask(true); gl.disable(gl.BLEND);
-  gl.uniform1f(U('uAlpha'), 1.0);
 }
 
 /* ---------- chase camera ---------- */
@@ -2319,11 +2345,9 @@ function updateCamera(){
 }
 
 /* ---------- GL draw (Three.js) ----------
-   Particles/post-fx are still the old raw-WebGL code below (drawParticles,
-   runPostFX) — deliberately NOT called from here yet (THREE-6/7 wire them
-   back in as Three.js Points/EffectComposer passes). Regression
-   (tools/playtest.js) and race logic are unaffected since neither reads
-   back from rendering. */
+   Post-fx is still deferred (THREE-7 wires it in as an EffectComposer
+   chain). Regression (tools/playtest.js) and race logic are unaffected
+   since neither reads back from rendering. */
 let placeholderLit = false;
 function ensureCarMesh(num, pace){
   if(!CARBUFS[num]){
@@ -2389,6 +2413,8 @@ function drawGL(){
   } else if(CARBUFS.pace){
     CARBUFS.pace.mesh.visible = false;
   }
+
+  drawParticlesThree();
 
   renderer.render(scene, camera);
 }
