@@ -99,6 +99,10 @@
 <body>
 <canvas id="gl"></canvas>
 <canvas id="hud"></canvas>
+<!-- THREE-2 temporary proof-of-concept canvas — deleted once THREE-3 retargets
+     the real renderer at #gl. Small and corner-pinned so it never blocks the
+     existing game UI while both renderers run side by side. -->
+<canvas id="threeDebug" style="position:fixed;bottom:10px;left:10px;width:220px;height:160px;z-index:99;border:2px solid #0f0;background:#000;"></canvas>
 
 <div id="bL" class="ctl"><span></span></div>
 <div id="bR" class="ctl"><span></span></div>
@@ -135,8 +139,38 @@
 <div class="hint">This build needs WebGL. Try a different browser.</div></div>
 
 <script type="module">
+import * as THREE from 'three';
 
 "use strict";
+/* ---------- THREE-2: temporary proof-of-concept, deleted in THREE-3 ----------
+   Stands up a minimal Three.js renderer/scene/camera into the small corner
+   canvas added above, independent of the existing game loop, just to prove
+   the vendored Three.js + import-map setup actually works end-to-end under
+   this project's static-file/no-bundler hosting before any real game code
+   depends on it. The real game renderer (gl/drawGL below) is untouched. */
+(function threeDebugPOC(){
+  const dcv = document.getElementById('threeDebug');
+  const renderer = new THREE.WebGLRenderer({ canvas: dcv, antialias: true });
+  renderer.setSize(220, 160, false);
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(50, 220/160, 0.1, 100);
+  camera.position.set(0, 0, 4);
+  const cube = new THREE.Mesh(
+    new THREE.BoxGeometry(1.4, 1.4, 1.4),
+    new THREE.MeshStandardMaterial({ color: 0xF7D400, metalness: 0.3, roughness: 0.4 })
+  );
+  scene.add(cube);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x223344, 1.2));
+  const sun = new THREE.DirectionalLight(0xffffff, 2.0);
+  sun.position.set(3, 4, 2);
+  scene.add(sun);
+  function animate(){
+    requestAnimationFrame(animate);
+    cube.rotation.x += 0.015; cube.rotation.y += 0.021;
+    renderer.render(scene, camera);
+  }
+  animate();
+})();
 /* =====================================================================
    LAKE HILL THUNDER — mobile 3D build (NASCAR Thunder 2003 style)
    WebGL chase-cam renderer, landscape-only. Physics preserved:
