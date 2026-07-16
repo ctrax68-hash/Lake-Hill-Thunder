@@ -1565,8 +1565,19 @@ function specFor(sw){                // specular intensity for a livery swatch
   if(sw===SW.tire) return 0.03;      // matte rubber
   return 0.2;                        // dark/amber/shadow/body swatches
 }
+// Shared (non-textured) car materials — identical for every car, so built
+// once. Body paint and glass need a per-car livery THREE.CanvasTexture, so
+// those two materials are created per-mesh in buildCarMesh() below instead.
+let CAR_MAT_CHROME=null, CAR_MAT_TIRE=null, CAR_MAT_AMBER=null;
+function carSharedMats(){
+  if(!CAR_MAT_CHROME){
+    CAR_MAT_CHROME = new THREE.MeshPhysicalMaterial({ color:0xc7c9cc, metalness:1.0, roughness:0.18 });
+    CAR_MAT_TIRE = new THREE.MeshStandardMaterial({ color:0x0d0d10, roughness:0.95 });
+    CAR_MAT_AMBER = new THREE.MeshStandardMaterial({ color:0xffb020, emissive:0xffb020, emissiveIntensity:1.2 });
+  }
+}
 function buildCarMesh(num, pace){
-  const pos=[], nrm=[], col=[], uv=[], spec=[];
+  const pos=[], nrm=[], uv=[];
   const rings = CAR_ST.map(ringPts);
   // smooth per-vertex normals from surface tangents
   const NRM = rings.map((r,i)=> r.map((p,k)=>{
@@ -1579,27 +1590,40 @@ function buildCarMesh(num, pace){
     if(n[1]*(p[1]-mid) + n[2]*p[2] < 0) n=[-n[0],-n[1],-n[2]];
     return n;
   }));
-  function vert(p, n, u, v){ pos.push(p[0],p[1],p[2]); nrm.push(n[0],n[1],n[2]);
-    col.push(1,1,1,1); uv.push(u, v);
-    // glass band (kept in sync with paintLivery's GV0=0.335/GVH=0.330) reads
-    // near-mirror; the rest of the body paint gets a moderate clearcoat gloss
-    spec.push((v>=0.335 && v<=0.665) ? 0.85 : 0.30); }
+  // group bookkeeping: each entry is a contiguous vertex range assigned to
+  // one of the 5 PBR materials the plan calls for (replacing the old
+  // per-vertex aSpec attribute, which Three's materials have no equivalent
+  // for — every region that used to carry a distinct aSpec value already
+  // corresponds to a distinct semantic car part, so grouping by part and
+  // giving each an accurate fixed PBR material is a like-for-like swap).
+  const groups = []; let gStart = 0;
+  const MATI = { body:0, glass:1, chrome:2, tire:3, amber:4 };
+  function endGroup(mat){ const n = pos.length/3; if(n>gStart) groups.push({start:gStart, count:n-gStart, mat:MATI[mat]}); gStart = n; }
+  function vert(p, n, u, v){ pos.push(p[0],p[1],p[2]); nrm.push(n[0],n[1],n[2]); uv.push(u, v); }
   function quadS(i0,k0,i1,k1,i2,k2,i3,k3){                   // smooth loft quad
     const P=[[i0,k0],[i1,k1],[i2,k2],[i3,k3]];
     const tri=(a,b,c)=>{ for(const [i,k] of [a,b,c])
       vert(rings[i][k], NRM[i][k], carU(CAR_ST[i][0]), carV(k)); };
     tri(P[0],P[1],P[2]); tri(P[0],P[2],P[3]);
   }
-  for(let i=0;i<rings.length-1;i++)
-    for(let k=0;k<NK-1;k++)
-      quadS(i,k, i,k+1, i+1,k+1, i+1,k);
-  // underbody strip (wrap seam) → dark swatch
+  // main loft, split into two passes (body k-bands, then glass k-bands)
+  // instead of one interleaved loop, so each ends up a single contiguous
+  // vertex range — same quads, same math, just reordered so a Three.js
+  // material group boundary can replace the old per-vertex aSpec blend.
+  // Glass band matches paintLivery's GV0=0.335/GVH=0.330 window (carV(k)
+  // for k=4..8 falls in/at the edge of [0.335,0.665]).
+  const BODY_K = [0,1,2,3,9,10,11,12], GLASS_K = [4,5,6,7,8];
+  for(let i=0;i<rings.length-1;i++) for(const k of BODY_K) quadS(i,k, i,k+1, i+1,k+1, i+1,k);
+  endGroup('body');
+  for(let i=0;i<rings.length-1;i++) for(const k of GLASS_K) quadS(i,k, i,k+1, i+1,k+1, i+1,k);
+  endGroup('glass');
+  // underbody strip (wrap seam) → dark/matte
   for(let i=0;i<rings.length-1;i++){
     const a=rings[i][NK-1], b=rings[i][0], c=rings[i+1][0], d=rings[i+1][NK-1];
-    for(const p of [a,b,c, a,c,d]){ pos.push(p[0],p[1],p[2]); nrm.push(0,-1,0);
-      col.push(1,1,1,1); uv.push(SW.dark[0],SW.dark[1]); spec.push(0.2); }
+    for(const p of [a,b,c, a,c,d]){ pos.push(p[0],p[1],p[2]); nrm.push(0,-1,0); uv.push(SW.dark[0],SW.dark[1]); }
   }
-  // nose / tail cap fans → painted islands
+  endGroup('tire');
+  // nose / tail cap fans → painted islands (body paint)
   function cap(i, cx2, fwd, isl){
     const r = rings[i], mid=(CAR_ST[i][2]+CAR_ST[i][3])/2;
     for(let k=0;k<NK-1;k++){
@@ -1607,7 +1631,7 @@ function buildCarMesh(num, pace){
       const tris = fwd>0 ? [[cx2,mid,0],a,b] : [[cx2,mid,0],b,a];
       for(const p of tris){
         pos.push(p===tris[0]?cx2:p[0], p===tris[0]?mid:p[1], p===tris[0]?0:p[2]);
-        nrm.push(fwd,0,0); col.push(1,1,1,1); spec.push(0.3);
+        nrm.push(fwd,0,0);
         const zz = p===tris[0]?0:p[2], yy = p===tris[0]?mid:p[1];
         uv.push(isl[0] + zz/2.0*(-0.085*fwd), isl[1] + (mid-yy)/1.5*0.40);
       }
@@ -1615,15 +1639,15 @@ function buildCarMesh(num, pace){
   }
   cap(0, 2.56, 1, [0.845, 0.24]);            // nose island center
   cap(rings.length-1, -2.56, -1, [0.845, 0.74]);  // tail island
+  endGroup('body');
   // helper for solid-swatch boxes/quads
   function q(a,b,c,d, sw){
     const u=v3sub(b,a), v=v3sub(c,a), n=v3norm(v3cross(u,v));
-    const sp = specFor(sw);
-    for(const p of [a,b,c, a,c,d]){ pos.push(p[0],p[1],p[2]); nrm.push(n[0],n[1],n[2]);
-      col.push(1,1,1,1); uv.push(sw[0],sw[1]); spec.push(sp); }
+    for(const p of [a,b,c, a,c,d]){ pos.push(p[0],p[1],p[2]); nrm.push(n[0],n[1],n[2]); uv.push(sw[0],sw[1]); }
   }
   // shadow
   q([-2.7,0.02,-1.15],[ 2.7,0.02,-1.15],[ 2.7,0.02, 1.15],[-2.7,0.02, 1.15], SW.shadow);
+  endGroup('tire');
   // spoiler (60 in angled blade) — the body loft is a rounded tube, not a flat
   // decklid, so a full-width blade at fixed height would float clear of the
   // quarter panels; narrow it to where the deck is actually near peak height,
@@ -1633,6 +1657,7 @@ function buildCarMesh(num, pace){
   {
     const z=0.50, x0=-2.42, y0=0.935, x1=-2.60, y1=1.16, th=0.03;
     q([x0,y0,-z],[x0,y0,z],[x1,y1,z],[x1,y1,-z], SW.body);
+    endGroup('body');
     q([x0,y0-th, z],[x0,y0-th,-z],[x1,y1-th,-z],[x1,y1-th, z], SW.dark);
     q([x0,y0,-z],[x1,y1,-z],[x1,y1-th,-z],[x0,y0-th,-z], SW.dark);
     q([x1,y1, z],[x0,y0, z],[x0,y0-th, z],[x1,y1-th, z], SW.dark);
@@ -1641,42 +1666,68 @@ function buildCarMesh(num, pace){
       q([x0-0.05,deckY,rz-0.05],[x0-0.05,deckY,rz+0.05],[x0,y0,rz+0.05],[x0,y0,rz-0.05], SW.dark);
       q([x0-0.05,deckY,rz+0.05],[x0-0.05,deckY,rz-0.05],[x0-0.05,y0,rz-0.05],[x0-0.05,y0,rz+0.05], SW.dark);
     }
+    endGroup('tire');
   }
-  if(pace) q([-0.45,1.29,-0.34],[0.05,1.29,-0.34],[0.05,1.29,0.34],[-0.45,1.29,0.34], SW.amber),
-           q([-0.45,1.29,-0.34],[-0.45,1.42,-0.34],[0.05,1.42,-0.34],[0.05,1.29,-0.34], SW.amber),
-           q([0.05,1.29,0.34],[-0.45,1.29,0.34],[-0.45,1.42,0.34],[0.05,1.42,0.34], SW.amber),
-           q([0.05,1.29,-0.34],[0.05,1.42,-0.34],[0.05,1.42,0.34],[0.05,1.29,0.34], SW.amber),
-           q([-0.45,1.42,-0.34],[-0.45,1.42,0.34],[0.05,1.42,0.34],[0.05,1.42,-0.34], SW.amber);
-  // wheels: tire barrel + face rings
+  if(pace){
+    q([-0.45,1.29,-0.34],[0.05,1.29,-0.34],[0.05,1.29,0.34],[-0.45,1.29,0.34], SW.amber);
+    q([-0.45,1.29,-0.34],[-0.45,1.42,-0.34],[0.05,1.42,-0.34],[0.05,1.29,-0.34], SW.amber);
+    q([0.05,1.29,0.34],[-0.45,1.29,0.34],[-0.45,1.42,0.34],[0.05,1.42,0.34], SW.amber);
+    q([0.05,1.29,-0.34],[0.05,1.42,-0.34],[0.05,1.42,0.34],[0.05,1.29,0.34], SW.amber);
+    q([-0.45,1.42,-0.34],[-0.45,1.42,0.34],[0.05,1.42,0.34],[0.05,1.42,-0.34], SW.amber);
+    endGroup('amber');
+  }
+  // wheels: tire barrel+face (all 4 wheels) in one pass, then rim+chrome hub
+  // (all 4 wheels) in a second pass — same per-segment math as before, just
+  // reordered by part so each material ends up one contiguous vertex range.
   const wR=0.34, wW=0.27, wz=0.80, WSEG=30;   // was 18 — rounder wheels, pairs with the new specular highlight on rim/chrome
-  function wheel(cxp, sgn){
+  function wheelTire(cxp, sgn){
     const zo = sgn*(wz+wW/2), zi = sgn*(wz-wW/2);
     for(let k=0;k<WSEG;k++){
       const a0=k/WSEG*Math.PI*2, a1=(k+1)/WSEG*Math.PI*2;
       const p0=[cxp+Math.cos(a0)*wR, wR+Math.sin(a0)*wR, zo];
       const p1=[cxp+Math.cos(a1)*wR, wR+Math.sin(a1)*wR, zo];
       const q0=[p0[0],p0[1],zi], q1=[p1[0],p1[1],zi];
-      const push=(pts,n2,sw)=>{ const sp=specFor(sw); for(const p of pts){ pos.push(p[0],p[1],p[2]);
-        nrm.push(n2[0],n2[1],n2[2]); col.push(1,1,1,1); uv.push(sw[0],sw[1]); spec.push(sp); } };
+      const push=(pts,n2)=>{ for(const p of pts){ pos.push(p[0],p[1],p[2]);
+        nrm.push(n2[0],n2[1],n2[2]); uv.push(SW.tire[0],SW.tire[1]); } };
       const rad=[Math.cos((a0+a1)/2),Math.sin((a0+a1)/2)];
-      if(sgn>0) push([p0,p1,q1, p0,q1,q0],[rad[0],rad[1],0],SW.tire);
-      else      push([p1,p0,q0, p1,q0,q1],[rad[0],rad[1],0],SW.tire);
+      if(sgn>0) push([p0,p1,q1, p0,q1,q0],[rad[0],rad[1],0]);
+      else      push([p1,p0,q0, p1,q0,q1],[rad[0],rad[1],0]);
       const fn=[0,0,sgn];
       const c=[cxp,wR,zo];
-      if(sgn>0) push([c,p1,p0],fn,SW.tire); else push([c,p0,p1],fn,SW.tire);
-      const r0a=[cxp+Math.cos(a0)*wR*0.58, wR+Math.sin(a0)*wR*0.58, zo+0.004*sgn];
-      const r1a=[cxp+Math.cos(a1)*wR*0.58, wR+Math.sin(a1)*wR*0.58, zo+0.004*sgn];
-      if(sgn>0) push([[cxp,wR,zo+0.004],r1a,r0a],fn,SW.rim); else push([[cxp,wR,zo-0.004],r0a,r1a],fn,SW.rim);
-      const h0=[cxp+Math.cos(a0)*wR*0.22, wR+Math.sin(a0)*wR*0.22, zo+0.008*sgn];
-      const h1=[cxp+Math.cos(a1)*wR*0.22, wR+Math.sin(a1)*wR*0.22, zo+0.008*sgn];
-      if(sgn>0) push([[cxp,wR,zo+0.008],h1,h0],fn,SW.chrome); else push([[cxp,wR,zo-0.008],h0,h1],fn,SW.chrome);
+      if(sgn>0) push([c,p1,p0],fn); else push([c,p0,p1],fn);
     }
   }
-  wheel(1.395,1); wheel(1.395,-1); wheel(-1.395,1); wheel(-1.395,-1);
-  const mk = (arr) => { const b = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, b);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(arr), gl.STATIC_DRAW); return b; };
-  return { pos:mk(pos), nrm:mk(nrm), col:mk(col), uv:mk(uv), spec:mk(spec), n:pos.length/3 };
+  function wheelMetal(cxp, sgn){
+    const zo = sgn*(wz+wW/2);
+    const fn=[0,0,sgn];
+    for(let k=0;k<WSEG;k++){
+      const a0=k/WSEG*Math.PI*2, a1=(k+1)/WSEG*Math.PI*2;
+      const push=(pts,sw)=>{ for(const p of pts){ pos.push(p[0],p[1],p[2]);
+        nrm.push(fn[0],fn[1],fn[2]); uv.push(sw[0],sw[1]); } };
+      const r0a=[cxp+Math.cos(a0)*wR*0.58, wR+Math.sin(a0)*wR*0.58, zo+0.004*sgn];
+      const r1a=[cxp+Math.cos(a1)*wR*0.58, wR+Math.sin(a1)*wR*0.58, zo+0.004*sgn];
+      if(sgn>0) push([[cxp,wR,zo+0.004],r1a,r0a],SW.rim); else push([[cxp,wR,zo-0.004],r0a,r1a],SW.rim);
+      const h0=[cxp+Math.cos(a0)*wR*0.22, wR+Math.sin(a0)*wR*0.22, zo+0.008*sgn];
+      const h1=[cxp+Math.cos(a1)*wR*0.22, wR+Math.sin(a1)*wR*0.22, zo+0.008*sgn];
+      if(sgn>0) push([[cxp,wR,zo+0.008],h1,h0],SW.chrome); else push([[cxp,wR,zo-0.008],h0,h1],SW.chrome);
+    }
+  }
+  wheelTire(1.395,1); wheelTire(1.395,-1); wheelTire(-1.395,1); wheelTire(-1.395,-1);
+  endGroup('tire');
+  wheelMetal(1.395,1); wheelMetal(1.395,-1); wheelMetal(-1.395,1); wheelMetal(-1.395,-1);
+  endGroup('chrome');
+
+  carSharedMats();
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  const bodyMat = new THREE.MeshPhysicalMaterial({ clearcoat:1.0, clearcoatRoughness:0.1, metalness:0.35, roughness:0.45 });
+  const glassMat = new THREE.MeshPhysicalMaterial({ color:0x14181f, metalness:0.1, roughness:0.05, transmission:0.55, thickness:0.05 });
+  const mats = [bodyMat, glassMat, CAR_MAT_CHROME, CAR_MAT_TIRE];
+  if(pace) mats.push(CAR_MAT_AMBER);
+  for(const g of groups) geo.addGroup(g.start, g.count, g.mat);
+  return new THREE.Mesh(geo, mats);
 }
 
 /* ---------- livery painter (restricted API: fillRect/arc/transforms) ---------- */
@@ -1950,14 +2001,14 @@ function buildCarTexture(car, pace){
   const lum = body[0]*0.5+body[1]*0.4+body[2]*0.1;
   const accent = pace ? CAR_PALETTE.orange : (lum > 0.5 ? CAR_PALETTE.black : CAR_PALETTE.white);
   paintLivery(c2, body, accent, pace?0:car.num, !!pace, pace?0:(car.idx||0));
-  const tex = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, tex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv2);
-  gl.generateMipmap(gl.TEXTURE_2D);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  const tex = new THREE.CanvasTexture(cv2);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.flipY = false;          // matches carU()/carV()'s top-left-origin authoring (see paintWorldAtlas)
+  tex.generateMipmaps = true;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.needsUpdate = true;
   return tex;
 }
 
@@ -2268,13 +2319,20 @@ function updateCamera(){
 }
 
 /* ---------- GL draw (Three.js) ----------
-   THREE-3 scope: world geometry + camera + placeholder lighting only.
-   Cars/particles/post-fx are still the old raw-WebGL code below (buildCarMesh,
-   buildCarTexture, drawParticles, runPostFX) — deliberately NOT called from
-   here yet (THREE-4/6/7 wire them back in as Three.js meshes/points/passes),
-   so the field renders empty for this phase. Regression (tools/playtest.js)
-   and race logic are unaffected since neither reads back from rendering. */
+   Particles/post-fx are still the old raw-WebGL code below (drawParticles,
+   runPostFX) — deliberately NOT called from here yet (THREE-6/7 wire them
+   back in as Three.js Points/EffectComposer passes). Regression
+   (tools/playtest.js) and race logic are unaffected since neither reads
+   back from rendering. */
 let placeholderLit = false;
+function ensureCarMesh(num, pace){
+  if(!CARBUFS[num]){
+    const mesh = buildCarMesh(num, pace);
+    scene.add(mesh);
+    CARBUFS[num] = { mesh, tex:null, builtFor:null };
+  }
+  return CARBUFS[num];
+}
 function drawGL(){
   if(!gl) return;
   if(!placeholderLit){
@@ -2304,6 +2362,34 @@ function drawGL(){
   camera.fov = 58 + Math.min(16, S.player ? S.player.v*0.16 : 0);
   camera.aspect = W/H;
   camera.updateProjectionMatrix();
+
+  for(const c of S.cars){
+    const cb = ensureCarMesh(c.num, false);
+    if(!cb.tex){
+      cb.tex = buildCarTexture(c);
+      cb.mesh.material[0].map = cb.tex; cb.mesh.material[1].map = cb.tex;
+      cb.mesh.material[0].needsUpdate = true; cb.mesh.material[1].needsUpdate = true;
+    }
+    cb.mesh.matrixAutoUpdate = false;
+    cb.mesh.matrix.fromArray(carModelMat(c));
+    cb.mesh.matrixWorldNeedsUpdate = true;
+  }
+  const showPace = S.mode==='pace' || S.flag==='yellow' || PACE.state==='peel' || PACE.state==='parked';
+  if(showPace){
+    const pb = ensureCarMesh('pace', true);
+    pb.mesh.visible = true;
+    if(!pb.tex){
+      pb.tex = buildCarTexture(PACE, true);
+      pb.mesh.material[0].map = pb.tex; pb.mesh.material[1].map = pb.tex;
+      pb.mesh.material[0].needsUpdate = true; pb.mesh.material[1].needsUpdate = true;
+    }
+    pb.mesh.matrixAutoUpdate = false;
+    pb.mesh.matrix.fromArray(carModelMat(PACE));
+    pb.mesh.matrixWorldNeedsUpdate = true;
+  } else if(CARBUFS.pace){
+    CARBUFS.pace.mesh.visible = false;
+  }
+
   renderer.render(scene, camera);
 }
 function buildSkyTexture(sky){
