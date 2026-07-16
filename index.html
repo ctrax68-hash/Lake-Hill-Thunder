@@ -136,6 +136,11 @@
 
 <script type="module">
 import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 "use strict";
 /* =====================================================================
@@ -986,6 +991,40 @@ const LEGACY_GL = false;
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(60, 1, 0.5, 1500);
 let worldMesh = null;
+// Lift/gamma/gain/saturation/vignette color-grade, ported verbatim from the
+// old raw-GL POSTPROG fragment shader — same uniforms, same math. The old
+// pass took two separate inputs (scene + a manually-blurred bloom texture)
+// and combined them itself; UnrealBloomPass (run just before this pass in
+// the composer chain) already composites its bloom additively into its
+// output, so this shader only needs the one combined tDiffuse input.
+const GradeShader = {
+  uniforms: { tDiffuse:{value:null}, uLift:{value:0.0}, uGain:{value:1.04}, uGamma:{value:0.94},
+              uSaturation:{value:1.10}, uVignetteInner:{value:0.55}, uVignetteOuter:{value:0.95} },
+  vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: `
+    precision mediump float;
+    varying vec2 vUv;
+    uniform sampler2D tDiffuse;
+    uniform float uLift, uGain, uGamma, uSaturation, uVignetteInner, uVignetteOuter;
+    void main(){
+      vec3 color = texture2D(tDiffuse, vUv).rgb;
+      color = pow(max(vec3(0.0), color*uGain + uLift), vec3(1.0/uGamma));
+      float luma = dot(color, vec3(0.299,0.587,0.114));
+      color = mix(vec3(luma), color, uSaturation);
+      float d = length(vUv - 0.5) * 1.4142;
+      color *= 1.0 - smoothstep(uVignetteInner, uVignetteOuter, d);
+      gl_FragColor = vec4(color, 1.0);
+    }`
+};
+let composer = null, bloomPass = null;
+if(renderer){
+  composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+  bloomPass = new UnrealBloomPass(new THREE.Vector2(1,1), 0.45, 0.4, 0.72);
+  composer.addPass(bloomPass);
+  composer.addPass(new ShaderPass(GradeShader));
+  composer.addPass(new OutputPass());
+}
 const hud = document.getElementById('hud');
 const cx = hud.getContext('2d');
 let W=0, H=0, DPR=1;
@@ -1049,6 +1088,7 @@ function resize(){
     renderer.setSize(W, H, false);
     camera.aspect = W/H;
     camera.updateProjectionMatrix();
+    if(composer) composer.setSize(W, H);
   }
   readSafeArea();
 }
@@ -2345,9 +2385,8 @@ function updateCamera(){
 }
 
 /* ---------- GL draw (Three.js) ----------
-   Post-fx is still deferred (THREE-7 wires it in as an EffectComposer
-   chain). Regression (tools/playtest.js) and race logic are unaffected
-   since neither reads back from rendering. */
+   Regression (tools/playtest.js) and race logic are unaffected by any of
+   this since neither reads back from rendering. */
 let placeholderLit = false;
 function ensureCarMesh(num, pace){
   if(!CARBUFS[num]){
@@ -2416,7 +2455,7 @@ function drawGL(){
 
   drawParticlesThree();
 
-  renderer.render(scene, camera);
+  if(composer) composer.render(); else renderer.render(scene, camera);
 }
 function buildSkyTexture(sky){
   const cnv = document.createElement('canvas'); cnv.width=2; cnv.height=64;
