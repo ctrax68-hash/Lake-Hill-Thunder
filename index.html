@@ -99,10 +99,6 @@
 <body>
 <canvas id="gl"></canvas>
 <canvas id="hud"></canvas>
-<!-- THREE-2 temporary proof-of-concept canvas — deleted once THREE-3 retargets
-     the real renderer at #gl. Small and corner-pinned so it never blocks the
-     existing game UI while both renderers run side by side. -->
-<canvas id="threeDebug" style="position:fixed;bottom:10px;left:10px;width:220px;height:160px;z-index:99;border:2px solid #0f0;background:#000;"></canvas>
 
 <div id="bL" class="ctl"><span></span></div>
 <div id="bR" class="ctl"><span></span></div>
@@ -142,35 +138,6 @@
 import * as THREE from 'three';
 
 "use strict";
-/* ---------- THREE-2: temporary proof-of-concept, deleted in THREE-3 ----------
-   Stands up a minimal Three.js renderer/scene/camera into the small corner
-   canvas added above, independent of the existing game loop, just to prove
-   the vendored Three.js + import-map setup actually works end-to-end under
-   this project's static-file/no-bundler hosting before any real game code
-   depends on it. The real game renderer (gl/drawGL below) is untouched. */
-(function threeDebugPOC(){
-  const dcv = document.getElementById('threeDebug');
-  const renderer = new THREE.WebGLRenderer({ canvas: dcv, antialias: true });
-  renderer.setSize(220, 160, false);
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(50, 220/160, 0.1, 100);
-  camera.position.set(0, 0, 4);
-  const cube = new THREE.Mesh(
-    new THREE.BoxGeometry(1.4, 1.4, 1.4),
-    new THREE.MeshStandardMaterial({ color: 0xF7D400, metalness: 0.3, roughness: 0.4 })
-  );
-  scene.add(cube);
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x223344, 1.2));
-  const sun = new THREE.DirectionalLight(0xffffff, 2.0);
-  sun.position.set(3, 4, 2);
-  scene.add(sun);
-  function animate(){
-    requestAnimationFrame(animate);
-    cube.rotation.x += 0.015; cube.rotation.y += 0.021;
-    renderer.render(scene, camera);
-  }
-  animate();
-})();
 /* =====================================================================
    LAKE HILL THUNDER — mobile 3D build (NASCAR Thunder 2003 style)
    WebGL chase-cam renderer, landscape-only. Physics preserved:
@@ -998,9 +965,27 @@ function m4fromBasis(X,Y,Z,p){        // columns = local axes, translation p
   return [X[0],X[1],X[2],0, Y[0],Y[1],Y[2],0, Z[0],Z[1],Z[2],0, p[0],p[1],p[2],1];
 }
 
-/* ---------- GL boot ---------- */
+/* ---------- GL boot (Three.js owns the #gl canvas/context now) ----------
+   `gl` is kept as a plain capability flag (not a real WebGLRenderingContext)
+   so the existing `if(!gl){ ...glFail... }` check near the end of this file
+   needs no change: true once the renderer constructs successfully, false if
+   this device/browser can't create a WebGL context at all. */
 const cv = document.getElementById('gl');
-const gl = cv.getContext('webgl', {antialias:true}) || cv.getContext('experimental-webgl');
+let renderer=null, gl=false;
+try{
+  renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true });
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  gl = true;
+}catch(e){ renderer = null; gl = false; }
+// Old raw-WebGL1 program compilation (shaders/FBOs/buffer uploads below) is
+// gated on this instead of `gl` directly: `gl` is now just a capability
+// flag, not a real WebGLRenderingContext, so calling gl.createShader() etc.
+// against it would throw. Flip this back on only if temporarily reverting
+// to the pre-Three.js renderer; the dead code itself is removed in THREE-9.
+const LEGACY_GL = false;
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, 1, 0.5, 1500);
+let worldMesh = null;
 const hud = document.getElementById('hud');
 const cx = hud.getContext('2d');
 let W=0, H=0, DPR=1;
@@ -1055,12 +1040,16 @@ function resizePostFX(){
 function resize(){
   DPR = Math.min(2, window.devicePixelRatio||1);
   W = window.innerWidth; H = window.innerHeight;
-  cv.width = W*DPR; cv.height = H*DPR;
   cv.style.width = W+'px'; cv.style.height = H+'px';
   hud.width = W*DPR; hud.height = H*DPR;
   hud.style.width = W+'px'; hud.style.height = H+'px';
   cx.setTransform(DPR,0,0,DPR,0,0);
-  if(gl){ gl.viewport(0,0,cv.width,cv.height); resizePostFX(); }
+  if(renderer){
+    renderer.setPixelRatio(DPR);
+    renderer.setSize(W, H, false);
+    camera.aspect = W/H;
+    camera.updateProjectionMatrix();
+  }
   readSafeArea();
 }
 window.addEventListener('resize', resize); resize();
@@ -1080,7 +1069,7 @@ function makeProg(vs, fs){
   return p;
 }
 let PROG=null, SKYPROG=null;
-if(gl){
+if(LEGACY_GL){
 PROG = makeProg(`
   attribute vec3 aPos; attribute vec3 aNrm; attribute vec4 aCol; attribute vec2 aUV; attribute float aSpec;
   uniform mat4 uProj, uView, uModel;
@@ -1136,7 +1125,7 @@ SKYPROG = makeProg(`
    uBloomStrength starts at 0 / vignette starts disabled (VIS-6 turns the
    real look on) so this stage is verifiable as a no-op passthrough first. */
 let POSTPROG=null, BLURPROG=null;
-if(gl){
+if(LEGACY_GL){
 POSTPROG = makeProg(`
   attribute vec2 aP; varying vec2 vUV;
   void main(){ vUV = aP*0.5+0.5; gl_Position = vec4(aP, 0.0, 1.0); }`, `
@@ -1179,11 +1168,18 @@ Builder.prototype.tri = function(a,b,c, col, paint){
   const u = v3sub(b,a), v = v3sub(c,a);
   const n = v3norm(v3cross(u,v));
   const al = paint ? 0 : 1;
+  // Three's MeshStandardMaterial always multiplies map-texel * vertex-color
+  // (it can't branch per-vertex the way the old custom shader did), so
+  // solid-color triangles point at a dedicated white texel in the world
+  // atlas instead of a sentinel (-1,-1): texture(white)=1 * vertexColor ==
+  // vertexColor, exactly reproducing the old (aCol.a<0.5 ? uPaint : aCol.rgb)
+  // / (vUV.x>=0 ? texel : vCol) branch without a custom shader.
+  const wu = atlasUV(ATLAS.white), wx = (wu[0]+wu[2])/2, wy = (wu[1]+wu[3])/2;
   for(const p of [a,b,c]){
     this.pos.push(p[0],p[1],p[2]);
     this.nrm.push(n[0],n[1],n[2]);
     this.col.push(col[0],col[1],col[2],al);
-    this.uv.push(-1,-1);
+    this.uv.push(wx,wy);
     this.spec.push(0.05);            // matte — track/grandstand/fence surfaces
   }
 };
@@ -1211,13 +1207,21 @@ Builder.prototype.box = function(x0,y0,z0,x1,y1,z1,col,paint){
   this.quad(p(x0,y0,z1),p(x0,y0,z0),p(x0,y1,z0),p(x0,y1,z1),col,paint); // -x
 };
 Builder.prototype.bake = function(){
-  const mk = (arr, size) => {
-    const b = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, b);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(arr), gl.STATIC_DRAW);
-    return b;
-  };
-  return { pos: mk(this.pos), nrm: mk(this.nrm), col: mk(this.col), uv: mk(this.uv), spec: mk(this.spec), n: this.pos.length/3 };
+  // col is stored as RGBA (vec4) for parity with the old aCol attribute, but
+  // Three's built-in `color` vertex attribute is RGB-only — the alpha
+  // channel was only ever used by the old shader's paint-vs-vertex-color
+  // branch (aCol.a<0.5 ? uPaint : aCol.rgb), which the white-swatch UV trick
+  // in Builder.prototype.tri already replaces, so it's dropped here.
+  const n = this.pos.length/3;
+  const rgb = new Float32Array(n*3);
+  for(let i=0;i<n;i++){ rgb[i*3]=this.col[i*4]; rgb[i*3+1]=this.col[i*4+1]; rgb[i*3+2]=this.col[i*4+2]; }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(this.nrm, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(rgb, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2));
+  const mat = new THREE.MeshStandardMaterial({ vertexColors:true, roughness:0.92, metalness:0.0 });
+  return new THREE.Mesh(geo, mat);
 };
 
 /* ---------- colors (from spec palette) ---------- */
@@ -1310,9 +1314,11 @@ function buildWorld(){
       const c = (isG && inCor) ? COL.groove : COL.asphalt;
       B.quad(crossPt(s0,l0), crossPt(s0,l1), crossPt(s1,l1), crossPt(s1,l0), c);
     }
-    // white line top edge
-    B.quad(crossPt(s0,TRACK.halfW-0.35,0.012), crossPt(s0,TRACK.halfW,0.012),
-           crossPt(s1,TRACK.halfW,0.012), crossPt(s1,TRACK.halfW-0.35,0.012), COL.lineW);
+    // (no outer white line here — the outer asphalt lane above already runs
+    // flush to TRACK.halfW, i.e. the wall edge; a separate white-line quad
+    // used to be painted on top of the last 0.35 units of that lane, which
+    // is the "white stripe in the middle of the track" bug — the track
+    // should run apron-yellow-line to wall with no extra stripe.)
     // shoulder pad from track edge to wall base
     B.quad(crossPt(s0,TRACK.halfW), crossPt(s0,WALL_LAT),
            crossPt(s1,WALL_LAT), crossPt(s1,TRACK.halfW), COL.apron);
@@ -1965,7 +1971,11 @@ const ATLAS = {
   wall:    {x:0,   y:0,   w:512,  h:256},
   fence:   {x:512, y:0,   w:512,  h:256},
   crowd:   {x:0,   y:256, w:512,  h:512},
-  sponsor: {x:0,   y:768, w:1024, h:256, count:8}
+  sponsor: {x:0,   y:768, w:1024, h:256, count:8},
+  // solid white texel for Builder's vertex-colored (non-atlas) triangles —
+  // see the comment in Builder.prototype.tri. Sits in the region right of
+  // the crowd tile (x:512-1024, y:256-768), which nothing else uses.
+  white:   {x:1000, y:500, w:8,    h:8}
 };
 function atlasUV(r){ return [r.x/WX, r.y/WX, (r.x+r.w)/WX, (r.y+r.h)/WX]; }
 function atlasSponsorUV(i){
@@ -2030,6 +2040,9 @@ function paintWorldAtlas(){
   paintFenceBand(c2, ATLAS.fence.x, ATLAS.fence.y, ATLAS.fence.w, ATLAS.fence.h);
   paintCrowdTile(c2, ATLAS.crowd.x, ATLAS.crowd.y, ATLAS.crowd.w, ATLAS.crowd.h, TRACK.stadium.crowdPalette);
   paintSponsorTiles(c2, ATLAS.sponsor.x, ATLAS.sponsor.y, ATLAS.sponsor.w, ATLAS.sponsor.h, ATLAS.sponsor.count);
+  // solid white texel Builder's vertex-colored (non-atlas) triangles sample —
+  // see Builder.prototype.tri.
+  c2.fillStyle = 'rgb(255,255,255)'; c2.fillRect(ATLAS.white.x, ATLAS.white.y, ATLAS.white.w, ATLAS.white.h);
   // gutter blur across the shared region boundaries so mipmap downsampling
   // doesn't bleed one region's color into its neighbor (wall|fence, the
   // wall/fence|crowd seam, and the crowd|sponsor seam) — done last, after
@@ -2039,18 +2052,22 @@ function paintWorldAtlas(){
   gutter(ATLAS.wall.w-6, 0, 12, ATLAS.wall.h);                    // wall | fence vertical seam
   gutter(0, ATLAS.wall.h-6, WX, 12);                              // wall/fence | crowd horizontal seam
   gutter(0, ATLAS.sponsor.y-6, WX, 12);                           // crowd/unused | sponsor horizontal seam
-  const tex = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, tex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv);
-  gl.generateMipmap(gl.TEXTURE_2D);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  // atlasUV()/atlasSponsorUV() author their rects assuming a top-left-origin
+  // canvas (same as the old raw gl.texImage2D upload, which never set
+  // UNPACK_FLIP_Y_WEBGL) — Three flips canvas textures on upload by default,
+  // which would mirror every wall/fence/crowd/sponsor tile vertically.
+  tex.flipY = false;
+  tex.generateMipmaps = true;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
   // CLAMP (not REPEAT): this is a shared atlas packing several regions into
   // one texture, so wall/fence quads reuse one fixed UV rect per slice
   // (each slice already reproduces the same tile, giving a repeating look)
   // rather than letting U grow past the region's own bounds into a neighbor.
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.needsUpdate = true;
   return tex;
 }
 
@@ -2209,6 +2226,7 @@ function updateCamera(){
     const pC = pos3(sc, 9.0); pC[1] += 2.4;
     const pL = pos3(sc - 7, 0); pL[1] += 1.0;
     cam.pos = pC.slice(); cam.look = pL.slice(); cam.t = performance.now();
+    camera.position.set(cam.pos[0],cam.pos[1],cam.pos[2]); camera.up.set(0,1,0); camera.lookAt(cam.look[0],cam.look[1],cam.look[2]);
     return m4lookAt(cam.pos, cam.look, [0,1,0]);
   }
   // victory lane: slow orbit around the winner
@@ -2217,6 +2235,7 @@ function updateCamera(){
     const az = S.victoryT*0.85, r = 7.5;
     const pos = [M[12]+Math.cos(az)*r, M[13]+2.3, M[14]+Math.sin(az)*r];
     cam.pos = pos; cam.look = [M[12], M[13]+0.6, M[14]]; cam.t = performance.now();
+    camera.position.set(cam.pos[0],cam.pos[1],cam.pos[2]); camera.up.set(0,1,0); camera.lookAt(cam.look[0],cam.look[1],cam.look[2]);
     return m4lookAt(cam.pos, cam.look, [0,1,0]);
   }
   const M = carModelMat(c);
@@ -2242,152 +2261,61 @@ function updateCamera(){
   const upBlend = v3norm([up[0]*0.45, 1.0, up[2]*0.45]);
   let shx=0, shy=0;
   if(S.shakeT>0){ shx=(Math.random()-0.5)*0.5*S.shakeT; shy=(Math.random()-0.5)*0.5*S.shakeT; }
-  return m4lookAt([cam.pos[0]+shx,cam.pos[1]+shy,cam.pos[2]], cam.look, upBlend);
+  const eye = [cam.pos[0]+shx,cam.pos[1]+shy,cam.pos[2]];
+  camera.position.set(eye[0],eye[1],eye[2]); camera.up.set(upBlend[0],upBlend[1],upBlend[2]);
+  camera.lookAt(cam.look[0],cam.look[1],cam.look[2]);
+  return m4lookAt(eye, cam.look, upBlend);
 }
 
-/* ---------- GL draw ---------- */
-let skyBuf=null;
+/* ---------- GL draw (Three.js) ----------
+   THREE-3 scope: world geometry + camera + placeholder lighting only.
+   Cars/particles/post-fx are still the old raw-WebGL code below (buildCarMesh,
+   buildCarTexture, drawParticles, runPostFX) — deliberately NOT called from
+   here yet (THREE-4/6/7 wire them back in as Three.js meshes/points/passes),
+   so the field renders empty for this phase. Regression (tools/playtest.js)
+   and race logic are unaffected since neither reads back from rendering. */
+let placeholderLit = false;
 function drawGL(){
   if(!gl) return;
-  if(!SCENE_FBO) resizePostFX();
-  if(!SCENE_FBO) return;      // zero-size canvas (e.g. hidden tab) — skip the frame
-  gl.bindFramebuffer(gl.FRAMEBUFFER, SCENE_FBO.fb);
-  gl.viewport(0,0,SCENE_FBO.w,SCENE_FBO.h);
-  gl.clearColor(0.78,0.86,0.94,1);
-  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-  // sky gradient
-  gl.useProgram(SKYPROG);
-  if(!skyBuf){
-    skyBuf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, skyBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,-1, 1,1, -1,1]), gl.STATIC_DRAW);
+  if(!placeholderLit){
+    // Physically-based diffuse falls off a lot dimmer than the old shader's
+    // hand-tuned (ambient + 0.62*NdotL, often >1.0) hemisphere term, so these
+    // intensities run well above their old raw-shader counterparts to land
+    // in a similar visible brightness range — still just a placeholder,
+    // real tuning happens once HDRI/env lighting lands in THREE-8.
+    scene.add(new THREE.HemisphereLight(0xbfd6ff, 0x332f28, 2.2));
+    const sun = new THREE.DirectionalLight(0xffffff, 2.6);
+    sun.position.set(0.42, 0.80, 0.42);
+    scene.add(sun);
+    placeholderLit = true;
   }
-  gl.bindBuffer(gl.ARRAY_BUFFER, skyBuf);
-  const aP = gl.getAttribLocation(SKYPROG,'aP');
-  gl.enableVertexAttribArray(aP);
-  gl.vertexAttribPointer(aP, 2, gl.FLOAT, false, 0, 0);
-  const sky = TRACK.stadium.sky;
-  gl.uniform3f(gl.getUniformLocation(SKYPROG,'uHorizon'), sky.horizon[0], sky.horizon[1], sky.horizon[2]);
-  gl.uniform3f(gl.getUniformLocation(SKYPROG,'uZenith'), sky.zenith[0], sky.zenith[1], sky.zenith[2]);
-  gl.depthMask(false); gl.disable(gl.DEPTH_TEST);
-  gl.drawArrays(gl.TRIANGLES, 0, 6);
-  gl.depthMask(true); gl.enable(gl.DEPTH_TEST);
-
-  gl.useProgram(PROG);
-  const view = updateCamera();
-  const fov = (58 + Math.min(16, S.player ? S.player.v*0.16 : 0)) * Math.PI/180;
-  const proj = m4persp(fov, W/H, 0.5, 1500);
-  const U = n => gl.getUniformLocation(PROG, n);
-  gl.uniformMatrix4fv(U('uProj'), false, proj);
-  gl.uniformMatrix4fv(U('uView'), false, view);
-  gl.uniform3f(U('uSun'), 0.42, 0.80, 0.42);
-  gl.uniform3f(U('uSkyTint'), sky.horizon[0]*0.5, sky.horizon[1]*0.5, sky.horizon[2]*0.5);
-  gl.uniform3f(U('uGroundTint'), 0.20, 0.19, 0.16);
-  gl.uniform3f(U('uEyePos'), cam.pos ? cam.pos[0] : 0, cam.pos ? cam.pos[1] : 10, cam.pos ? cam.pos[2] : 0);
-  const A = n => gl.getAttribLocation(PROG, n);
-  if(!WHITE_TEX){
-    WHITE_TEX = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, WHITE_TEX);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1,1,0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255,255,255,255]));
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  if(!WORLD){
+    if(worldMesh) scene.remove(worldMesh);
+    worldMesh = buildWorld();
+    WORLD_TEX = paintWorldAtlas();
+    worldMesh.material.map = WORLD_TEX;
+    worldMesh.material.needsUpdate = true;
+    scene.add(worldMesh);
+    WORLD = worldMesh;
+    scene.background = buildSkyTexture(TRACK.stadium.sky);
+    scene.fog = new THREE.Fog(0xb8cce6, 140, 700);
   }
-  gl.uniform1i(U('uTex'), 0);
-  gl.activeTexture(gl.TEXTURE0);
-  function drawMesh(m, model, paint, tex){
-    gl.uniformMatrix4fv(U('uModel'), false, model);
-    gl.uniform3f(U('uPaint'), paint[0], paint[1], paint[2]);
-    gl.uniform1f(U('uAlpha'), 1.0);
-    gl.bindTexture(gl.TEXTURE_2D, tex || WHITE_TEX);
-    gl.bindBuffer(gl.ARRAY_BUFFER, m.pos);
-    gl.enableVertexAttribArray(A('aPos'));
-    gl.vertexAttribPointer(A('aPos'), 3, gl.FLOAT, false, 0, 0);
-    gl.bindBuffer(gl.ARRAY_BUFFER, m.nrm);
-    gl.enableVertexAttribArray(A('aNrm'));
-    gl.vertexAttribPointer(A('aNrm'), 3, gl.FLOAT, false, 0, 0);
-    gl.bindBuffer(gl.ARRAY_BUFFER, m.col);
-    gl.enableVertexAttribArray(A('aCol'));
-    gl.vertexAttribPointer(A('aCol'), 4, gl.FLOAT, false, 0, 0);
-    gl.bindBuffer(gl.ARRAY_BUFFER, m.uv);
-    gl.enableVertexAttribArray(A('aUV'));
-    gl.vertexAttribPointer(A('aUV'), 2, gl.FLOAT, false, 0, 0);
-    gl.bindBuffer(gl.ARRAY_BUFFER, m.spec);
-    gl.enableVertexAttribArray(A('aSpec'));
-    gl.vertexAttribPointer(A('aSpec'), 1, gl.FLOAT, false, 0, 0);
-    gl.drawArrays(gl.TRIANGLES, 0, m.n);
-  }
-  if(!WORLD){ WORLD = buildWorld(); WORLD_TEX = paintWorldAtlas(); }
-  drawMesh(WORLD, m4ident(), [1,1,1], WORLD_TEX);
-  for(const c of S.cars){
-    if(!CARBUFS[c.num]) CARBUFS[c.num] = { mesh: buildCarMesh(c.num), tex: buildCarTexture(c) };
-    drawMesh(CARBUFS[c.num].mesh, carModelMat(c), c.col, CARBUFS[c.num].tex);
-  }
-  if(S.mode==='pace' || S.flag==='yellow' || PACE.state==='peel' || PACE.state==='parked'){
-    if(!CARBUFS.pace) CARBUFS.pace = { mesh: buildCarMesh(0, true), tex: buildCarTexture(PACE, true) };
-    drawMesh(CARBUFS.pace.mesh, carModelMat(PACE), [0.93,0.93,0.95], CARBUFS.pace.tex);
-  }
-  drawParticles(view, U, A);
-  runPostFX();
+  updateCamera();
+  camera.fov = 58 + Math.min(16, S.player ? S.player.v*0.16 : 0);
+  camera.aspect = W/H;
+  camera.updateProjectionMatrix();
+  renderer.render(scene, camera);
 }
-function runPostFX(){
-  gl.disable(gl.DEPTH_TEST); gl.depthMask(false);
-  // bright-pass + downsample: BLURPROG with uDir=(0,0) is a plain copy (all
-  // 5 taps land on the same texel, weights sum to 1.0), so paired with
-  // uThreshold it becomes threshold+downsample in one pass — rendering
-  // SCENE_FBO's full-res texture into BLOOM_A's half/quarter-res viewport
-  // does the downsampling for free via the texture sample itself.
-  gl.useProgram(BLURPROG);
-  gl.bindBuffer(gl.ARRAY_BUFFER, FSQUAD);
-  const aPB = gl.getAttribLocation(BLURPROG,'aP');
-  gl.enableVertexAttribArray(aPB);
-  gl.vertexAttribPointer(aPB, 2, gl.FLOAT, false, 0, 0);
-  const Ub = n => gl.getUniformLocation(BLURPROG, n);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.uniform1i(Ub('uTex'), 0);
-
-  gl.bindFramebuffer(gl.FRAMEBUFFER, BLOOM_A.fb);
-  gl.viewport(0,0,BLOOM_A.w,BLOOM_A.h);
-  gl.bindTexture(gl.TEXTURE_2D, SCENE_FBO.tex);
-  gl.uniform2f(Ub('uDir'), 0, 0);
-  gl.uniform1f(Ub('uThreshold'), 0.72);
-  gl.drawArrays(gl.TRIANGLES, 0, 6);
-
-  gl.bindFramebuffer(gl.FRAMEBUFFER, BLOOM_B.fb);            // horizontal blur: A -> B
-  gl.viewport(0,0,BLOOM_B.w,BLOOM_B.h);
-  gl.bindTexture(gl.TEXTURE_2D, BLOOM_A.tex);
-  gl.uniform2f(Ub('uDir'), 1/BLOOM_A.w, 0);
-  gl.uniform1f(Ub('uThreshold'), 0.0);
-  gl.drawArrays(gl.TRIANGLES, 0, 6);
-
-  gl.bindFramebuffer(gl.FRAMEBUFFER, BLOOM_A.fb);            // vertical blur: B -> A
-  gl.viewport(0,0,BLOOM_A.w,BLOOM_A.h);
-  gl.bindTexture(gl.TEXTURE_2D, BLOOM_B.tex);
-  gl.uniform2f(Ub('uDir'), 0, 1/BLOOM_B.h);
-  gl.uniform1f(Ub('uThreshold'), 0.0);
-  gl.drawArrays(gl.TRIANGLES, 0, 6);
-
-  // final composite: additive bloom + lift-gamma-gain color grade + vignette
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  gl.viewport(0,0,cv.width,cv.height);
-  gl.useProgram(POSTPROG);
-  gl.bindBuffer(gl.ARRAY_BUFFER, FSQUAD);
-  const aP = gl.getAttribLocation(POSTPROG,'aP');
-  gl.enableVertexAttribArray(aP);
-  gl.vertexAttribPointer(aP, 2, gl.FLOAT, false, 0, 0);
-  const Up = n => gl.getUniformLocation(POSTPROG, n);
-  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, SCENE_FBO.tex);
-  gl.uniform1i(Up('uScene'), 0);
-  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, BLOOM_A.tex);
-  gl.uniform1i(Up('uBloom'), 1);
-  gl.uniform1f(Up('uBloomStrength'), 0.45);
-  gl.uniform1f(Up('uLift'), 0.0);
-  gl.uniform1f(Up('uGain'), 1.04);
-  gl.uniform1f(Up('uGamma'), 0.94);
-  gl.uniform1f(Up('uSaturation'), 1.10);
-  gl.uniform1f(Up('uVignetteInner'), 0.55);
-  gl.uniform1f(Up('uVignetteOuter'), 0.95);
-  gl.drawArrays(gl.TRIANGLES, 0, 6);
-  gl.enable(gl.DEPTH_TEST); gl.depthMask(true);
+function buildSkyTexture(sky){
+  const cnv = document.createElement('canvas'); cnv.width=2; cnv.height=64;
+  const c2 = cnv.getContext('2d');
+  const css = a => 'rgb('+Math.round(a[0]*255)+','+Math.round(a[1]*255)+','+Math.round(a[2]*255)+')';
+  const g = c2.createLinearGradient(0,0,0,64);
+  g.addColorStop(0, css(sky.zenith)); g.addColorStop(1, css(sky.horizon));
+  c2.fillStyle = g; c2.fillRect(0,0,2,64);
+  const tex = new THREE.CanvasTexture(cnv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
 /* ---------- HUD (2D overlay, NT2003 broadcast style) ---------- */
