@@ -1545,7 +1545,11 @@ function buildCarMesh(num, pace){
     const r = rings[i], mid=(CAR_ST[i][2]+CAR_ST[i][3])/2;
     for(let k=0;k<NK-1;k++){
       const a=r[k], b=r[k+1];
-      const tris = fwd>0 ? [[cx2,mid,0],a,b] : [[cx2,mid,0],b,a];
+      // winding reversed vs. the assigned (fwd,0,0) normal below (culled from
+      // outside the car, showing background through the nose/tail — the
+      // "back of the car is transparent" report). Three's default backface
+      // culling goes by winding order, not the stored normal attribute.
+      const tris = fwd>0 ? [[cx2,mid,0],b,a] : [[cx2,mid,0],a,b];
       for(const p of tris){
         pos.push(p===tris[0]?cx2:p[0], p===tris[0]?mid:p[1], p===tris[0]?0:p[2]);
         nrm.push(fwd,0,0);
@@ -1607,11 +1611,13 @@ function buildCarMesh(num, pace){
       const push=(pts,n2)=>{ for(const p of pts){ pos.push(p[0],p[1],p[2]);
         nrm.push(n2[0],n2[1],n2[2]); uv.push(SW.tire[0],SW.tire[1]); } };
       const rad=[Math.cos((a0+a1)/2),Math.sin((a0+a1)/2)];
-      if(sgn>0) push([p0,p1,q1, p0,q1,q0],[rad[0],rad[1],0]);
-      else      push([p1,p0,q0, p1,q0,q1],[rad[0],rad[1],0]);
+      // winding reversed vs. the assigned radial/fn normals below (culled
+      // from outside the wheel — see the cap() comment above for why).
+      if(sgn>0) push([p0,q1,p1, p0,q0,q1],[rad[0],rad[1],0]);
+      else      push([p1,q0,p0, p1,q1,q0],[rad[0],rad[1],0]);
       const fn=[0,0,sgn];
       const c=[cxp,wR,zo];
-      if(sgn>0) push([c,p1,p0],fn); else push([c,p0,p1],fn);
+      if(sgn>0) push([c,p0,p1],fn); else push([c,p1,p0],fn);
     }
   }
   function wheelMetal(cxp, sgn){
@@ -1621,12 +1627,13 @@ function buildCarMesh(num, pace){
       const a0=k/WSEG*Math.PI*2, a1=(k+1)/WSEG*Math.PI*2;
       const push=(pts,sw)=>{ for(const p of pts){ pos.push(p[0],p[1],p[2]);
         nrm.push(fn[0],fn[1],fn[2]); uv.push(sw[0],sw[1]); } };
+      // winding reversed vs. the assigned fn normal above (see cap() comment).
       const r0a=[cxp+Math.cos(a0)*wR*0.58, wR+Math.sin(a0)*wR*0.58, zo+0.004*sgn];
       const r1a=[cxp+Math.cos(a1)*wR*0.58, wR+Math.sin(a1)*wR*0.58, zo+0.004*sgn];
-      if(sgn>0) push([[cxp,wR,zo+0.004],r1a,r0a],SW.rim); else push([[cxp,wR,zo-0.004],r0a,r1a],SW.rim);
+      if(sgn>0) push([[cxp,wR,zo+0.004],r0a,r1a],SW.rim); else push([[cxp,wR,zo-0.004],r1a,r0a],SW.rim);
       const h0=[cxp+Math.cos(a0)*wR*0.22, wR+Math.sin(a0)*wR*0.22, zo+0.008*sgn];
       const h1=[cxp+Math.cos(a1)*wR*0.22, wR+Math.sin(a1)*wR*0.22, zo+0.008*sgn];
-      if(sgn>0) push([[cxp,wR,zo+0.008],h1,h0],SW.chrome); else push([[cxp,wR,zo-0.008],h0,h1],SW.chrome);
+      if(sgn>0) push([[cxp,wR,zo+0.008],h0,h1],SW.chrome); else push([[cxp,wR,zo-0.008],h1,h0],SW.chrome);
     }
   }
   wheelTire(1.395,1); wheelTire(1.395,-1); wheelTire(-1.395,1); wheelTire(-1.395,-1);
