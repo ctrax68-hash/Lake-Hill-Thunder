@@ -141,6 +141,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 "use strict";
 /* =====================================================================
@@ -170,6 +171,7 @@ const TRACKS = [
       standScale:{tierD:3.2, tierH:2.1},
       standRoof:true, jumbotron:false, pylon:false, sponsorDensity:0.25,
       sky:{ horizon:[0.78,0.86,0.94], zenith:[0.20,0.45,0.85], silhouette:'none' },
+      env:{ preset:'noon-grass' },
       crowdPalette:[[0.75,0.2,0.2],[0.2,0.35,0.75],[0.85,0.8,0.25],[0.8,0.8,0.82],[0.25,0.6,0.3],[0.5,0.3,0.6]] } },
   { name:'MILLTOWN BULLRING',RL:100, RR:100, bankL:14, bankR:14, D:110, sBank:5, ramp: 50,
     sub:'0.85 KM &bull; 14&deg; BANKING',
@@ -178,6 +180,7 @@ const TRACKS = [
       standScale:{tierD:2.4, tierH:1.6},
       standRoof:true, jumbotron:false, pylon:false, sponsorDensity:0.35,
       sky:{ horizon:[0.80,0.85,0.92], zenith:[0.24,0.42,0.80], silhouette:'none' },
+      env:{ preset:'noon-grass' },
       crowdPalette:[[0.75,0.2,0.2],[0.2,0.35,0.75],[0.85,0.8,0.25],[0.8,0.8,0.82],[0.25,0.6,0.3],[0.5,0.3,0.6]] } },
   { name:'CEDAR VALLEY',     RL:190, RR:160, bankL:14, bankR:12, D:500, sBank:4, ramp:100,
     sub:'2.1 KM &bull; 14&deg;/12&deg; BANKING',
@@ -186,6 +189,7 @@ const TRACKS = [
       standScale:{tierD:3.0, tierH:1.9},
       standRoof:false, jumbotron:false, pylon:false, sponsorDensity:0.18,
       sky:{ horizon:[0.80,0.88,0.90], zenith:[0.35,0.55,0.80], silhouette:'hills' },
+      env:{ preset:'sunset' },
       crowdPalette:[[0.75,0.2,0.2],[0.2,0.35,0.75],[0.85,0.8,0.25],[0.8,0.8,0.82],[0.25,0.6,0.3],[0.5,0.3,0.6]] } },
   { name:'BIG SABLE SPEEDWAY',RL:240, RR:240, bankL:23, bankR:23, D:546, sBank:5, ramp:120,
     sub:'2.6 KM &bull; 23&deg; BANKING',
@@ -194,6 +198,7 @@ const TRACKS = [
       standScale:{tierD:4.0, tierH:2.6},
       standRoof:true, jumbotron:true, pylon:true, sponsorDensity:0.30,
       sky:{ horizon:[0.75,0.83,0.93], zenith:[0.18,0.40,0.80], silhouette:'none' },
+      env:{ preset:'noon-grass' },
       crowdPalette:[[0.75,0.2,0.2],[0.2,0.35,0.75],[0.85,0.8,0.25],[0.8,0.8,0.82],[0.25,0.6,0.3],[0.5,0.3,0.6]] } }
 ];
 function buildTrack(spec){
@@ -1763,7 +1768,15 @@ function buildCarMesh(num, pace){
   geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   const bodyMat = new THREE.MeshPhysicalMaterial({ clearcoat:1.0, clearcoatRoughness:0.1, metalness:0.35, roughness:0.45 });
-  const glassMat = new THREE.MeshPhysicalMaterial({ color:0x14181f, metalness:0.1, roughness:0.05, transmission:0.55, thickness:0.05 });
+  // No `transmission` here (the plan's original spec) — Three.js implements
+  // transmission by rendering the opaque scene into an offscreen buffer as a
+  // refraction source for every transmissive object, every frame. Measured
+  // directly during the THREE-8 perf checkpoint: with 20 cars each carrying
+  // a transmissive glass region, that alone cut frame time by more than
+  // half on top of everything else in the scene. A dark, glossy, non-
+  // transmissive material reads as tinted glass at chase-cam distance for a
+  // fraction of the cost, so it stays off rather than re-tuned down.
+  const glassMat = new THREE.MeshPhysicalMaterial({ color:0x14181f, metalness:0.1, roughness:0.05 });
   const mats = [bodyMat, glassMat, CAR_MAT_CHROME, CAR_MAT_TIRE];
   if(pace) mats.push(CAR_MAT_AMBER);
   for(const g of groups) geo.addGroup(g.start, g.count, g.mat);
@@ -2387,6 +2400,39 @@ function updateCamera(){
 /* ---------- GL draw (Three.js) ----------
    Regression (tools/playtest.js) and race logic are unaffected by any of
    this since neither reads back from rendering. */
+// Poly Haven HDRIs are unreachable from this sandbox (network policy blocks
+// arbitrary web hosts), so scene.environment comes from Three's own bundled
+// RoomEnvironment via PMREMGenerator instead — a procedural, zero-asset
+// substitute that still gives car chrome/glass/clearcoat something to
+// reflect (PBR metal/clearcoat materials look flat and dark without any
+// environment map, since they only pick up light within the sun's direct
+// specular highlight). Shared across every track (one generator call,
+// cached) since it's not track-specific; the per-track "time of day" instead
+// comes entirely from the directional sun's azimuth/elevation/color/
+// intensity below, following the same "one config object, one generic code
+// path" convention as `stadium` itself — zero per-track branching in code.
+const ENV_PRESETS = {
+  'noon-grass': { azimuth:35,  elevation:55, color:0xfff4e0, intensity:3.2 },
+  'sunset':     { azimuth:250, elevation:12, color:0xffab66, intensity:2.6 }
+};
+let envMap = null, sunLight = null, hemiLight = null, envAppliedFor = null;
+function ensureEnvMap(){
+  if(envMap) return envMap;
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const room = new RoomEnvironment();
+  envMap = pmrem.fromScene(room, 0.04).texture;
+  pmrem.dispose();
+  room.dispose();
+  return envMap;
+}
+function applyEnvPreset(stadium){
+  scene.environment = ensureEnvMap();
+  const preset = ENV_PRESETS[stadium.env.preset] || ENV_PRESETS['noon-grass'];
+  const az = preset.azimuth*Math.PI/180, el = preset.elevation*Math.PI/180;
+  sunLight.position.set(Math.cos(az)*Math.cos(el), Math.sin(el), Math.sin(az)*Math.cos(el));
+  sunLight.color.setHex(preset.color);
+  sunLight.intensity = preset.intensity;
+}
 let placeholderLit = false;
 function ensureCarMesh(num, pace){
   if(!CARBUFS[num]){
@@ -2399,15 +2445,10 @@ function ensureCarMesh(num, pace){
 function drawGL(){
   if(!gl) return;
   if(!placeholderLit){
-    // Physically-based diffuse falls off a lot dimmer than the old shader's
-    // hand-tuned (ambient + 0.62*NdotL, often >1.0) hemisphere term, so these
-    // intensities run well above their old raw-shader counterparts to land
-    // in a similar visible brightness range — still just a placeholder,
-    // real tuning happens once HDRI/env lighting lands in THREE-8.
-    scene.add(new THREE.HemisphereLight(0xbfd6ff, 0x332f28, 2.2));
-    const sun = new THREE.DirectionalLight(0xffffff, 2.6);
-    sun.position.set(0.42, 0.80, 0.42);
-    scene.add(sun);
+    hemiLight = new THREE.HemisphereLight(0xbfd6ff, 0x332f28, 1.1);
+    scene.add(hemiLight);
+    sunLight = new THREE.DirectionalLight(0xffffff, 3.2);
+    scene.add(sunLight);
     placeholderLit = true;
   }
   if(!WORLD){
@@ -2420,6 +2461,7 @@ function drawGL(){
     WORLD = worldMesh;
     scene.background = buildSkyTexture(TRACK.stadium.sky);
     scene.fog = new THREE.Fog(0xb8cce6, 140, 700);
+    applyEnvPreset(TRACK.stadium);
   }
   updateCamera();
   camera.fov = 58 + Math.min(16, S.player ? S.player.v*0.16 : 0);
