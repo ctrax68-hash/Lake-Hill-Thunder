@@ -89,6 +89,12 @@
 
   #glFail { display:none; }
 </style>
+<script type="importmap">
+{ "imports": {
+    "three": "./vendor/three/build/three.module.js",
+    "three/addons/": "./vendor/three/examples/jsm/"
+} }
+</script>
 </head>
 <body>
 <canvas id="gl"></canvas>
@@ -128,7 +134,7 @@
 <div id="glFail" class="overlay"><div class="title" style="font-size:20px">WEBGL NOT AVAILABLE</div>
 <div class="hint">This build needs WebGL. Try a different browser.</div></div>
 
-<script>
+<script type="module">
 
 "use strict";
 /* =====================================================================
@@ -2867,4 +2873,16 @@ if(!gl){
   document.getElementById('glFail').style.display='flex';
 }
 requestAnimationFrame(frame);
+
+// playtest/tooling compat shim — now that this is a module script, top-level
+// bindings are module-scoped, not window properties like a classic script.
+// tools/playtest.js's page.evaluate() closures reference these as bare
+// identifiers, so they need to stay reachable as window globals.
+// TRACK is reassigned (not just mutated) by selectTrack(), so a plain
+// Object.assign snapshot would go stale after a track switch — use a live
+// getter for it. S/input/tick/selectTrack/frame are never reassigned
+// (S/input are `const` object literals, only their properties mutate), so a
+// plain copy is safe for those.
+Object.defineProperty(window, 'TRACK', { get: () => TRACK, configurable: true });
+Object.assign(window, { S, tick, selectTrack, input, frame });
 </script></body></html>
