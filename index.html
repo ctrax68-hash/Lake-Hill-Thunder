@@ -169,7 +169,7 @@ const TRACKS = [
     theme:{ wall:[1.0,0.267,0.0],  grass:[0.176,0.314,0.086] },
     stadium:{ standTier:{front:5,back:3,corner:2}, standDensity:0.85, standReach:'partial',
       standScale:{tierD:3.2, tierH:2.1},
-      standRoof:true, jumbotron:false, pylon:false, sponsorDensity:0.25,
+      jumbotron:false, pylon:false, sponsorDensity:0.25,
       sky:{ horizon:[0.78,0.86,0.94], zenith:[0.20,0.45,0.85], silhouette:'none' },
       env:{ preset:'noon-grass' },
       crowdPalette:[[0.75,0.2,0.2],[0.2,0.35,0.75],[0.85,0.8,0.25],[0.8,0.8,0.82],[0.25,0.6,0.3],[0.5,0.3,0.6]] } },
@@ -178,7 +178,7 @@ const TRACKS = [
     theme:{ wall:[0.88,0.88,0.90], grass:[0.15,0.27,0.08] },
     stadium:{ standTier:{front:4,back:4,corner:4}, standDensity:1.0, standReach:'full',
       standScale:{tierD:2.4, tierH:1.6},
-      standRoof:true, jumbotron:false, pylon:false, sponsorDensity:0.35,
+      jumbotron:false, pylon:false, sponsorDensity:0.35,
       sky:{ horizon:[0.80,0.85,0.92], zenith:[0.24,0.42,0.80], silhouette:'none' },
       env:{ preset:'noon-grass' },
       crowdPalette:[[0.75,0.2,0.2],[0.2,0.35,0.75],[0.85,0.8,0.25],[0.8,0.8,0.82],[0.25,0.6,0.3],[0.5,0.3,0.6]] } },
@@ -187,7 +187,7 @@ const TRACKS = [
     theme:{ wall:[0.16,0.38,0.62], grass:[0.20,0.33,0.10] },
     stadium:{ standTier:{front:3,back:2,corner:1}, standDensity:0.55, standReach:'partial',
       standScale:{tierD:3.0, tierH:1.9},
-      standRoof:false, jumbotron:false, pylon:false, sponsorDensity:0.18,
+      jumbotron:false, pylon:false, sponsorDensity:0.18,
       sky:{ horizon:[0.80,0.88,0.90], zenith:[0.35,0.55,0.80], silhouette:'hills' },
       env:{ preset:'sunset' },
       crowdPalette:[[0.75,0.2,0.2],[0.2,0.35,0.75],[0.85,0.8,0.25],[0.8,0.8,0.82],[0.25,0.6,0.3],[0.5,0.3,0.6]] } },
@@ -196,7 +196,7 @@ const TRACKS = [
     theme:{ wall:[0.85,0.12,0.10], grass:[0.19,0.34,0.11] },
     stadium:{ standTier:{front:10,back:8,corner:6}, standDensity:0.95, standReach:'full',
       standScale:{tierD:4.0, tierH:2.6},
-      standRoof:true, jumbotron:true, pylon:true, sponsorDensity:0.30,
+      jumbotron:true, pylon:true, sponsorDensity:0.30,
       sky:{ horizon:[0.75,0.83,0.93], zenith:[0.18,0.40,0.80], silhouette:'none' },
       env:{ preset:'noon-grass' },
       crowdPalette:[[0.75,0.2,0.2],[0.2,0.35,0.75],[0.85,0.8,0.25],[0.8,0.8,0.82],[0.25,0.6,0.3],[0.5,0.3,0.6]] } }
@@ -715,7 +715,13 @@ function stepCar(c){
       if(!c.bestLapT || c.lastLapT < c.bestLapT) c.bestLapT = c.lastLapT;
     }
     c.lapStartT = S.t;
-    if(c.lap >= S.laps){ c.done = true; c.finishT = S.t; S.finishOrder.push(c); }
+    // !c.out: a car already retired for terminal damage can still be
+    // limping across the stripe when its lap count ticks over (it doesn't
+    // stop instantly) — without this guard it would get marked done and
+    // ranked as a finisher via S.finishOrder while still carrying the `out`
+    // flag, so the results screen displayed "DNF" for a car sitting ahead
+    // of real finishers in the standings.
+    if(c.lap >= S.laps && !c.out){ c.done = true; c.finishT = S.t; S.finishOrder.push(c); }
   }
   c.prog = c.lap + rel/TRACK.total;
 }
@@ -1282,11 +1288,11 @@ function buildWorld(){
   // special-casing needed — pure geometry, no shader dependency.
   if(st.sky.silhouette==='hills') addHillSilhouette(B);
   // grandstands: generic per-zone, driven entirely by TRACK.stadium so each
-  // track's reach/density/tier-count/roof/scale differs with zero per-track
+  // track's reach/density/tier-count/scale differs with zero per-track
   // branching here (front+back always seated, corners only if reach='full')
   {
     const st = TRACK.stadium;
-    const opts = { density: st.standDensity, roof: st.standRoof,
+    const opts = { density: st.standDensity,
                    tierD: st.standScale.tierD, tierH: st.standScale.tierH, palette: st.crowdPalette };
     const seg0 = TRACK.segs[0], seg1 = TRACK.segs[1], seg2 = TRACK.segs[2], seg3 = TRACK.segs[3];
     addStand(B, seg0.s0+seg0.len*0.12, seg0.s0+seg0.len*0.88, st.standTier.front, opts);
@@ -2257,7 +2263,19 @@ function updateCamera(){
   if(S.mode==='victory'){
     const M = carModelMat(c);
     const az = S.victoryT*0.85, r = 7.5;
-    const pos = [M[12]+Math.cos(az)*r, M[13]+2.3, M[14]+Math.sin(az)*r];
+    let px = M[12]+Math.cos(az)*r, pz = M[14]+Math.sin(az)*r;
+    // clamp the orbit inside the track surface — a fixed radius sized for a
+    // wide superspeedway can swing the camera through (or right up against)
+    // the wall/apron on a tight track like Milltown Bullring, especially
+    // since the winner is often still near the start/finish line. Same
+    // lateral clamp the regular chase cam uses below.
+    const pr = TRACK.project(px, pz);
+    const latClamped = Math.max(APRON_IN+3, Math.min(WALL_LAT-3, pr.lat));
+    if(latClamped !== pr.lat){
+      const p2 = pos3(pr.s, latClamped);
+      px = p2[0]; pz = p2[2];
+    }
+    const pos = [px, M[13]+2.3, pz];
     cam.pos = pos; cam.look = [M[12], M[13]+0.6, M[14]]; cam.t = performance.now();
     camera.position.set(cam.pos[0],cam.pos[1],cam.pos[2]); camera.up.set(0,1,0); camera.lookAt(cam.look[0],cam.look[1],cam.look[2]);
     return m4lookAt(cam.pos, cam.look, [0,1,0]);
@@ -2680,7 +2698,9 @@ function showResults(){
   order.forEach((c,i)=>{
     const d = document.createElement('div');
     d.className = 'resRow' + (c.isPlayer?' me':'');
-    const res = c.out ? 'DNF' : fmtT(c.bestLapT);
+    // c.done wins even if c.out is also set (see the stepCar() finish-check
+    // guard) — a car that legitimately finished is never a DNF.
+    const res = (!c.done && c.out) ? 'DNF' : fmtT(c.bestLapT);
     d.innerHTML = `<span>${i+1}.</span><span style="color:${colCSS(dispCol(c.col))}">#${c.num}</span>`+
                   `<span>${c.name}</span><span>${res}</span>`;
     list.appendChild(d);
