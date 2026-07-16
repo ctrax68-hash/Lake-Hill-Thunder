@@ -987,12 +987,6 @@ try{
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   gl = true;
 }catch(e){ renderer = null; gl = false; }
-// Old raw-WebGL1 program compilation (shaders/FBOs/buffer uploads below) is
-// gated on this instead of `gl` directly: `gl` is now just a capability
-// flag, not a real WebGLRenderingContext, so calling gl.createShader() etc.
-// against it would throw. Flip this back on only if temporarily reverting
-// to the pre-Three.js renderer; the dead code itself is removed in THREE-9.
-const LEGACY_GL = false;
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(60, 1, 0.5, 1500);
 let worldMesh = null;
@@ -1042,45 +1036,6 @@ function readSafeArea(){
   SAFE.t = px(s.getPropertyValue('--safeT'));
   SAFE.b = px(s.getPropertyValue('--safeB'));
 }
-/* ---------- post-fx framebuffers (declared before the first resize() call
-   below, which allocates them) ---------- */
-let SCENE_FBO=null, BLOOM_A=null, BLOOM_B=null, FSQUAD=null;
-function makeFBO(w, h, withDepth){
-  const tex = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, tex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  const fb = gl.createFramebuffer();
-  gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
-  let rb = null;
-  if(withDepth){
-    rb = gl.createRenderbuffer();
-    gl.bindRenderbuffer(gl.RENDERBUFFER, rb);
-    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, w, h);
-    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, rb);
-  }
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  return { fb, tex, rb, w, h };
-}
-function freeFBO(o){ if(!o) return; gl.deleteFramebuffer(o.fb); gl.deleteTexture(o.tex); if(o.rb) gl.deleteRenderbuffer(o.rb); }
-function resizePostFX(){
-  if(!gl || cv.width<=0 || cv.height<=0) return;
-  freeFBO(SCENE_FBO); freeFBO(BLOOM_A); freeFBO(BLOOM_B);
-  SCENE_FBO = makeFBO(cv.width, cv.height, true);
-  const half = (cv.width*cv.height > 1.5e6) ? 0.25 : 0.5;
-  const bw = Math.max(1, Math.round(cv.width*half)), bh = Math.max(1, Math.round(cv.height*half));
-  BLOOM_A = makeFBO(bw, bh, false);
-  BLOOM_B = makeFBO(bw, bh, false);
-  if(!FSQUAD){
-    FSQUAD = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, FSQUAD);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,-1, 1,1, -1,1]), gl.STATIC_DRAW);
-  }
-}
 function resize(){
   DPR = Math.min(2, window.devicePixelRatio||1);
   W = window.innerWidth; H = window.innerHeight;
@@ -1099,115 +1054,9 @@ function resize(){
 }
 window.addEventListener('resize', resize); resize();
 
-/* ---------- shaders ---------- */
-function makeProg(vs, fs){
-  function sh(type, src){
-    const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
-    if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
-    return s;
-  }
-  const p = gl.createProgram();
-  gl.attachShader(p, sh(gl.VERTEX_SHADER, vs));
-  gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs));
-  gl.linkProgram(p);
-  if(!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
-  return p;
-}
-let PROG=null, SKYPROG=null;
-if(LEGACY_GL){
-PROG = makeProg(`
-  attribute vec3 aPos; attribute vec3 aNrm; attribute vec4 aCol; attribute vec2 aUV; attribute float aSpec;
-  uniform mat4 uProj, uView, uModel;
-  uniform vec3 uSun; uniform vec3 uPaint; uniform vec3 uSkyTint, uGroundTint; uniform vec3 uEyePos;
-  varying vec3 vCol; varying float vFog; varying vec3 vLit; varying vec2 vUV; varying float vSpec; varying vec3 vTint;
-  void main(){
-    vec4 wp = uModel * vec4(aPos, 1.0);
-    vec3 n = normalize(mat3(uModel) * aNrm);
-    // hemisphere ambient (sky tint up top, ground tint underneath) replaces
-    // the old flat constant so surfaces aren't uniformly lit regardless of
-    // which way they face, plus the existing single directional sun term
-    vec3 lit = mix(uGroundTint, uSkyTint, n.y*0.5+0.5) + 0.62 * max(0.0, dot(n, uSun));
-    vec3 base = (aCol.a < 0.5) ? uPaint : aCol.rgb;
-    vCol = base * lit; vLit = lit; vUV = aUV; vTint = aCol.rgb;
-    vec3 eyeDir = normalize(uEyePos - wp.xyz);
-    vec3 h = normalize(uSun + eyeDir);
-    vSpec = pow(max(0.0, dot(n, h)), mix(8.0, 64.0, aSpec)) * aSpec;
-    vec4 vp = uView * wp;
-    vFog = clamp((length(vp.xyz) - 140.0) / 560.0, 0.0, 1.0);
-    gl_Position = uProj * vp;
-  }`, `
-  precision mediump float;
-  varying vec3 vCol; varying float vFog; varying vec3 vLit; varying vec2 vUV; varying float vSpec; varying vec3 vTint;
-  uniform sampler2D uTex; uniform float uAlpha;
-  void main(){
-    vec3 fogC = vec3(0.72, 0.80, 0.90);
-    vec3 base; float texAlpha = 1.0;
-    if(vUV.x >= 0.0){
-      vec4 texel = texture2D(uTex, vUV);
-      base = texel.rgb * vTint * vLit;   // vTint is (1,1,1) for cars/world — only particles tint their sprite
-      texAlpha = texel.a;                // opaque (1.0) for car/world atlases; the particle sprite's soft falloff
-    } else {
-      base = vCol;
-    }
-    base += vSpec * vec3(1.0, 0.98, 0.92);   // near-white, sun-tinted highlight — additive, not paint-tinted
-    gl_FragColor = vec4(mix(base, fogC, vFog*0.85), uAlpha * texAlpha);
-  }`);
-SKYPROG = makeProg(`
-  attribute vec2 aP; varying float vY;
-  void main(){ vY = aP.y; gl_Position = vec4(aP, 0.999, 1.0); }`, `
-  precision mediump float; varying float vY;
-  uniform vec3 uHorizon, uZenith;
-  void main(){
-    float t = clamp(vY*0.5+0.5, 0.0, 1.0);
-    gl_FragColor = vec4(mix(uHorizon, uZenith, pow(t, 0.75)), 1.0);
-  }`);
-}
-/* ---------- post-processing: scene renders into SCENE_FBO, then a small
-   chain of full-screen passes (bright-pass/blur into BLOOM_A/B, then a
-   final composite) blits to the real backbuffer. BLURPROG's uDir=(0,0)
-   doubles as a plain bright-pass/downsample (all 5 taps land on the same
-   texel, weights sum to 1.0, so it's a clean copy+threshold with no blur).
-   uBloomStrength starts at 0 / vignette starts disabled (VIS-6 turns the
-   real look on) so this stage is verifiable as a no-op passthrough first. */
-let POSTPROG=null, BLURPROG=null;
-if(LEGACY_GL){
-POSTPROG = makeProg(`
-  attribute vec2 aP; varying vec2 vUV;
-  void main(){ vUV = aP*0.5+0.5; gl_Position = vec4(aP, 0.0, 1.0); }`, `
-  precision mediump float; varying vec2 vUV;
-  uniform sampler2D uScene, uBloom;
-  uniform float uBloomStrength, uLift, uGain, uGamma, uSaturation;
-  uniform float uVignetteInner, uVignetteOuter;
-  void main(){
-    vec3 scene = texture2D(uScene, vUV).rgb;
-    vec3 bloom = texture2D(uBloom, vUV).rgb;
-    vec3 color = scene + bloom * uBloomStrength;
-    color = pow(max(vec3(0.0), color*uGain + uLift), vec3(1.0/uGamma));
-    float luma = dot(color, vec3(0.299,0.587,0.114));
-    color = mix(vec3(luma), color, uSaturation);
-    float d = length(vUV - 0.5) * 1.4142;
-    color *= 1.0 - smoothstep(uVignetteInner, uVignetteOuter, d);
-    gl_FragColor = vec4(color, 1.0);
-  }`);
-BLURPROG = makeProg(`
-  attribute vec2 aP; varying vec2 vUV;
-  void main(){ vUV = aP*0.5+0.5; gl_Position = vec4(aP, 0.0, 1.0); }`, `
-  precision mediump float; varying vec2 vUV;
-  uniform sampler2D uTex; uniform vec2 uDir; uniform float uThreshold;
-  void main(){
-    vec3 sum  = texture2D(uTex, vUV).rgb * 0.227027;
-    sum += texture2D(uTex, vUV + uDir*1.3846).rgb * 0.3162162;
-    sum += texture2D(uTex, vUV - uDir*1.3846).rgb * 0.3162162;
-    sum += texture2D(uTex, vUV + uDir*3.2308).rgb * 0.0702703;
-    sum += texture2D(uTex, vUV - uDir*3.2308).rgb * 0.0702703;
-    if(uThreshold > 0.0) sum = max(vec3(0.0), sum - uThreshold);
-    gl_FragColor = vec4(sum, 1.0);
-  }`);
-}
-
 /* ---------- mesh builder ---------- */
 function Builder(){
-  this.pos=[]; this.nrm=[]; this.col=[]; this.uv=[]; this.spec=[];
+  this.pos=[]; this.nrm=[]; this.col=[]; this.uv=[];
 }
 Builder.prototype.tri = function(a,b,c, col, paint){
   const u = v3sub(b,a), v = v3sub(c,a);
@@ -1225,13 +1074,12 @@ Builder.prototype.tri = function(a,b,c, col, paint){
     this.nrm.push(n[0],n[1],n[2]);
     this.col.push(col[0],col[1],col[2],al);
     this.uv.push(wx,wy);
-    this.spec.push(0.05);            // matte — track/grandstand/fence surfaces
   }
 };
 Builder.prototype.triNUV = function(a,b,c, na,nb,nc, ua,ub,uc){
   this.pos.push(a[0],a[1],a[2], b[0],b[1],b[2], c[0],c[1],c[2]);
   this.nrm.push(na[0],na[1],na[2], nb[0],nb[1],nb[2], nc[0],nc[1],nc[2]);
-  for(let i=0;i<3;i++){ this.col.push(1,1,1,1); this.spec.push(0.05); }
+  for(let i=0;i<3;i++){ this.col.push(1,1,1,1); }
   this.uv.push(ua[0],ua[1], ub[0],ub[1], uc[0],uc[1]);
 };
 Builder.prototype.quad = function(a,b,c,d, col, paint){   // a-b-c-d CCW
@@ -1281,7 +1129,7 @@ const COL = {
 
 /* ---------- world mesh (track, walls, stands) ---------- */
 const rng2 = mulberry32(777);           // scenery only — keeps AI RNG untouched
-let WORLD=null, WORLD_TEX=null, CARBUFS={}, WHITE_TEX=null;
+let WORLD=null, WORLD_TEX=null, CARBUFS={};
 function crossPt(s, lat, raise){ const p = pos3(s,lat); p[1]+=(raise||0); return p; }
 /* ---------- grandstand: parameterized so each track's stadium theme drives
    reach/density/tier-count/roof instead of one hardcoded frontstretch block.
@@ -1604,12 +1452,6 @@ const SW = { tire:[0.955,0.06], rim:[0.955,0.16], chrome:[0.955,0.26],
              dark:[0.955,0.36], amber:[0.955,0.46], shadow:[0.955,0.56],
              body:[0.955,0.66] };
 
-function specFor(sw){                // specular intensity for a livery swatch
-  if(sw===SW.chrome) return 0.9;
-  if(sw===SW.rim) return 0.6;
-  if(sw===SW.tire) return 0.03;      // matte rubber
-  return 0.2;                        // dark/amber/shadow/body swatches
-}
 // Shared (non-textured) car materials — identical for every car, so built
 // once. Body paint and glass need a per-car livery THREE.CanvasTexture, so
 // those two materials are created per-mesh in buildCarMesh() below instead.
