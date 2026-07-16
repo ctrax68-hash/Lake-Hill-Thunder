@@ -15,6 +15,9 @@
     --c-steel:#2A2A2A; --c-orange:#FF7A00; --c-red:#D62828; --c-graycool:#C8C8C8;
     --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-6:24px;
     --bw-thin:1px; --bw-med:2px;
+    /* touch-control sizing defaults; overridden per-viewport by updateCtlVars() */
+    --ctlW:88px; --ctlH:76px; --ctlGasH:96px; --ctlGap:14px; --ctlPairGap:10px;
+    --ctlPitH:44px; --ctlPitGap:8px;
     --font-head:'Arial Narrow','Segoe UI Condensed',Impact,sans-serif;
     --font-data:'Consolas','Courier New',monospace;
     /* subtle depth polish — a "lifted card" shadow, not a glow, and kept
@@ -40,12 +43,12 @@
   #bL span, #bR span { width:0; height:0; border-top:11px solid transparent; border-bottom:11px solid transparent; }
   #bL span { border-right:16px solid currentColor; }
   #bR span { border-left:16px solid currentColor; }
-  #bL { left:calc(14px + var(--safeL));  bottom:calc(14px + var(--safeB)); width:88px; height:76px; }
-  #bR { left:calc(112px + var(--safeL)); bottom:calc(14px + var(--safeB)); width:88px; height:76px; }
-  #bB { right:calc(112px + var(--safeR)); bottom:calc(14px + var(--safeB)); width:88px; height:76px; font-size:15px;
+  #bL { left:calc(var(--ctlGap) + var(--safeL)); bottom:calc(var(--ctlGap) + var(--safeB)); width:var(--ctlW); height:var(--ctlH); }
+  #bR { left:calc(var(--ctlGap) + var(--ctlW) + var(--ctlPairGap) + var(--safeL)); bottom:calc(var(--ctlGap) + var(--safeB)); width:var(--ctlW); height:var(--ctlH); }
+  #bB { right:calc(var(--ctlGap) + var(--ctlW) + var(--ctlPairGap) + var(--safeR)); bottom:calc(var(--ctlGap) + var(--safeB)); width:var(--ctlW); height:var(--ctlH); font-size:15px;
         border-color:var(--c-red); }
   #bB.pressed { background:var(--c-red); border-color:var(--c-white); }
-  #bG { right:calc(14px + var(--safeR)); bottom:calc(14px + var(--safeB)); width:88px; height:96px; font-size:16px;
+  #bG { right:calc(var(--ctlGap) + var(--safeR)); bottom:calc(var(--ctlGap) + var(--safeB)); width:var(--ctlW); height:var(--ctlGasH); font-size:16px;
         border-color:var(--c-yellow); }
   #bG.pressed { background:var(--c-yellow); color:var(--c-black); border-color:var(--c-white); }
   #bP.pressed { background:var(--c-orange); border-color:var(--c-white); }
@@ -126,7 +129,10 @@
 
 <button id="qSkip" class="mbtn" style="display:none; position:fixed; top:14px; left:50%;
   transform:translateX(-50%); z-index:6; min-width:150px; padding:8px 14px; font-size:13px;">SKIP QUALIFYING</button>
-<button id="bP" class="ctl" style="display:none; right:112px; bottom:98px; width:88px; height:44px;
+<button id="bP" class="ctl" style="display:none;
+  right:calc(var(--ctlGap) + var(--ctlW) + var(--ctlPairGap) + var(--safeR));
+  bottom:calc(var(--ctlGap) + var(--ctlH) + var(--ctlPitGap) + var(--safeB));
+  width:var(--ctlW); height:var(--ctlPitH);
   font-size:15px; border-color:var(--c-orange);">PIT</button>
 
 <div id="rotate"><div class="phone"></div><p>ROTATE YOUR PHONE</p></div>
@@ -1057,6 +1063,23 @@ function readSafeArea(){
   SAFE.t = px(s.getPropertyValue('--safeT'));
   SAFE.b = px(s.getPropertyValue('--safeB'));
 }
+/* ---- viewport-aware HUD scale: 500px tall (tools/playtest.js's own 900x500
+   viewport) is the design baseline; shrink on short phone viewports so
+   panels never grow past what a landscape phone screen can hold. ---- */
+const UI = { scale: 1 };
+function ctlWidthPx(){ return Math.round(88*UI.scale); }
+function ctlHeightPx(){ return Math.round(76*UI.scale); }
+function ctlGasHeightPx(){ return Math.round(96*UI.scale); }
+function updateCtlVars(){
+  const root = document.documentElement.style;
+  root.setProperty('--ctlW', ctlWidthPx()+'px');
+  root.setProperty('--ctlH', ctlHeightPx()+'px');
+  root.setProperty('--ctlGasH', ctlGasHeightPx()+'px');
+  root.setProperty('--ctlGap', Math.round(14*UI.scale)+'px');
+  root.setProperty('--ctlPairGap', Math.round(10*UI.scale)+'px');
+  root.setProperty('--ctlPitH', Math.round(44*UI.scale)+'px');
+  root.setProperty('--ctlPitGap', Math.round(8*UI.scale)+'px');
+}
 function resize(){
   DPR = Math.min(2, window.devicePixelRatio||1);
   W = window.innerWidth; H = window.innerHeight;
@@ -1072,6 +1095,8 @@ function resize(){
     if(composer) composer.setSize(W, H);
   }
   readSafeArea();
+  UI.scale = Math.max(0.68, Math.min(1.15, H/500));
+  updateCtlVars();
 }
 window.addEventListener('resize', resize); resize();
 
@@ -2489,17 +2514,62 @@ function dispCol(c){                 // lift near-black car colors so UI chips/t
   return [c[0]+(1-c[0])*0.5, c[1]+(1-c[1])*0.5, c[2]+(1-c[2])*0.5];
 }
 /* ---- SPEED module: header-font label / monospace data / thin blue frame ---- */
-function drawSpeedModule(v){
-  const w=100, h=76, x=W-w-16-SAFE.r, y=H-h-96-SAFE.b;
+function drawSpeedModule(v, box){
+  const s=UI.scale, x=box.x, y=box.y, w=box.w, h=box.h;
   panel(x,y,w,h,THEME.blue,2);
   cx.textAlign='center';
-  cx.fillStyle=THEME.white; cx.font="bold 11px 'Arial Narrow',sans-serif";
-  cx.fillText('SPEED', x+w/2, y+14);
+  cx.fillStyle=THEME.white; cx.font=`bold ${11*s}px 'Arial Narrow',sans-serif`;
+  cx.fillText('SPEED', x+w/2, y+14*s);
   const mph = Math.round(v*2.237);
-  cx.fillStyle=THEME.white; cx.font='bold 40px monospace';
-  cx.fillText(String(mph), x+w/2, y+45);
-  cx.fillStyle=THEME.yellow; cx.font="bold 13px 'Arial Narrow',sans-serif";
-  cx.fillText('MPH', x+w/2, y+66);
+  cx.fillStyle=THEME.white; cx.font=`bold ${36*s}px monospace`;
+  cx.fillText(String(mph), x+w/2, y+h*0.58);
+  cx.fillStyle=THEME.yellow; cx.font=`bold ${12*s}px 'Arial Narrow',sans-serif`;
+  cx.fillText('MPH', x+w/2, y+h-9*s);
+}
+/* ---- one shared layout pass: every HUD panel rect is derived here so
+   panels cascade off each other (leaderboard -> minimap) instead of each
+   being anchored independently off W/H, which is what let the minimap
+   collide with the leaderboard on short viewports. ---- */
+const TOP_N = 5;
+function computeLayout(){
+  const s = UI.scale, gap = 8*s;
+  const P = S.player;
+  const playerRank = S.order.indexOf(P);
+  const list = [];
+  for(let i=0;i<Math.min(TOP_N, S.order.length);i++) list.push(i);
+  const pinned = playerRank >= TOP_N;
+  if(pinned) list.push(playerRank);
+  const rowH = 20*s, headH = 20*s, tw = 128*s;
+  const tx = 12+SAFE.l, ty = 12+SAFE.t;
+  const th = headH + list.length*rowH + 8*s + (pinned?3*s:0);
+  const leaderboard = { x:tx, y:ty, w:tw, h:th, headH, rowH, list, pinned };
+
+  // minimap cascades below the leaderboard so the two can never overlap;
+  // if the touch controls leave less room than that, shrink the minimap
+  // into what's left rather than moving it back up past the leaderboard.
+  const ctlTop = H - ctlHeightPx() - Math.round(14*s) - SAFE.b;
+  let mw = 108*s, mh = 64*s;
+  const my = leaderboard.y + leaderboard.h + gap;
+  if(my + mh + gap > ctlTop) mh = Math.max(38*s, ctlTop - gap - my);
+  const minimap = { x:12+SAFE.l, y:my, w:mw, h:mh };
+
+  const lw = 148*s, lh1 = 30*s, lh2 = 24*s;
+  const lap = { x:W/2-lw/2, y:10*s+SAFE.t, w:lw, h:lh1 };
+  const lastBest = { x:lap.x, y:lap.y+lh1+2*s, w:lw, h:lh2 };
+  const bannerY = lastBest.y+lastBest.h+8*s;
+
+  const pedalTop = H - ctlGasHeightPx() - Math.round(14*s) - SAFE.b;
+  const spW = 92*s, spH = 68*s;
+  const speed = { x: W-spW-16*s-SAFE.r, y: pedalTop-spH-6*s, w:spW, h:spH };
+
+  // bottom-center stack: segmented status strip, with the merged
+  // draft/spotter status chip riding just above it.
+  const barW = 250*s, barH = 24*s;
+  const statusBar = { x:W/2-barW/2, y:H-14*s-barH-SAFE.b, w:barW, h:barH };
+  const chipH = 24*s;
+  const statusChip = { y: statusBar.y-gap-chipH, h: chipH };
+
+  return { leaderboard, minimap, lap, lastBest, bannerY, speed, statusBar, statusChip };
 }
 /* ---- segmented diagnostic bar: discrete blocks, not a smooth fill ---- */
 function drawSegBar(x,y,w,h,frac,segN,color){
@@ -2568,29 +2638,33 @@ function drawHUD(){
   const P = S.player;
   cx.textBaseline = 'middle';
   if(S.mode==='qual'){ drawQualHUD(); return; }
-  // --- position tower (left): top 7 + the player's own row if outside ---
-  const playerRank = S.order.indexOf(P);
-  const list = [];
-  for(let i=0;i<Math.min(8, S.order.length);i++) list.push(i);
-  if(playerRank >= 8) list[7] = playerRank;
-  const rows = list.length;
-  const th=22, tw=132, tx=12+SAFE.l, ty=12+SAFE.t, headH=22;
-  panel(tx,ty+headH,tw,rows*th+8,THEME.white,1);
+  const s = UI.scale;
+  const L = computeLayout();
+  // --- position tower (top-left): top N + the player's own row if outside,
+  // separated by a thin divider so it's visually distinct from the ranked pack ---
+  const lb = L.leaderboard;
+  panel(lb.x,lb.y+lb.headH,lb.w,lb.h-lb.headH,THEME.white,1);
   cx.fillStyle = THEME.yellow;
-  sharpRect(tx,ty,tw,headH); cx.fill();
-  cx.fillStyle=THEME.black; cx.font="bold 12px 'Arial Narrow',sans-serif"; cx.textAlign='left';
-  cx.fillText(S.flag==='yellow' ? 'CAUTION' : 'LAKE HILL 400', tx+8, ty+headH/2+1);
+  sharpRect(lb.x,lb.y,lb.w,lb.headH); cx.fill();
+  cx.fillStyle=THEME.black; cx.font=`bold ${12*s}px 'Arial Narrow',sans-serif`; cx.textAlign='left';
+  cx.fillText(S.flag==='yellow' ? 'CAUTION' : 'LAKE HILL 400', lb.x+8*s, lb.y+lb.headH/2+1);
   // broadcast-style: alternate names and intervals every few seconds
   const showGaps = S.mode==='race' && S.flag==='green' && Math.floor(S.t/5)%2===1;
   const lapEst = (S.order[0] && S.order[0].lastLapT) || TRACK.total/48;
-  for(let r=0;r<rows;r++){
-    const i = list[r], c = S.order[i], y = ty+headH+4+r*th+th/2;
-    if(c===P){ cx.fillStyle=THEME.yellow; cx.fillRect(tx+1,y-th/2+1,tw-2,th-2); }
-    cx.fillStyle = c===P ? THEME.black : THEME.graycool; cx.font='bold 12px monospace';
-    cx.fillText(String(i+1), tx+8, y);
+  for(let r=0;r<lb.list.length;r++){
+    const i = lb.list[r], c = S.order[i];
+    let y = lb.y+lb.headH+4*s+r*lb.rowH+lb.rowH/2;
+    if(lb.pinned && r===lb.list.length-1){
+      y += 3*s;
+      cx.strokeStyle = THEME.steel; cx.lineWidth=1;
+      cx.beginPath(); cx.moveTo(lb.x+4*s, y-lb.rowH/2); cx.lineTo(lb.x+lb.w-4*s, y-lb.rowH/2); cx.stroke();
+    }
+    if(c===P){ cx.fillStyle=THEME.yellow; cx.fillRect(lb.x+1,y-lb.rowH/2+1,lb.w-2,lb.rowH-2); }
+    cx.fillStyle = c===P ? THEME.black : THEME.graycool; cx.font=`bold ${11*s}px monospace`;
+    cx.fillText(String(i+1), lb.x+8*s, y);
     cx.fillStyle=colCSS(dispCol(c.col));
-    cx.fillRect(tx+26, y-7, 5, 14);
-    cx.fillStyle = c===P ? THEME.black : THEME.white; cx.font='11px monospace';
+    cx.fillRect(lb.x+24*s, y-6*s, 5*s, 12*s);
+    cx.fillStyle = c===P ? THEME.black : THEME.white; cx.font=`${10*s}px monospace`;
     let tag = c.isPlayer ? 'YOU' : c.name.split(' ').pop();
     if(c.out) tag = 'OUT';
     else if(c.pit>0) tag = 'PIT';
@@ -2599,83 +2673,90 @@ function drawHUD(){
       const dp = S.order[i-1].prog - c.prog;
       tag = dp >= 1 ? '-'+Math.floor(dp)+' LAP' : '+'+(dp*lapEst).toFixed(1);
     } else if(showGaps && i===0) tag = 'LEADER';
-    cx.fillText('#'+c.num+' '+tag.slice(0,9), tx+36, y);
+    cx.fillText('#'+c.num+' '+tag.slice(0,9), lb.x+34*s, y);
   }
   // --- lap counter (top center) + LAST/BEST strip beneath ---
-  const lw=160, lx=W/2-lw/2, ly=10+SAFE.t;
-  panel(lx,ly,lw,32,THEME.white,1);
-  cx.fillStyle=THEME.yellow; sharpRect(lx,ly,lw,3); cx.fill();
-  cx.fillStyle=THEME.white; cx.font='bold 16px monospace'; cx.textAlign='center';
+  const lap = L.lap, lastBest = L.lastBest;
+  panel(lap.x,lap.y,lap.w,lap.h,THEME.white,1);
+  cx.fillStyle=THEME.yellow; sharpRect(lap.x,lap.y,lap.w,3*s); cx.fill();
+  cx.fillStyle=THEME.white; cx.font=`bold ${15*s}px monospace`; cx.textAlign='center';
   const lapNo = Math.min(S.laps, Math.max(1, P.lap<1 ? 1 : P.lap+1));
-  cx.fillText('LAP '+(P.done?S.laps:lapNo)+' / '+S.laps, W/2, ly+19);
-  const sy = ly+38;
-  panel(lx,sy,lw,26,THEME.white,1);
-  cx.textAlign='left'; cx.font="bold 9px 'Arial Narrow',sans-serif";
-  cx.fillStyle=THEME.graycool; cx.fillText('LAST', lx+8, sy+9);
-  cx.fillStyle=THEME.graycool; cx.fillText('BEST', lx+lw/2+8, sy+9);
-  cx.font='bold 12px monospace';
-  cx.fillStyle=THEME.white; cx.fillText(fmtT(P.lastLapT), lx+8, sy+20);
-  cx.fillStyle=THEME.yellow; cx.fillText(fmtT(P.bestLapT), lx+lw/2+8, sy+20);
+  cx.fillText('LAP '+(P.done?S.laps:lapNo)+' / '+S.laps, W/2, lap.y+lap.h*0.6);
+  panel(lastBest.x,lastBest.y,lastBest.w,lastBest.h,THEME.white,1);
+  cx.textAlign='left'; cx.font=`bold ${9*s}px 'Arial Narrow',sans-serif`;
+  cx.fillStyle=THEME.graycool; cx.fillText('LAST', lastBest.x+8*s, lastBest.y+9*s);
+  cx.fillStyle=THEME.graycool; cx.fillText('BEST', lastBest.x+lastBest.w/2+8*s, lastBest.y+9*s);
+  cx.font=`bold ${11*s}px monospace`;
+  cx.fillStyle=THEME.white; cx.fillText(fmtT(P.lastLapT), lastBest.x+8*s, lastBest.y+lastBest.h-6*s);
+  cx.fillStyle=THEME.yellow; cx.fillText(fmtT(P.bestLapT), lastBest.x+lastBest.w/2+8*s, lastBest.y+lastBest.h-6*s);
   // --- speed module (bottom-right, above the pedal cluster) ---
-  drawSpeedModule(P.v);
-  // --- tire / fuel / damage segmented bars + DRAFT flag ---
-  const bw=110, bx=W/2-bw/2, byBase=H-14-SAFE.b, rowH=15;
+  drawSpeedModule(P.v, L.speed);
+  // --- tire / fuel / car damage consolidated into one horizontal strip
+  // (was 3 stacked rows) ---
+  const sb = L.statusBar;
+  panel(sb.x,sb.y,sb.w,sb.h,THEME.white,1);
   cx.textAlign='left';
-  panel(bx-48,byBase-3*rowH-6,bw+56,3*rowH+10,THEME.white,1);
-  const bar=(row,label,frac,col)=>{
-    const y = byBase - (3-row)*rowH + rowH/2 - 5;
-    cx.fillStyle=THEME.graycool; cx.font="bold 9px 'Arial Narrow',sans-serif"; cx.fillText(label, bx-42, y+5);
-    drawSegBar(bx,y,bw,9,frac,8,col);
-  };
-  const wr = 1-P.wear;
-  bar(1,'TIRE', wr, wr>0.5 ? THEME.yellow : wr>0.25 ? THEME.orange : THEME.red);
-  bar(2,'FUEL', P.fuel, P.fuel>0.3 ? THEME.blue : P.fuel>0.12 ? THEME.orange : THEME.red);
-  const dOK = 1-P.dmg;
-  bar(3,'CAR',  dOK, dOK>0.6 ? THEME.blue : dOK>0.3 ? THEME.orange : THEME.red);
-  const draftY = 118+SAFE.t;
-  if(P.draftF>0.05){
-    panel(W/2-46, draftY, 92, 24, THEME.yellow, 2);
-    cx.fillStyle=THEME.yellow; cx.font="bold 13px 'Arial Narrow',sans-serif"; cx.textAlign='center';
-    cx.fillText('DRAFT', W/2, draftY+13);
-  }
-  // --- minimap (bottom-left above steer buttons) ---
-  drawMinimap();
-  // --- unified race-state banner (one call site, one visual system): clear of the
-  // lap counter / LAST-BEST strip above (which end at ~74+SAFE.t) ---
-  const bannerY = 82+SAFE.t;
-  if(S.mode==='pace') drawStateBanner('pace','PACE LAP — HOLD FORMATION',THEME.yellow,bannerY);
+  const groupW = (sb.w-16*s)/3, labelW=24*s, segW=groupW-labelW-6*s;
+  const wr = 1-P.wear, dOK = 1-P.dmg;
+  const groups = [
+    ['TIRE', wr, wr>0.5?THEME.yellow:wr>0.25?THEME.orange:THEME.red],
+    ['FUEL', P.fuel, P.fuel>0.3?THEME.blue:P.fuel>0.12?THEME.orange:THEME.red],
+    ['CAR', dOK, dOK>0.6?THEME.blue:dOK>0.3?THEME.orange:THEME.red],
+  ];
+  groups.forEach(([label,frac,col],gi)=>{
+    const gx = sb.x+8*s+gi*groupW;
+    if(gi>0){
+      cx.strokeStyle=THEME.steel; cx.lineWidth=1;
+      cx.beginPath(); cx.moveTo(gx-4*s, sb.y+4*s); cx.lineTo(gx-4*s, sb.y+sb.h-4*s); cx.stroke();
+    }
+    cx.fillStyle=THEME.graycool; cx.font=`bold ${8*s}px 'Arial Narrow',sans-serif`;
+    cx.fillText(label, gx, sb.y+sb.h/2+1);
+    drawSegBar(gx+labelW, sb.y+sb.h/2-4*s, segW, 8*s, frac, 6, col);
+  });
+  // --- minimap (cascades below the leaderboard; see computeLayout()) ---
+  drawMinimap(L.minimap);
+  // --- unified race-state banner (one call site, one visual system) ---
+  if(S.mode==='pace') drawStateBanner('pace','PACE LAP — HOLD FORMATION',THEME.yellow,L.bannerY);
   else if(S.mode==='race' && S.flag==='yellow'){
     const lead = S.order[0];
     const togo = Math.max(0, S.cautionUntilLap - (lead ? lead.lap : 0));
-    drawStateBanner('caution', togo<=0 ? 'CAUTION — GREEN NEXT TIME BY' : 'CAUTION — FIELD SLOWED', THEME.yellow, bannerY);
+    drawStateBanner('caution', togo<=0 ? 'CAUTION — GREEN NEXT TIME BY' : 'CAUTION — FIELD SLOWED', THEME.yellow, L.bannerY);
   }
-  else if(S.greenT>0) drawStateBanner('green','GREEN GREEN GREEN!',THEME.blue,bannerY);
-  else if(S.msgT>0) drawStateBanner('msg', S.msgTxt, THEME.white, bannerY);
-  else if(S.mode==='victory') drawStateBanner('victory','CHECKERED FLAG!',THEME.yellow,bannerY);
+  else if(S.greenT>0) drawStateBanner('green','GREEN GREEN GREEN!',THEME.blue,L.bannerY);
+  else if(S.msgT>0) drawStateBanner('msg', S.msgTxt, THEME.white, L.bannerY);
+  else if(S.mode==='victory') drawStateBanner('victory','CHECKERED FLAG!',THEME.yellow,L.bannerY);
   else bannerState.key = null;
-  // spotter radio caption (above the status bars)
-  if(S.spotT > 0 && S.spotTxt){
-    const a = Math.min(1, S.spotT/0.4);
-    cx.font="bold 14px 'Arial Narrow',sans-serif"; cx.textAlign='center';
-    const cw = Math.max(200, S.spotTxt.length*10 + 60);
+  // --- merged DRAFT / spotter status chip: one bottom-center panel instead
+  // of two independently-floating ones in different screen zones ---
+  const draftOn = P.draftF>0.05, spotOn = S.spotT>0 && S.spotTxt;
+  if(draftOn || spotOn){
+    const parts = [];
+    if(draftOn) parts.push('DRAFT');
+    if(spotOn) parts.push(S.spotTxt);
+    const text = parts.join('   ');
+    const a = spotOn ? Math.min(1, S.spotT/0.4) : 1;
+    const tone = spotOn ? THEME.orange : THEME.yellow;
+    cx.font=`bold ${13*s}px 'Arial Narrow',sans-serif`; cx.textAlign='center';
+    const w = Math.max(92*s, text.length*9.5*s + 50*s);
+    const y = L.statusChip.y, h = L.statusChip.h;
     cx.globalAlpha = a;
-    panel(W/2-cw/2, H-98-SAFE.b, cw, 24, THEME.orange, 1);
-    cx.fillStyle=THEME.orange;
-    cx.fillText(S.spotTxt, W/2, H-86-SAFE.b);
+    panel(W/2-w/2, y, w, h, tone, 2);
+    cx.fillStyle = tone;
+    cx.fillText(text, W/2, y+h/2+1);
     cx.globalAlpha = 1;
   }
 }
-let MMPTS=null, MMSC=0.115;
-function drawMinimap(){
-  const mw=120, mh=72, mx=12+SAFE.l, my=H-mh-96-SAFE.b;
+let MMPTS=null, MM_BX=1, MM_BY=1;
+function drawMinimap(box){
+  const mw=box.w, mh=box.h, mx=box.x, my=box.y;
   if(!MMPTS){
     MMPTS=[]; let bx=1, by=1;
     for(let i=0;i<=140;i++){ const p=TRACK.pointAt(i/140*TRACK.total); MMPTS.push([p.x,p.y]);
       bx=Math.max(bx,Math.abs(p.x)); by=Math.max(by,Math.abs(p.y)); }
-    MMSC = Math.min((mw-18)/2/bx, (mh-14)/2/by);          // auto-fit any track size
+    MM_BX=bx; MM_BY=by;
   }
   panel(mx,my,mw,mh,THEME.white,1);
-  const sc = MMSC, ox=mx+mw/2, oy=my+mh/2;
+  const sc = Math.min((mw-18)/2/MM_BX, (mh-14)/2/MM_BY), ox=mx+mw/2, oy=my+mh/2;
   cx.strokeStyle=THEME.graycool; cx.lineWidth=2; cx.beginPath();
   MMPTS.forEach((p,i)=>{ const X=ox+p[0]*sc, Y=oy+p[1]*sc; i?cx.lineTo(X,Y):cx.moveTo(X,Y); });
   cx.closePath(); cx.stroke();
@@ -2693,7 +2774,9 @@ function drawQualHUD(){
   cx.font='bold 18px monospace';
   cx.fillStyle=THEME.yellow;
   cx.fillText(P.lap >= 0 ? fmtT(S.t - P.lapStartT) : '--:--.--', W/2, 65+SAFE.t);
-  drawSpeedModule(P.v);
+  const s = UI.scale, spW=92*s, spH=68*s;
+  const pedalTop = H - ctlGasHeightPx() - Math.round(14*s) - SAFE.b;
+  drawSpeedModule(P.v, { x:W-spW-16*s-SAFE.r, y:pedalTop-spH-6*s, w:spW, h:spH });
 }
 function showResults(){
   const el = document.getElementById('results');
