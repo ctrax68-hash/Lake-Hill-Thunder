@@ -573,8 +573,20 @@ function stepCar(c){
     // follower never gets a positive throttle, so the gap never opens back
     // up) — a real pile-up that doesn't recover on its own under caution.
     if(ahead && ad<30) vT = Math.max(0, ahead.v + (ad - 9)*0.5);
-    else { let dp=PACE.s-c.s; if(dp<-TRACK.total/2)dp+=TRACK.total; if(dp>TRACK.total/2)dp-=TRACK.total;
-      vT = (dp>0 && dp<90) ? Math.max(0, PACE.v + (dp-16)*0.4) : 44; }
+    else {
+      // forward distance back to the pace car, always positive (0..total)
+      const fwdToPace = ((PACE.s - c.s) % TRACK.total + TRACK.total) % TRACK.total;
+      if(fwdToPace < 90) vT = Math.max(0, PACE.v + (fwdToPace-16)*0.4);
+      else vT = Math.min(95, 44 + (fwdToPace-90)*0.15);
+      // a flat cruise speed here left an isolated straggler closing on the
+      // pack at only a few units/sec — fine for a normal single-file gap,
+      // but a car that was hundreds of units back at caution-out (a totally
+      // ordinary green-flag spread) could take minutes to actually rejoin
+      // the field, which defeats the caution's whole "bunch back up" point.
+      // Scaling the target speed up with distance gives a bounded catch-up
+      // time regardless of how spread out the field was when the yellow
+      // came out, while still capping well under green-flag pace.
+    }
     const lane = 0;
     const LAy = Math.max(12, c.v*0.62);
     const pTy = TRACK.pointAt(c.s + LAy);
@@ -1773,7 +1785,11 @@ function buildCarMesh(num, pace){
   // multiply on top of that and crush it to a flat black void (the
   // "hollow" car complaint). Letting the texture alone drive the look,
   // like bodyMat does, keeps the window detail visible.
-  const glassMat = new THREE.MeshPhysicalMaterial({ metalness:0.1, roughness:0.05 });
+  // roughness was 0.05 (near-mirror) — under the bright sky envmap that made
+  // the raked fastback rear glass catch a hard, oversized reflection reading
+  // as a plain white "V" instead of the livery's dark tint showing through.
+  // 0.4 still glints (real tinted glass isn't matte) without the mirror.
+  const glassMat = new THREE.MeshPhysicalMaterial({ metalness:0.1, roughness:0.4, envMapIntensity:0.6 });
   const mats = [bodyMat, glassMat, CAR_MAT_CHROME, CAR_MAT_TIRE];
   if(pace) mats.push(CAR_MAT_AMBER);
   for(const g of groups) geo.addGroup(g.start, g.count, g.mat);
@@ -2810,7 +2826,9 @@ function drawHUD(){
   else if(S.mode==='race' && S.flag==='yellow'){
     const lead = S.order[0];
     const togo = Math.max(0, S.cautionUntilLap - (lead ? lead.lap : 0));
-    drawStateBanner('caution', togo<=0 ? 'CAUTION — GREEN NEXT TIME BY' : 'CAUTION — FIELD SLOWED', THEME.yellow, L.bannerY);
+    const txt = S.yellowT > 2.5 ? 'CAUTION — FAST FORWARD TO RESTART'
+              : togo<=0 ? 'CAUTION — GREEN NEXT TIME BY' : 'CAUTION — FIELD SLOWED';
+    drawStateBanner('caution', txt, THEME.yellow, L.bannerY);
   }
   else if(S.greenT>0) drawStateBanner('green','GREEN GREEN GREEN!',THEME.blue,L.bannerY);
   else if(S.msgT>0) drawStateBanner('msg', S.msgTxt, THEME.white, L.bannerY);
@@ -2892,12 +2910,20 @@ function showResults(){
 
 /* ---------- main loop ---------- */
 let last=0, acc=0;
+const CAUTION_FF_RATE = 8;   // sim-seconds per real second once a caution has run its opening beat
 function frame(ts){
   requestAnimationFrame(frame);
   if(!last){ last=ts; return; }
   let dt = Math.min(0.25, (ts-last)/1000); last=ts;
   if(S.mode==='race' || S.mode==='pace' || S.mode==='qual' || S.mode==='victory'){
-    acc += dt;
+    // fast-forward through the boring part of a caution: give the player a
+    // couple of real seconds to register the yellow (S.yellowT still runs at
+    // 1x during that window), then compress the rest of the wait so sitting
+    // through the field bunching back up behind the pace car doesn't mean
+    // minutes of real time. The actual restart always happens at normal
+    // speed since S.flag flips to 'green' well before this check fires again.
+    const simDt = (S.mode==='race' && S.flag==='yellow' && S.yellowT > 2.5) ? dt*CAUTION_FF_RATE : dt;
+    acc += simDt;
     while(acc >= DT){ tick(); acc -= DT; }
     RALPHA = Math.max(0, Math.min(1, acc/DT));
   }
@@ -2984,7 +3010,40 @@ function tick(){
       // experience amongst themselves all the time, unpenalized) started
       // false-triggering drive-through penalties on totally fair restarts.
       const lead = S.order[0];
-      if(lead.lap >= S.cautionUntilLap && S.yellowT > 8){
+      // don't throw green until the field has actually caught back up behind
+      // the pace car — previously this only checked the leader's lap count,
+      // so a back-marker still a lap of track behind at caution-out could
+      // still be scattered out on track alone when green flew. Checking the
+      // total front-to-back spread doesn't work here — a legitimately-lapped
+      // car is always ~1+ laps behind the leader no matter how long caution
+      // runs, and even a properly nose-to-tail 20-car queue spans a real
+      // fraction of the track. What actually matters is that nobody is an
+      // isolated straggler: the largest gap between any two *adjacent* cars
+      // in running order should be small (capped so a pathological case,
+      // e.g. a car stuck repeatedly spinning, can't hang caution forever).
+      // measured in physical track position (s), not prog — prog is lap
+      // count + fraction, so a lapped car sits ~1 whole lap "behind" in prog
+      // terms forever, even once it's tucked in physically nose-to-tail with
+      // the tail of the lead-lap pack. Gap here is genuine on-track distance.
+      // pitted cars are excluded: a car stopped for service has a frozen s
+      // while the field circulates around it, which read as a huge on-track
+      // "gap" here despite not being a stranded straggler — it rejoins the
+      // queue like everyone else once its stop is done and pit===0 again.
+      // requiring literally every gap to be tight doesn't hold up: a car
+      // running meaningfully damaged has a genuinely lower top speed (see
+      // updateAero/engine-power scaling), so it can be an isolated straggler
+      // no catch-up target speed can fix short of it pitting for repairs.
+      // Tolerating a couple of such outliers (instead of demanding zero)
+      // still gates on the field *as a whole* being caught up, without
+      // letting one busted car hold the entire restart hostage.
+      const active = S.order.filter(c => !c.out && !c.done && c.pit===0);
+      let bigGaps = 0;
+      for(let i=0;i<active.length-1;i++){
+        const gap = ((active[i].s - active[i+1].s) % TRACK.total + TRACK.total) % TRACK.total;
+        if(gap > 60) bigGaps++;
+      }
+      const bunched = bigGaps <= 4;
+      if(lead.lap >= S.cautionUntilLap && S.yellowT > 8 && (bunched || S.yellowT > 45)){
         // one-to-go is done: green as the leader reaches the line zone
         let dl = (TRACK.sFinish - lead.s + TRACK.total) % TRACK.total;
         if(dl < 60 || dl > TRACK.total-10){
