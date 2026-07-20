@@ -375,7 +375,8 @@ function makeCar(isPlayer, idx){
     pitch:0,
     spinT:0, spinDir:1, spinCd:0,
     pit:0, pitT:0, pitReq:false,
-    fuel:1, dmg:0, out:false
+    fuel:1, dmg:0, out:false,
+    cautionSlot:-1
   };
 }
 
@@ -387,7 +388,8 @@ const S = {
   sound:true, tilt:false, tiltG:0,
   shakeT:0,
   qual:false, gridOrder:null, qualPos:0,
-  flag:'green', yellowT:0, cautionUntilLap:-1, greenLockT:0
+  flag:'green', yellowT:0, cautionUntilLap:-1, greenLockT:0,
+  oneToGo:false, pitsOpen:true, cautionMaxSlot:-1
 };
 
 /* ---------- rolling start: pace car + formation on the backstretch ---------- */
@@ -492,7 +494,8 @@ function stepCar(c){
   if(c.spinCd > 0) c.spinCd -= DT;
   if(c.dmgCd > 0) c.dmgCd -= DT;
   // arm pit entry as the car reaches the frontstretch
-  if((c.pitReq || c.dtPending) && c.pit===0 && !c.done && !c.out && c.spinT<=0){
+  if((c.pitReq || c.dtPending) && c.pit===0 && !c.done && !c.out && c.spinT<=0
+     && (S.flag!=='yellow' || S.pitsOpen)){     // pit road closed early in a caution + at one-to-go
     const seg0 = TRACK.segs[0];
     let dIn = c.s - seg0.s0; if(dIn > TRACK.total/2) dIn -= TRACK.total;
     if(dIn > -25 && dIn < seg0.len*0.04){
@@ -545,11 +548,13 @@ function stepCar(c){
       // drive-through penalty: pit-road speed the whole lane, no stop
       vT = 22;
       let de2 = sOut - c.s; if(de2<-TRACK.total/2)de2+=TRACK.total; if(de2>TRACK.total/2)de2-=TRACK.total;
-      if(de2 < 4){ c.pit=0; c.pitReq=false; c.dtPending=false; }
+      if(de2 < 4){ c.pit=0; c.pitReq=false; c.dtPending=false;
+        if(S.flag==='yellow') c.cautionSlot = ++S.cautionMaxSlot; }   // rejoin at the tail
     } else {
       vT = 22;
       let de = sOut - c.s; if(de<-TRACK.total/2)de+=TRACK.total; if(de>TRACK.total/2)de-=TRACK.total;
-      if(de < 4){ c.pit=0; c.pitReq=false; }
+      if(de < 4){ c.pit=0; c.pitReq=false;
+        if(S.flag==='yellow') c.cautionSlot = ++S.cautionMaxSlot; }   // rejoin at the tail
     }
     const LAp = Math.max(8, c.v*0.62);
     const pTp = TRACK.pointAt(c.s + LAp);
@@ -560,33 +565,53 @@ function stepCar(c){
     steerIn = Math.max(-1, Math.min(1, (c.v*cFF)/Math.max(0.05, c.v*0.24) + dHp*1.5));
     if(c.v < vT - 0.3){ thr=0.4; brk=0; } else if(c.v > vT + 0.4){ thr=0; brk=0.8; } else { thr=0.15; brk=0; }
   } else if(S.mode==='race' && S.flag==='yellow'){
-    // ---- caution: fall in single file behind the pace car (computer takes
-    // over for the player here too, same as every AI car — no manual input
-    // is read again until the green flag drops) ----
-    let ahead=null, ad=1e9;
-    for(const o of S.cars){ if(o===c || o.pit>0 || o.spinT>0 || o.done) continue;
-      let ds=o.s-c.s; if(ds<-TRACK.total/2)ds+=TRACK.total; if(ds>TRACK.total/2)ds-=TRACK.total;
-      if(ds>0.5 && ds<ad){ ad=ds; ahead=o; } }
+    // ---- caution: single file behind the pace car in ASSIGNED SLOTS (the
+    // caution-out running order, frozen into c.cautionSlot) — the same
+    // formation model the race start uses (gridAhead/gridLane), instead of
+    // ad-hoc nearest-car following, which was accordion-prone and had no
+    // formal running order. Computer takes over for the player here too,
+    // same as every AI car, until the green flag drops. ----
+    // slot target: 16-unit standoff behind the pace car, then 9 units per
+    // slot (matches the 9m formation gap the start grid uses)
     let vT;
-    // clamp to 0: with a tight gap and a near-stopped car ahead, the raw
-    // formula goes negative, which permanently brake-locks both cars (the
-    // follower never gets a positive throttle, so the gap never opens back
-    // up) — a real pile-up that doesn't recover on its own under caution.
-    if(ahead && ad<30) vT = Math.max(0, ahead.v + (ad - 9)*0.5);
-    else {
-      // forward distance back to the pace car, always positive (0..total)
-      const fwdToPace = ((PACE.s - c.s) % TRACK.total + TRACK.total) % TRACK.total;
-      if(fwdToPace < 90) vT = Math.max(0, PACE.v + (fwdToPace-16)*0.4);
-      else vT = Math.min(95, 44 + (fwdToPace-90)*0.15);
-      // a flat cruise speed here left an isolated straggler closing on the
-      // pack at only a few units/sec — fine for a normal single-file gap,
-      // but a car that was hundreds of units back at caution-out (a totally
-      // ordinary green-flag spread) could take minutes to actually rejoin
-      // the field, which defeats the caution's whole "bunch back up" point.
-      // Scaling the target speed up with distance gives a bounded catch-up
-      // time regardless of how spread out the field was when the yellow
-      // came out, while still capping well under green-flag pace.
+    if(PACE.state==='lead'){
+      let ds = (PACE.s - 16 - c.cautionSlot*9) - c.s;
+      while(ds < -TRACK.total/2) ds += TRACK.total;
+      while(ds >  TRACK.total/2) ds -= TRACK.total;
+      // catchCap keeps the far-straggler catch-up: a car hundreds of units
+      // from its slot closes at up to near-race pace instead of crawling.
+      // The ramp starts at ds=20 so the cap is CONTINUOUS in ds — an earlier
+      // version ramped only past ds=90, which stepped the command from ~95
+      // straight down to 44 as a car crossed that line; the resulting brake
+      // slam launched decel waves down the whole queue (cars oscillating
+      // 6..54 and getting shoved into the wall for damage).
+      const catchCap = Math.min(95, 44 + Math.max(0, ds-20)*0.15);
+      vT = Math.min(catchCap, PACE.v + ds*0.4);
+      // a car AHEAD of its slot (negative ds — e.g. a lapped car that was
+      // physically in front of where the pace car spawned) must never park
+      // on the racing line waiting for its slot to catch up: a stopped car
+      // deadlocks the proximity interlock behind it and piles up the whole
+      // queue (observed: chain collisions, player DNF). Roll below pace
+      // speed instead and drift back to the slot. Positive-ds cars keep the
+      // documented clamp-to-0 (never a negative speed target).
+      vT = ds < 0 ? Math.max(30, vT) : Math.max(0, vT);
+    } else {
+      // pace car has pulled off (one-to-go): the leader controls the pace —
+      // everyone rolls at pacing speed to the green; slot-targeting a parked
+      // pace car here would brake the whole field to a stop at pit entry
+      vT = 38;
     }
+    // proximity interlock: slots guarantee spacing at steady state, but a
+    // fast catch-up car must not drive through a slower one still settling
+    // into the slot ahead. The horizon must cover real braking distance —
+    // at ~55 units/s closing speed a 10-unit lookahead gives ~0.2s of
+    // warning, which physically cannot be braked away (observed: chain
+    // rear-endings into the queue tail, player wrecked out of the race).
+    // 80 units with a 0.35 slope tapers approach speed down to the leading
+    // car's speed by an 8-unit gap.
+    for(const o of S.cars){ if(o===c || o.pit>0 || o.done || o.out) continue;
+      let da=o.s-c.s; if(da<-TRACK.total/2)da+=TRACK.total; if(da>TRACK.total/2)da-=TRACK.total;
+      if(da>0.5 && da<80) vT = Math.max(0, Math.min(vT, o.v + Math.max(0,(da-8))*0.35)); }
     const lane = 0;
     const LAy = Math.max(12, c.v*0.62);
     const pTy = TRACK.pointAt(c.s + LAy);
@@ -595,8 +620,12 @@ function stepCar(c){
     while(dHy> Math.PI) dHy-=2*Math.PI; while(dHy<-Math.PI) dHy+=2*Math.PI;
     const cFFy = TRACK.pointAt(c.s + Math.max(6, c.v*0.3)).curv;
     steerIn = Math.max(-1, Math.min(1, (c.v*cFFy)/Math.max(0.05, c.v*0.24) + dHy*1.3));
-    if(c.v < vT - 0.3){ thr = 0.45; brk = 0; }
-    else if(c.v > vT + 0.5){ thr = 0; brk = 0.6; }
+    // throttle scales with the speed deficit: a fixed 0.45 could never reach
+    // the straggler catch-up target (~95) — cars were "commanded" fast but
+    // physically capped near pace speed, which is why big caution-out gaps
+    // never actually closed and restarts kept firing on the time cap.
+    if(c.v < vT - 0.3){ thr = Math.min(1, 0.45 + (vT - c.v)*0.04); brk = 0; }
+    else if(c.v > vT + 0.5){ thr = 0; brk = Math.min(1, 0.6 + (c.v - vT)*0.03); }
     else { thr = 0.2; brk = 0; }
   } else if(S.mode==='pace'){
     // --- formation: hold grid lane, match pace speed, keep gap to car ahead ---
@@ -717,7 +746,11 @@ function stepCar(c){
     c.x -= nx*Math.sign(p2.lat)*excess; c.y -= ny*Math.sign(p2.lat)*excess;
     const vLost = c.v*0.28;
     c.v *= 0.72; c.hdg = p2.hdg + (c.hdg-p2.hdg)*0.3; c.vdir = c.hdg;
-    if((c.dmgCd||0) <= 0){                        // damage once per incident, not per pinned tick
+    // no damage accrual under caution (same rationale as the collide() gate:
+    // queue dynamics can nudge a computer-driven car wall-ward at low speed,
+    // and grinding a car to a DNF while pacing is unacceptable — the impact
+    // speed loss above still applies either way)
+    if((c.dmgCd||0) <= 0 && S.flag !== 'yellow'){ // damage once per incident, not per pinned tick
       c.dmg = Math.min(1, c.dmg + Math.min(0.12, vLost*0.005));
       c.dmgCd = 0.6;
     }
@@ -758,9 +791,13 @@ function collide(){
       b.v = Math.max(0, b.v - 0.3*closeMag);
       a.hdg += ny*0.008*(a.isPlayer?1:2); b.hdg -= ny*0.008;
       if(a.isPlayer||b.isPlayer) S.shakeT=Math.max(S.shakeT,0.15);
-      // body damage from contact: harder on the faster (hitting) car's nose
+      // body damage from contact: harder on the faster (hitting) car's nose.
+      // Not under caution — pacing-line bumper taps at yellow speeds are
+      // inconsequential in real racing, and cumulatively DNF-ing a car from
+      // queue contact while the computer is driving it is unacceptable
+      // (observed: player survived the wreck, then the caution killed them).
       const cv2 = Math.abs(a.v - b.v);
-      if(cv2 > 3){
+      if(cv2 > 3 && S.flag !== 'yellow'){
         const hitter = a.v > b.v ? a : b, victim2 = a.v > b.v ? b : a;
         if((hitter.dmgCd||0) <= 0){               // once per incident — rubbing is racing
           hitter.dmg  = Math.min(1, hitter.dmg  + Math.min(0.08, cv2*0.003));
@@ -2689,7 +2726,7 @@ function drawSegBar(x,y,w,h,frac,segN,color){
 /* ---- unified race-state banner: one visual treatment, one shared slide-in timer ---- */
 let bannerState = { key:null, t0:0 };
 /* ---- procedural flag icon: green / yellow(caution) / checkered(victory) ---- */
-const FLAG_ICON = { pace:'yellow', caution:'yellow', green:'green', victory:'checkered' };
+const FLAG_ICON = { pace:'yellow', caution:'yellow', onetogo:'yellow', green:'green', victory:'checkered' };
 const FLAG_GREEN = '#1F9D55';   // content-accurate flag color; UI chrome itself stays on-palette
 function drawFlagIcon(x,y,s,pattern){
   cx.save();
@@ -2824,11 +2861,10 @@ function drawHUD(){
   // --- unified race-state banner (one call site, one visual system) ---
   if(S.mode==='pace') drawStateBanner('pace','PACE LAP — HOLD FORMATION',THEME.yellow,L.bannerY);
   else if(S.mode==='race' && S.flag==='yellow'){
-    const lead = S.order[0];
-    const togo = Math.max(0, S.cautionUntilLap - (lead ? lead.lap : 0));
-    const txt = S.yellowT > 2.5 ? 'CAUTION — FAST FORWARD TO RESTART'
-              : togo<=0 ? 'CAUTION — GREEN NEXT TIME BY' : 'CAUTION — FIELD SLOWED';
-    drawStateBanner('caution', txt, THEME.yellow, L.bannerY);
+    if(S.oneToGo) drawStateBanner('onetogo','ONE TO GO — GREEN NEXT TIME BY',THEME.yellow,L.bannerY);
+    else drawStateBanner('caution',
+      S.yellowT > 2.5 ? 'CAUTION — FAST FORWARD TO RESTART' : 'CAUTION — FIELD SLOWED',
+      THEME.yellow, L.bannerY);
   }
   else if(S.greenT>0) drawStateBanner('green','GREEN GREEN GREEN!',THEME.blue,L.bannerY);
   else if(S.msgT>0) drawStateBanner('msg', S.msgTxt, THEME.white, L.bannerY);
@@ -2922,7 +2958,18 @@ function frame(ts){
     // through the field bunching back up behind the pace car doesn't mean
     // minutes of real time. The actual restart always happens at normal
     // speed since S.flag flips to 'green' well before this check fires again.
-    const simDt = (S.mode==='race' && S.flag==='yellow' && S.yellowT > 2.5) ? dt*CAUTION_FF_RATE : dt;
+    // fast-forward also carries through most of the one-to-go roll — the
+    // leader controls the pace at ~38 for up to a full lap back to the line,
+    // which at 1x is another 40+ real seconds of nothing. Drop to 1x only
+    // for the final approach (leader within 250 units of the line) so the
+    // player still watches the actual restart build at normal speed.
+    let ffOK = S.mode==='race' && S.flag==='yellow' && S.yellowT > 2.5;
+    if(ffOK && S.oneToGo){
+      const lead0 = S.order[0];
+      const dl0 = lead0 ? (TRACK.sFinish - lead0.s + TRACK.total) % TRACK.total : 0;
+      if(dl0 < 250) ffOK = false;
+    }
+    const simDt = ffOK ? dt*CAUTION_FF_RATE : dt;
     acc += simDt;
     while(acc >= DT){ tick(); acc -= DT; }
     RALPHA = Math.max(0, Math.min(1, acc/DT));
@@ -2961,7 +3008,9 @@ function tick(){
   if(S.mode==='race'){
     for(const c of S.cars){
       if(c.isPlayer || c.done || c.out || c.pit>0 || c.spinT>0) continue;
-      c.pitReq = (S.flag==='yellow' && (c.wear>0.25 || c.fuel<0.5))
+      // under yellow, strategy stops wait for pit road to open (green-flag
+      // desperation stops — wear/fuel/damage — are always allowed)
+      c.pitReq = (S.flag==='yellow' && S.pitsOpen && (c.wear>0.25 || c.fuel<0.5))
                || c.wear>0.7 || c.fuel<0.18 || (c.dmg>0.45 && c.dmg<1);
     }
   }
@@ -2993,13 +3042,50 @@ function tick(){
           S.cautionUntilLap = lead.lap + 2;
           PACE.state='lead'; PACE.lat=0; PACE.v=38;
           PACE.s = (lead.s + 90) % TRACK.total;
+          // freeze the field into pacing slots by PHYSICAL position behind
+          // the pace car (not by running order): the single-file queue has
+          // no passing, so a prog-ordered slot a car can't physically reach
+          // past the cars in front of it would leave permanent stragglers.
+          // Physical order means every car's slot is roughly where it
+          // already is — the queue just compresses. (Also period-authentic:
+          // the pre-2004 single-file era lined cars up where they ran, and
+          // scoring position comes from prog, never from the line order.)
+          const act = S.cars.filter(o => !o.out && !o.done);
+          act.sort((a,b)=>{
+            const da = ((PACE.s - a.s) % TRACK.total + TRACK.total) % TRACK.total;
+            const db = ((PACE.s - b.s) % TRACK.total + TRACK.total) % TRACK.total;
+            return da - db;
+          });
+          act.forEach((o,i)=>{ o.cautionSlot = i; });
+          S.cautionMaxSlot = act.length - 1;
+          S.oneToGo = false;
+          S.pitsOpen = false;                        // closed until field is collected
+          if(CAR_MAT_AMBER) CAR_MAT_AMBER.emissiveIntensity = 1.2;   // pace lights on
           break;
         }
       }
     } else if(S.flag==='yellow'){
       S.yellowT += DT;
       stepPace();
-      PACE.v = 38;
+      // adaptive pace speed: the pace car is kinematic (fixed 38 through
+      // corners) while the field is physics-bound and loses ground in every
+      // decel wave — at a fixed 38 the whole queue lagged the schedule by
+      // 300+ units and could never "bunch". Slow down proportionally to the
+      // front-of-queue gap so the pace car actually waits for the field,
+      // like a real one does.
+      {
+        let front = null, best = 1e9;
+        for(const o of S.cars){
+          if(o.out || o.done || o.pit!==0 || o.spinT>0) continue;
+          if(o.cautionSlot >= 0 && o.cautionSlot < best){ best = o.cautionSlot; front = o; }
+        }
+        if(front){
+          let gap = PACE.s - 16 - front.cautionSlot*9 - front.s;
+          while(gap < -TRACK.total/2) gap += TRACK.total;
+          while(gap >  TRACK.total/2) gap -= TRACK.total;
+          PACE.v = 38 - Math.max(0, Math.min(16, (gap - 24)*0.15));
+        } else PACE.v = 38;
+      }
       // NOTE: there used to be a "passed under yellow" penalty check here for
       // the player. It made sense back when the player kept manual control
       // (just speed-capped) during caution, since a human could deliberately
@@ -3010,44 +3096,98 @@ function tick(){
       // experience amongst themselves all the time, unpenalized) started
       // false-triggering drive-through penalties on totally fair restarts.
       const lead = S.order[0];
-      // don't throw green until the field has actually caught back up behind
-      // the pace car — previously this only checked the leader's lap count,
-      // so a back-marker still a lap of track behind at caution-out could
-      // still be scattered out on track alone when green flew. Checking the
-      // total front-to-back spread doesn't work here — a legitimately-lapped
-      // car is always ~1+ laps behind the leader no matter how long caution
-      // runs, and even a properly nose-to-tail 20-car queue spans a real
-      // fraction of the track. What actually matters is that nobody is an
-      // isolated straggler: the largest gap between any two *adjacent* cars
-      // in running order should be small (capped so a pathological case,
-      // e.g. a car stuck repeatedly spinning, can't hang caution forever).
-      // measured in physical track position (s), not prog — prog is lap
-      // count + fraction, so a lapped car sits ~1 whole lap "behind" in prog
-      // terms forever, even once it's tucked in physically nose-to-tail with
-      // the tail of the lead-lap pack. Gap here is genuine on-track distance.
-      // pitted cars are excluded: a car stopped for service has a frozen s
-      // while the field circulates around it, which read as a huge on-track
-      // "gap" here despite not being a stranded straggler — it rejoins the
-      // queue like everyone else once its stop is done and pit===0 again.
-      // requiring literally every gap to be tight doesn't hold up: a car
-      // running meaningfully damaged has a genuinely lower top speed (see
-      // updateAero/engine-power scaling), so it can be an isolated straggler
-      // no catch-up target speed can fix short of it pitting for repairs.
-      // Tolerating a couple of such outliers (instead of demanding zero)
-      // still gates on the field *as a whole* being caught up, without
-      // letting one busted car hold the entire restart hostage.
-      const active = S.order.filter(c => !c.out && !c.done && c.pit===0);
-      let bigGaps = 0;
-      for(let i=0;i<active.length-1;i++){
-        const gap = ((active[i].s - active[i+1].s) % TRACK.total + TRACK.total) % TRACK.total;
-        if(gap > 60) bigGaps++;
+      // "bunched" = every car is at (or near) its assigned pacing slot. Slots
+      // give an exact per-car target, so this is a direct error measure
+      // instead of the old adjacent-gap heuristic. A couple of outliers are
+      // tolerated: a meaningfully damaged car has a genuinely lower top
+      // speed (see updateAero/engine-power scaling) and can be a straggler
+      // no catch-up speed can fix short of pitting for repairs — one busted
+      // car must not hold the entire restart hostage. Pitted cars excluded
+      // (frozen s during service; they re-slot at the tail on exit). The
+      // 45s hard cap guarantees caution can't hang forever regardless.
+      // slot compaction: cars that duck into the pits leave their old slot
+      // as a 9-unit hole in the queue, and a full-field pit cycle (16+ cars
+      // at once) also inflates the tail with ++maxSlot assignments — without
+      // compaction the queue ends up sparse and hundreds of units long, and
+      // the bunch gate below can never pass. Re-number the active queue
+      // 0..n-1 every tick (order-preserving sort by current slot; 20 cars,
+      // trivial cost) so holes close as soon as they open.
+      const activeY = S.order.filter(o => !o.out && !o.done && o.pit===0);
+      activeY.slice().sort((a,b)=>a.cautionSlot-b.cautionSlot).forEach((o,i)=>{ o.cautionSlot = i; });
+      S.cautionMaxSlot = activeY.length - 1;
+      // time-compressed collection: a green-flag spread can be 700+ units,
+      // and the physics-bound tail closes it at only ~15-25/s — genuinely
+      // converging the whole field takes 60-90 sim-seconds, most of a
+      // 2-lap caution. The fast-forward window is presentation-compressed
+      // anyway (the player watches it at 8x, workstream-B TV cuts cover
+      // it), so after a fair convergence window the far stragglers are
+      // warped into their slots. FORWARD only: a forward warp across the
+      // finish line reads as a legitimate (compressed) crossing and lap
+      // counting stays correct, while a backward warp would corrupt prog.
+      // Never the player (their camera would visibly jump); never during
+      // one-to-go (that plays at 1x).
+      if(S.yellowT > 40 && !S.oneToGo){
+        for(const o of activeY){
+          if(o.isPlayer || o.spinT > 0) continue;
+          let se = (PACE.s - 16 - o.cautionSlot*9) - o.s;
+          while(se < -TRACK.total/2) se += TRACK.total;
+          while(se >  TRACK.total/2) se -= TRACK.total;
+          if(se > 30){
+            const sNew = ((o.s + se) % TRACK.total + TRACK.total) % TRACK.total;
+            const p = TRACK.pointAt(sNew);
+            o.s = sNew; o.lat = 0;
+            o.x = p.x; o.y = p.y;
+            o.hdg = o.vdir = p.hdg; o.v = 38;
+            o.px = o.x; o.py = o.y; o.phdg = o.hdg; o.ps = o.s; o.plat = 0;
+          }
+        }
       }
-      const bunched = bigGaps <= 4;
-      if(lead.lap >= S.cautionUntilLap && S.yellowT > 8 && (bunched || S.yellowT > 45)){
-        // one-to-go is done: green as the leader reaches the line zone
+      let stragglers = 0;
+      for(const o of activeY){
+        let se = (PACE.s - 16 - o.cautionSlot*9) - o.s;
+        while(se < -TRACK.total/2) se += TRACK.total;
+        while(se >  TRACK.total/2) se -= TRACK.total;
+        // 25-unit tolerance: the queue naturally sloshes ±10-20 around the
+        // slot schedule (chained speed control has finite damping); a line
+        // running 20 units "behind schedule" is still visually a perfect
+        // single file, which is what the restart actually needs.
+        if(Math.abs(se) > 25) stragglers++;
+      }
+      const bunched = stragglers <= 3;
+      // pit road opens once the field is collected (NASCAR procedure —
+      // closed at caution-out so nobody gains by diving in before the
+      // field is under control)
+      if(!S.pitsOpen && !S.oneToGo && bunched){
+        S.pitsOpen = true;
+        S.msgTxt = 'PIT ROAD IS OPEN'; S.msgT = 2.5;
+      }
+      if(!S.oneToGo){
+        // 75s cap: bunching physically takes time — corner grip limits real
+        // catch-up speed to ~55-60, so a 600-unit caution-out spread needs
+        // ~30-40 sim-seconds to compress. Under 8x fast-forward this cap is
+        // still under ~10 real seconds; it exists only to stop pathological
+        // hangs (e.g. a car that keeps spinning), not as the normal path.
+        if(lead.lap >= S.cautionUntilLap && S.yellowT > 8 && (bunched || S.yellowT > 75)){
+          // field collected and caution laps served: one to go. Lights off,
+          // pit road closes, fast-forward ends (frame() checks oneToGo) so
+          // the player watches the restart build at normal speed.
+          S.oneToGo = true;
+          S.pitsOpen = false;
+          if(CAR_MAT_AMBER) CAR_MAT_AMBER.emissiveIntensity = 0.15;
+        }
+      } else {
+        // pace car pulls into the pits at the pit-entry zone, then green as
+        // the leader reaches the line zone (restart zone), pace car clear
+        if(PACE.state==='lead'){
+          let dEntry = (TRACK.segs[0].s0 - 25) - PACE.s;
+          while(dEntry < -TRACK.total/2) dEntry += TRACK.total;
+          while(dEntry >  TRACK.total/2) dEntry -= TRACK.total;
+          if(Math.abs(dEntry) < 4) PACE.state='peel';
+        }
         let dl = (TRACK.sFinish - lead.s + TRACK.total) % TRACK.total;
-        if(dl < 60 || dl > TRACK.total-10){
+        if(PACE.state!=='lead' && (dl < 60 || dl > TRACK.total-10)){
           S.flag='green'; S.greenT = 2.2; S.greenLockT = 20;
+          S.oneToGo = false; S.pitsOpen = true;
           PACE.state='peel';
         }
       }
@@ -3118,6 +3258,8 @@ function startRace(){
   S.fastLap = 0; S.halfMsg = 0; S.whiteMsg = 0; S.msgT = 0; S.msgTxt = '';
   S.spotT = 0; S.spotTxt = ''; S.spotState = 'clear'; S.togoMsg = 0;
   S.fuelMsg = 0; S.tireMsg = 0; S.penaltyT = 0;
+  S.oneToGo = false; S.pitsOpen = true; S.cautionMaxSlot = -1;
+  if(CAR_MAT_AMBER) CAR_MAT_AMBER.emissiveIntensity = 1.2;
   S.mode='pace';
 }
 function startQualifying(){
