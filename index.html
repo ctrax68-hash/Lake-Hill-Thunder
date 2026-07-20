@@ -489,6 +489,12 @@ function updateAero(){
 
 /* ---------- per-tick physics ---------- */
 const DT = 0.02;
+// each car's assigned pit-stall center on the frontstretch — shared by the
+// pit AI, the stall paint in addPitRoad(), and the pit-stop camera
+function pitStallS(c){
+  const seg0 = TRACK.segs[0];
+  return seg0.s0 + seg0.len*(0.18 + 0.55*(c.idx||0)/FIELD);
+}
 function stepCar(c){
   let thr, brk, steerIn;
   if(c.spinCd > 0) c.spinCd -= DT;
@@ -530,7 +536,7 @@ function stepCar(c){
   } else if(c.pit > 0){
     // ---- auto-pit: drive the apron lane, stop at the stall, service, exit ----
     const seg0 = TRACK.segs[0];
-    const sStall = seg0.s0 + seg0.len*(0.18 + 0.55*(c.idx||0)/FIELD);
+    const sStall = pitStallS(c);
     const sOut = seg0.s0 + seg0.len*0.97;
     let lane = (c.pit===2) ? -10.5 : -8.4;
     let vT;
@@ -2419,20 +2425,72 @@ function drawParticlesThree(){
   }
 }
 
-/* ---------- chase camera ---------- */
+/* ---------- chase camera + broadcast presentation cameras ---------- */
 const cam = { pos:null, look:null };
+let camFov = 60;        // smoothed FOV (speed/draft zoom, written in drawGL)
+function setHardCam(pos, look){
+  cam.pos = pos.slice(); cam.look = look.slice(); cam.t = performance.now();
+  camera.position.set(pos[0],pos[1],pos[2]); camera.up.set(0,1,0);
+  camera.lookAt(look[0],look[1],look[2]);
+  return m4lookAt(cam.pos, cam.look, [0,1,0]);
+}
 function updateCamera(){
   const c = S.player;
-  // broadcast flyby: sweep the grid front-to-back during the pace lap intro
-  if(S.mode==='pace' && S.t < 6.5 && S.cars.length > 1){
+  // broadcast intro: a grandstand pass, then the grid sweep, during the
+  // opening of the pace lap
+  if(S.mode==='pace' && S.t < 9 && S.cars.length > 1){
+    if(S.t < 2.5){
+      // phase 1: infield dolly along the frontstretch, looking out at the
+      // main grandstand/flag stand so the venue reads before the grid sweep
+      const f = S.t/2.5;
+      const sC = TRACK.sFinish + 60 - f*110;
+      const pC = pos3(sC, -34); pC[1] += 12 - f*4;
+      const pL = pos3(TRACK.sFinish - f*30, WALL_LAT + 8); pL[1] += 7;
+      return setHardCam(pC, pL);
+    }
+    // phase 2: the original grid sweep, front to back
     const lead = S.cars[0];
-    const f = S.t/6.5;
+    const f = (S.t - 2.5)/6.5;
     const sc = lead.s + 14 - f*(24 + S.cars.length*5.6);
     const pC = pos3(sc, 9.0); pC[1] += 2.4;
     const pL = pos3(sc - 7, 0); pL[1] += 1.0;
-    cam.pos = pC.slice(); cam.look = pL.slice(); cam.t = performance.now();
-    camera.position.set(cam.pos[0],cam.pos[1],cam.pos[2]); camera.up.set(0,1,0); camera.lookAt(cam.look[0],cam.look[1],cam.look[2]);
-    return m4lookAt(cam.pos, cam.look, [0,1,0]);
+    return setHardCam(pC, pL);
+  }
+  // pit-stop camera: locked front-quarter shot of the player's stall while
+  // being serviced (hard cut in/out — broadcast grammar)
+  if(S.player.pit === 2){
+    const sSt = pitStallS(S.player);
+    const pC = pos3(sSt + 6, -14); pC[1] += 2.3;
+    const pL = pos3(sSt, -10.5);  pL[1] += 0.7;
+    return setHardCam(pC, pL);
+  }
+  // caution TV-cut montage during the fast-forward window: hard cuts between
+  // static trackside pads near the pace car every ~1.4s — the sped-up motion
+  // reads as an intentional broadcast montage instead of a glitch. Drops out
+  // at one-to-go so the chase cam carries the restart at normal speed.
+  if(S.mode==='race' && S.flag==='yellow' && S.yellowT > 2.5 && !S.oneToGo){
+    const shotIdx = Math.floor(performance.now()/1400);
+    // anchor every shot to the middle of the forming queue so the field is
+    // always in frame (fixed trackside pads could be 250+ units from the
+    // action — cars became invisible dots)
+    let n = 0, sSum = 0, ref = PACE.s;
+    for(const o of S.cars){
+      if(o.out || o.done || o.pit!==0) continue;
+      let d = ((ref - o.s) % TRACK.total + TRACK.total) % TRACK.total;
+      sSum += d; n++;
+    }
+    const midS = ref - (n ? sSum/n : 40);
+    let pC, pL;
+    switch(shotIdx % 3){
+      case 0:   // wall-side "TV pad" abeam the pack
+        pC = pos3(midS + 35, WALL_LAT + 12); pC[1] += 6; break;
+      case 1:   // infield low angle
+        pC = pos3(midS - 25, -26); pC[1] += 3; break;
+      default:  // high aerial down the line
+        pC = pos3(midS + 10, -8); pC[1] += 40; break;
+    }
+    pL = pos3(midS, 0); pL[1] += 1.2;
+    return setHardCam(pC, pL);
   }
   // victory lane: slow orbit around the winner
   if(S.mode==='victory'){
@@ -2463,6 +2521,14 @@ function updateCamera(){
                    base[1]-fw[1]*dist+up[1]*hgt,
                    base[2]-fw[2]*dist+up[2]*hgt ];
   const tgtLook = [ base[0]+fw[0]*8, base[1]+fw[1]*8+0.9, base[2]+fw[2]*8 ];
+  // corner lookahead: bias the look point into the upcoming corner so the
+  // camera "reads the track" the way a broadcast chase does
+  {
+    const pAh = TRACK.pointAt(c.s + Math.max(20, c.v*0.7));
+    const lookLat = Math.max(-2.5, Math.min(2.5, pAh.curv*450));
+    tgtLook[0] += -Math.sin(pAh.hdg)*lookLat;
+    tgtLook[2] +=  Math.cos(pAh.hdg)*lookLat;
+  }
   if(!cam.pos){ cam.pos=tgtPos.slice(); cam.look=tgtLook.slice(); }
   const dtF = Math.min(0.05, (performance.now() - (cam.t||0))/1000); cam.t = performance.now();
   const k = 1-Math.exp(-dtF*11), k2 = 1-Math.exp(-dtF*22);
@@ -2578,7 +2644,15 @@ function drawGL(){
     applyEnvPreset(TRACK.stadium);
   }
   updateCamera();
-  camera.fov = 58 + Math.min(16, S.player ? S.player.v*0.16 : 0);
+  // speed + draft FOV zoom, smoothed so it breathes instead of tracking
+  // every per-tick speed wiggle. This is the ONLY camera.fov writer — the
+  // chase-cam code must not set fov too, or the later write wins silently.
+  {
+    const P0 = S.player;
+    const fovTgt = 58 + Math.min(14, P0 ? P0.v*0.14 : 0) + (P0 ? Math.min(1, P0.draftF||0)*4 : 0);
+    camFov += (fovTgt - camFov)*0.08;
+    camera.fov = camFov;
+  }
   camera.aspect = W/H;
   camera.updateProjectionMatrix();
 
@@ -2963,7 +3037,9 @@ function frame(ts){
     // which at 1x is another 40+ real seconds of nothing. Drop to 1x only
     // for the final approach (leader within 250 units of the line) so the
     // player still watches the actual restart build at normal speed.
-    let ffOK = S.mode==='race' && S.flag==='yellow' && S.yellowT > 2.5;
+    // (the player's own pit service also runs at 1x — it's their broadcast
+    // moment under the pit camera, and at 8x it was a sub-second blip)
+    let ffOK = S.mode==='race' && S.flag==='yellow' && S.yellowT > 2.5 && S.player.pit!==2;
     if(ffOK && S.oneToGo){
       const lead0 = S.order[0];
       const dl0 = lead0 ? (TRACK.sFinish - lead0.s + TRACK.total) % TRACK.total : 0;
