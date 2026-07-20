@@ -809,19 +809,22 @@ function collide(){
           hitter.dmg  = Math.min(1, hitter.dmg  + Math.min(0.08, cv2*0.003));
           victim2.dmg = Math.min(1, victim2.dmg + Math.min(0.05, cv2*0.002));
           hitter.dmgCd = 0.6; victim2.dmgCd = 0.6;
+          // hard contact can turn the slower car around (green-flag racing
+          // only, and not in the bunched-up window right after a restart).
+          // Gated behind the SAME per-incident cooldown as the damage above
+          // — this used to be its own independent check with no cooldown at
+          // all, so two cars rubbing side-by-side for several consecutive
+          // ticks re-rolled the spin chance every tick (50/sec) instead of
+          // once per contact, making any sustained pack contact an
+          // almost-guaranteed wreck within a fraction of a second.
+          if(cv2 > 9 && S.mode==='race' && S.flag==='green' && S.greenLockT<=0
+             && victim2.spinT<=0 && victim2.spinCd<=0 && rngR() < (cv2-9)*0.04 + 0.02){
+            victim2.spinT = 1.6 + rngR()*1.2;
+            victim2.spinDir = ny > 0 ? 1 : -1;
+            victim2.spinCd = 10;
+          }
         }
         hitter.hitFx = Math.min(1, (hitter.hitFx||0) + cv2*0.04);
-      }
-      // hard contact can turn the slower car around (green-flag racing only,
-      // and not in the bunched-up window right after a start/restart)
-      const closingV = Math.abs(a.v - b.v);
-      if(closingV > 9 && S.mode==='race' && S.flag==='green' && S.greenLockT<=0){
-        const victim = a.v > b.v ? b : a;
-        if(victim.spinT<=0 && victim.spinCd<=0 && rngR() < (closingV-9)*0.04 + 0.02){
-          victim.spinT = 1.6 + rngR()*1.2;
-          victim.spinDir = ny > 0 ? 1 : -1;
-          victim.spinCd = 10;
-        }
       }
     }
   }
@@ -1292,17 +1295,23 @@ function addStand(B, sStart, sEnd, tiers, opts){
       const hB = baseH + t*tierH, hT = hB + tierH;
       const riseH = hB + tierH*0.28;
       // riser (near-vertical, stepped) + seat (sloped) — 2 quads/tier for
-      // an actual tiered-seating silhouette instead of one flat ramp
+      // an actual tiered-seating silhouette instead of one flat ramp.
+      // Vertex order reversed (d,c,b,a instead of a,b,c,d): the "natural"
+      // s0->s1, low->high sweep faces +lat (outward, away from the track) —
+      // the same backface-culling bug found and fixed on the outer wall/
+      // fence above, inherited here since these quads follow the identical
+      // corner pattern. Invisible from the driver's own chase cam without
+      // this flip.
       const ra=crossPt(sa,latB,hB), rb=crossPt(sb,latB,hB);
       const rc=crossPt(sb,latB,riseH), rd=crossPt(sa,latB,riseH);
-      B.quad(ra,rb,rc,rd, mixC(palette[Math.floor(rng2()*palette.length)],[0,0,0],0.3));
+      B.quad(rd,rc,rb,ra, mixC(palette[Math.floor(rng2()*palette.length)],[0,0,0],0.3));
       const sA=crossPt(sa,latB,riseH), sB=crossPt(sb,latB,riseH);
       const sC=crossPt(sb,latT,hT), sD=crossPt(sa,latT,hT);
       if(t < 2){                                  // front tiers: crowd texture
-        B.quadUV(sA,sB,sC,sD,
-          [crowdUV[0],crowdUV[1]],[crowdUV[2],crowdUV[1]],[crowdUV[2],crowdUV[3]],[crowdUV[0],crowdUV[3]]);
+        B.quadUV(sD,sC,sB,sA,
+          [crowdUV[0],crowdUV[3]],[crowdUV[2],crowdUV[3]],[crowdUV[2],crowdUV[1]],[crowdUV[0],crowdUV[1]]);
       } else {                                    // upper tiers: flat swatch (fog hides banding)
-        B.quad(sA,sB,sC,sD, palette[Math.floor(rng2()*palette.length)]);
+        B.quad(sD,sC,sB,sA, palette[Math.floor(rng2()*palette.length)]);
       }
     }
     // (no stand-roof overhang quad here — it used to start from the exact
@@ -1468,13 +1477,21 @@ function buildWorld(){
     // shoulder pad from track edge to wall base
     B.quad(crossPt(s0,TRACK.halfW), crossPt(s0,WALL_LAT),
            crossPt(s1,WALL_LAT), crossPt(s1,TRACK.halfW), COL.apron);
-    // outer wall: diamond-pattern or sponsor-signage face (atlas-textured) + white cap
+    // outer wall: diamond-pattern or sponsor-signage face (atlas-textured) + white cap.
+    // Vertex order reversed from the "natural" s0->s1 sweep (w00,w01,w11,w10):
+    // that order's cross product faces +lat (outward, away from the track),
+    // so with backface culling on, the textured face was only ever visible
+    // from OUTSIDE the wall — invisible from the driver's own chase cam,
+    // which sits on the track looking outward at it. Confirmed by direct
+    // vertex inspection (geometry/heights were correct; only the winding was
+    // backward). Reversing the full vertex (and matching UV) order flips the
+    // normal to -lat, facing the racing surface.
     const w00=crossPt(s0,WALL_LAT), w01=crossPt(s1,WALL_LAT);
     const w10=crossPt(s0,WALL_LAT,WALL_H), w11=crossPt(s1,WALL_LAT,WALL_H);
     const spI = spBlocks[Math.floor(i/SP_BLOCK)];
     const faceUV = spI>=0 ? atlasSponsorUV(spI) : wallUV;
-    B.quadUV(w00,w01,w11,w10,
-      [faceUV[0],faceUV[3]],[faceUV[2],faceUV[3]],[faceUV[2],faceUV[1]],[faceUV[0],faceUV[1]]);
+    B.quadUV(w10,w11,w01,w00,
+      [faceUV[0],faceUV[1]],[faceUV[2],faceUV[1]],[faceUV[2],faceUV[3]],[faceUV[0],faceUV[3]]);
     // (no separate wall-cap shelf / outward "curtain" quad here — they used
     // to add a thin 0.4-unit lip at lat=WALL_LAT+0.4, height=WALL_H, which is
     // the EXACT same edge the catch-fence quad below starts from. Three
@@ -1490,10 +1507,11 @@ function buildWorld(){
     // catch fence band above the wall cap — solid textured crosshatch, not
     // real geometry (the shader discards texture alpha so true see-through
     // holes aren't possible; a light crosshatch band reads as fencing instead)
+    // same reversed winding as the wall face above, for the same reason
     const fc0=crossPt(s0,WALL_LAT+0.4,WALL_H), fc1=crossPt(s1,WALL_LAT+0.4,WALL_H);
     const fc2=crossPt(s1,WALL_LAT+0.4,WALL_H+FENCE_H), fc3=crossPt(s0,WALL_LAT+0.4,WALL_H+FENCE_H);
-    B.quadUV(fc0,fc1,fc2,fc3,
-      [fenceUV[0],fenceUV[3]],[fenceUV[2],fenceUV[3]],[fenceUV[2],fenceUV[1]],[fenceUV[0],fenceUV[1]]);
+    B.quadUV(fc3,fc2,fc1,fc0,
+      [fenceUV[0],fenceUV[1]],[fenceUV[2],fenceUV[1]],[fenceUV[2],fenceUV[3]],[fenceUV[0],fenceUV[3]]);
   }
   // start/finish checkers across the track
   {
@@ -1559,9 +1577,11 @@ function buildWorld(){
       const steps2 = 12, sA0 = seg0.s0+seg0.len*0.35, sA1 = seg0.s0+seg0.len*0.65;
       for(let i2=0;i2<steps2;i2++){
         const sa = sA0 + (sA1-sA0)*i2/steps2, sb = sA0 + (sA1-sA0)*(i2+1)/steps2;
-        // dark-glass suite body
-        B.quad(crossPt(sa, topLat+0.8, topH+0.6), crossPt(sb, topLat+0.8, topH+0.6),
-               crossPt(sb, topLat+0.8, topH+3.0), crossPt(sa, topLat+0.8, topH+3.0), COL.glassC);
+        // dark-glass suite body — reversed winding (same wall/riser pattern
+        // fixed above: the natural s0->s1, low->high order faces +lat,
+        // outward, invisible from the track)
+        B.quad(crossPt(sa, topLat+0.8, topH+3.0), crossPt(sb, topLat+0.8, topH+3.0),
+               crossPt(sb, topLat+0.8, topH+0.6), crossPt(sa, topLat+0.8, topH+0.6), COL.glassC);
         // white roof cap (top face)
         B.quad(crossPt(sa, topLat+0.8, topH+3.0), crossPt(sb, topLat+0.8, topH+3.0),
                crossPt(sb, topLat+3.6, topH+3.1), crossPt(sa, topLat+3.6, topH+3.1), COL.wallWh);
@@ -1703,8 +1723,14 @@ const CAR_ST = [
   [-1.40, 0.95, 1.055,0.205,1.055],  // rear axle — quarter-panel bulge, belt/roof rejoin
   [-1.75, 0.92, 1.02, 0.205,1.02 ],  // deck start (flatter, taller deck per era proportions)
   [-2.10, 0.885,0.99, 0.19, 0.99 ],
-  [-2.34, 0.845,0.955,0.17, 0.955],
-  [-2.51, 0.76, 0.92, 0.15, 0.92 ]   // tail (spoiler base)
+  [-2.34, 0.845,0.955,0.32, 0.955],
+  [-2.51, 0.76, 0.92, 0.50, 0.92 ]   // tail (spoiler base) — yL raised well above the
+  // earlier 0.15/0.17: the tail cap fan's single apex sits at (beltY+yL)/2, so a low
+  // yL put that apex ~0.4 units above the ring's bottom corners, and every fan rib
+  // down to those corners read as a sharp inverted-V/pontoon-hull line dead-on from
+  // behind. Raising yL here (tapered over the last two stations, not a sudden jump)
+  // shortens that drop so the tail's underside reads as a flatter valance kick-up
+  // instead of a boat-hull point.
 ];
 /* ring cross-section fractions: [heightFrac, widthFrac] bottom-right→top→bottom-left */
 const RINGF = [
