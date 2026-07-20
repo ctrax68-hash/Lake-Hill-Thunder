@@ -1755,7 +1755,7 @@ function ringPts(st){
 /* swatch texels for geometry parts */
 const SW = { tire:[0.955,0.06], rim:[0.955,0.16], chrome:[0.955,0.26],
              dark:[0.955,0.36], amber:[0.955,0.46], shadow:[0.955,0.56],
-             body:[0.955,0.66] };
+             body:[0.955,0.66], exh:[0.955,0.76] };
 
 // Shared (non-textured) car materials — identical for every car, so built
 // once. Body paint and glass need a per-car livery THREE.CanvasTexture, so
@@ -1768,9 +1768,14 @@ function carSharedMats(){
     CAR_MAT_AMBER = new THREE.MeshStandardMaterial({ color:0xffb020, emissive:0xffb020, emissiveIntensity:1.2 });
   }
 }
-function buildCarMesh(num, pace){
+function buildCarMesh(num, pace, lod, sharedMats){
   const pos=[], nrm=[], uv=[];
-  const rings = CAR_ST.map(ringPts);
+  // LOD mesh: half the loft stations (always keeping the last, so the tail
+  // cap still lands on the real end station) and no wheel geometry — used
+  // past ~130 units where neither is resolvable, saving ~60-70% of a car's
+  // triangles. Same carU()/UVs, so the one livery texture still fits both.
+  const ST = lod ? CAR_ST.filter((_,i)=>i%2===0 || i===CAR_ST.length-1) : CAR_ST;
+  const rings = ST.map(ringPts);
   // smooth per-vertex normals from surface tangents
   const NRM = rings.map((r,i)=> r.map((p,k)=>{
     const rp = rings[Math.min(rings.length-1,i+1)][k], rm = rings[Math.max(0,i-1)][k];
@@ -1778,7 +1783,7 @@ function buildCarMesh(num, pace){
     const tL = [rp[0]-rm[0], rp[1]-rm[1], rp[2]-rm[2]];      // along length
     const tR = [kp[0]-km[0], kp[1]-km[1], kp[2]-km[2]];      // around ring
     let n = v3norm(v3cross(tR, tL));
-    const mid = (CAR_ST[i][2]+CAR_ST[i][3])/2;
+    const mid = (ST[i][2]+ST[i][3])/2;
     if(n[1]*(p[1]-mid) + n[2]*p[2] < 0) n=[-n[0],-n[1],-n[2]];
     return n;
   }));
@@ -1795,7 +1800,7 @@ function buildCarMesh(num, pace){
   function quadS(i0,k0,i1,k1,i2,k2,i3,k3){                   // smooth loft quad
     const P=[[i0,k0],[i1,k1],[i2,k2],[i3,k3]];
     const tri=(a,b,c)=>{ for(const [i,k] of [a,b,c])
-      vert(rings[i][k], NRM[i][k], carU(CAR_ST[i][0]), carV(k)); };
+      vert(rings[i][k], NRM[i][k], carU(ST[i][0]), carV(k)); };
     tri(P[0],P[1],P[2]); tri(P[0],P[2],P[3]);
   }
   // main loft, split into two passes (body k-bands, then glass k-bands)
@@ -1817,7 +1822,7 @@ function buildCarMesh(num, pace){
   endGroup('tire');
   // nose / tail cap fans → painted islands (body paint)
   function cap(i, cx2, fwd, isl){
-    const r = rings[i], mid=(CAR_ST[i][2]+CAR_ST[i][3])/2;
+    const r = rings[i], mid=(ST[i][2]+ST[i][3])/2;
     for(let k=0;k<NK-1;k++){
       const a=r[k], b=r[k+1];
       // winding reversed vs. the assigned (fwd,0,0) normal below (culled from
@@ -1841,9 +1846,12 @@ function buildCarMesh(num, pace){
     const u=v3sub(b,a), v=v3sub(c,a), n=v3norm(v3cross(u,v));
     for(const p of [a,b,c, a,c,d]){ pos.push(p[0],p[1],p[2]); nrm.push(n[0],n[1],n[2]); uv.push(sw[0],sw[1]); }
   }
-  // shadow
-  q([-2.7,0.02,-1.15],[ 2.7,0.02,-1.15],[ 2.7,0.02, 1.15],[-2.7,0.02, 1.15], SW.shadow);
-  endGroup('tire');
+  // shadow (skipped at LOD distance — a flat ground quad isn't resolvable
+  // past ~130 units and isn't part of the car's own silhouette)
+  if(!lod){
+    q([-2.7,0.02,-1.15],[ 2.7,0.02,-1.15],[ 2.7,0.02, 1.15],[-2.7,0.02, 1.15], SW.shadow);
+    endGroup('tire');
+  }
   // spoiler (60 in angled blade) — the body loft is a rounded tube, not a flat
   // decklid, so a full-width blade at fixed height would float clear of the
   // quarter panels; narrow it to where the deck is actually near peak height,
@@ -1863,6 +1871,30 @@ function buildCarMesh(num, pace){
       q([x0-0.05,deckY,rz+0.05],[x0-0.05,deckY,rz-0.05],[x0-0.05,y0,rz-0.05],[x0-0.05,y0,rz+0.05], SW.dark);
     }
     endGroup('tire');
+  }
+  // right-side dual exhaust (LOD0 only — not resolvable at LOD distance):
+  // two half-cylinder pipe stubs ahead of the rear axle, poking out past the
+  // rocker on the right side (the window-net side is the left, per the v<0.5
+  // = right-door convention used throughout this file). Grouped under 'body'
+  // (not 'chrome') and sampling a new SW.exh swatch so they pick up a flat
+  // dark-steel paint from the livery texture instead of CAR_MAT_CHROME's
+  // mirror finish — real headers read as gunmetal, not polished chrome.
+  if(!lod){
+    function exhaustPipe(z0){
+      const y0=0.26, r=0.055, segs=6, x0=-0.55, x1=-1.15;
+      for(let k=0;k<segs;k++){
+        const a0=-Math.PI/2 + k/segs*Math.PI, a1=-Math.PI/2 + (k+1)/segs*Math.PI;
+        const c0=Math.cos(a0), s0=Math.sin(a0), c1=Math.cos(a1), s1=Math.sin(a1);
+        const p0a=[x0, y0+s0*r, z0+c0*r], p1a=[x0, y0+s1*r, z0+c1*r];
+        const p0b=[x1, y0+s0*r, z0+c0*r], p1b=[x1, y0+s1*r, z0+c1*r];
+        const nm=[0, Math.sin((a0+a1)/2), Math.cos((a0+a1)/2)];
+        for(const p of [p0a,p0b,p1b, p0a,p1b,p1a]){
+          pos.push(p[0],p[1],p[2]); nrm.push(nm[0],nm[1],nm[2]); uv.push(SW.exh[0],SW.exh[1]);
+        }
+      }
+    }
+    exhaustPipe(0.74); exhaustPipe(0.90);
+    endGroup('body');
   }
   if(pace){
     q([-0.45,1.29,-0.34],[0.05,1.29,-0.34],[0.05,1.29,0.34],[-0.45,1.29,0.34], SW.amber);
@@ -1911,16 +1943,28 @@ function buildCarMesh(num, pace){
       if(sgn>0) push([[cxp,wR,zo+0.008],h0,h1],SW.chrome); else push([[cxp,wR,zo-0.008],h1,h0],SW.chrome);
     }
   }
-  wheelTire(1.395,1); wheelTire(1.395,-1); wheelTire(-1.395,1); wheelTire(-1.395,-1);
-  endGroup('tire');
-  wheelMetal(1.395,1); wheelMetal(1.395,-1); wheelMetal(-1.395,1); wheelMetal(-1.395,-1);
-  endGroup('chrome');
+  // wheels are skipped entirely at LOD distance — not resolvable past ~130
+  // units and the single biggest chunk of a full car's triangle budget
+  // (4 wheels x 30 segments x (tire + rim + hub) geometry).
+  if(!lod){
+    wheelTire(1.395,1); wheelTire(1.395,-1); wheelTire(-1.395,1); wheelTire(-1.395,-1);
+    endGroup('tire');
+    wheelMetal(1.395,1); wheelMetal(1.395,-1); wheelMetal(-1.395,1); wheelMetal(-1.395,-1);
+    endGroup('chrome');
+  }
 
   carSharedMats();
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  // LOD levels for the same car share one body/glass material instance (and
+  // therefore one livery texture upload) — passed in by ensureCarMesh() once
+  // both meshes exist, instead of each level building its own materials.
+  if(sharedMats){
+    for(const g of groups) geo.addGroup(g.start, g.count, g.mat);
+    return new THREE.Mesh(geo, sharedMats);
+  }
   const bodyMat = new THREE.MeshPhysicalMaterial({ clearcoat:1.0, clearcoatRoughness:0.1, metalness:0.35, roughness:0.45 });
   // No `transmission` here (the plan's original spec) — Three.js implements
   // transmission by rendering the opaque scene into an offscreen buffer as a
@@ -2103,6 +2147,12 @@ function paintLivery(c2, body, accent, num, pace, idx){
     c2.beginPath(); c2.ellipse(u(carU(-1.395))+u(0.035), v(vy), u(0.05), u(0.035), 0, 0, Math.PI*2); c2.fill();
   }
   c2.restore();
+  // exhaust soot smudge — right side only (v<0.5), trailing aft of the pipe
+  // exit (pipes span carU(-0.55)..carU(-1.15) ≈ u 0.48-0.57), just ahead of
+  // the rear-wheel-arch smudge above so the two don't overlap
+  c2.save(); c2.globalAlpha=0.30; c2.fillStyle='rgb(8,8,9)';
+  c2.beginPath(); c2.ellipse(u(0.615), v(0.058), u(0.055), u(0.028), 0, 0, Math.PI*2); c2.fill();
+  c2.restore();
   // ---- glass ----
   const uWS0=u(carU(0.68)), uWS1=u(carU(0.02));
   const uSG0=u(carU(0.30)), uSG1=u(carU(-0.95));
@@ -2156,6 +2206,16 @@ function paintLivery(c2, body, accent, num, pace, idx){
     drawNum(c2, num, u(carU(-0.10)), v(0.235), v(0.105), white, dark, Math.PI, false, false);
     // left door (v>0.5): upright
     drawNum(c2, num, u(carU(-0.10)), v(0.765), v(0.105), white, dark, 0, false, false);
+    // series bar: thin sanctioning-body decal above each door number, between
+    // the number and the side-glass band on both sides (era-correct touch)
+    {
+      const barW = 0.14;
+      c2.fillStyle='rgb(247,212,0)';
+      c2.fillRect(u(carU(-0.10)-barW/2), v(0.300), u(barW), v(0.018));
+      drawWord(c2, 'LHT CUP', u(carU(-0.10)), v(0.309), v(0.010), 'rgb(10,10,12)', Math.PI, false, u(barW*0.9));
+      c2.fillRect(u(carU(-0.10)-barW/2), v(0.682), u(barW), v(0.018));
+      drawWord(c2, 'LHT CUP', u(carU(-0.10)), v(0.691), v(0.010), 'rgb(10,10,12)', 0, false, u(barW*0.9));
+    }
     // ---- sponsor wordmarks (fictional, 3x5 pixel font) ----
     const short = SPONSORS[(idx||0) % SPONSORS.length].split(' ')[0];
     const lumA = accent[0]*0.5+accent[1]*0.4+accent[2]*0.1;
@@ -2178,24 +2238,72 @@ function paintLivery(c2, body, accent, num, pace, idx){
         c2.fillRect(dx2+1, dy2+1, 10, 10);
       }
     }
+    // hood pins: 4 tiny silver circles marking the hood's forward/aft corners
+    c2.fillStyle='rgb(200,200,205)';
+    for(const hx of [1.30, 1.05]) for(const hv of [0.465, 0.535]){
+      c2.beginPath(); c2.arc(u(carU(hx)), v(hv), u(0.008), 0, Math.PI*2); c2.fill();
+    }
+    // fuel-filler ring: left rear quarter only (real fuel cell fillers sit
+    // here, between the rear glass and the sponsor wordmark below it)
+    c2.fillStyle='rgb(20,20,22)';
+    c2.beginPath(); c2.arc(u(carU(-2.15)), v(0.615), u(0.018), 0, Math.PI*2); c2.fill();
+    c2.strokeStyle='rgb(150,150,155)'; c2.lineWidth=2; c2.stroke();
   }
-  // ---- nose island: the cap fan only samples v ≈ NI[1]±0.04, u ≈ NI[0]±0.065 ----
-  const NI=[0.845,0.24];
+  // ---- nose/tail masks: 3 manufacturer-style looks, picked by idx%3 so the
+  // field reads as more than one make instead of every car sharing the same
+  // headlight/taillight graphic. Cap fan UV windows unchanged (NI/TI ± the
+  // same margins as the original single style, now "style 0").
+  const NI=[0.845,0.24], TI=[0.845,0.74];
+  const maskStyle = (idx||0) % 3;
   c2.fillStyle=rgb(body,0.96); c2.fillRect(u(NI[0]-0.07), v(NI[1]-0.06), u(0.14), v(0.12));
   if(!pace){ c2.fillStyle=rgb(accent);
     c2.fillRect(u(NI[0]-0.068), v(NI[1]-0.040), u(0.136), v(0.016)); }  // upper accent stripe
-  c2.fillStyle='rgb(232,232,225)';
-  c2.fillRect(u(NI[0]-0.052), v(NI[1]-0.018), u(0.038), v(0.036));   // headlight L decal
-  c2.fillRect(u(NI[0]+0.014), v(NI[1]-0.018), u(0.038), v(0.036));   // headlight R decal
-  c2.fillStyle='rgb(10,10,12)';
-  c2.fillRect(u(NI[0]-0.058), v(NI[1]+0.026), u(0.116), v(0.013));   // grille slot (low = +v)
-  // ---- tail island: cap fan samples v ≈ TI[1]±0.103 ----
-  const TI=[0.845,0.74];
+  if(maskStyle===0){
+    // wide dark grille mouth + rectangular headlight stickers (the original look)
+    c2.fillStyle='rgb(232,232,225)';
+    c2.fillRect(u(NI[0]-0.052), v(NI[1]-0.018), u(0.038), v(0.036));   // headlight L decal
+    c2.fillRect(u(NI[0]+0.014), v(NI[1]-0.018), u(0.038), v(0.036));   // headlight R decal
+    c2.fillStyle='rgb(10,10,12)';
+    c2.fillRect(u(NI[0]-0.058), v(NI[1]+0.026), u(0.116), v(0.013));   // grille slot (low = +v)
+  } else if(maskStyle===1){
+    // full-width narrow headlight band split by a body-color center bar
+    c2.fillStyle='rgb(232,232,225)';
+    c2.fillRect(u(NI[0]-0.062), v(NI[1]-0.014), u(0.124), v(0.026));
+    c2.fillStyle=rgb(body,0.96);
+    c2.fillRect(u(NI[0]-0.006), v(NI[1]-0.014), u(0.012), v(0.026));   // center bar splits the band
+    c2.fillStyle='rgb(10,10,12)';
+    c2.fillRect(u(NI[0]-0.050), v(NI[1]+0.022), u(0.100), v(0.011));   // narrow grille slot
+  } else {
+    // four round headlight stickers + small oval mouth
+    c2.fillStyle='rgb(232,232,225)';
+    for(const dx3 of [-0.050,-0.020,0.020,0.050]){
+      c2.beginPath(); c2.arc(u(NI[0]+dx3), v(NI[1]-0.002), u(0.013), 0, Math.PI*2); c2.fill();
+    }
+    c2.fillStyle='rgb(10,10,12)';
+    c2.beginPath(); c2.ellipse(u(NI[0]), v(NI[1]+0.030), u(0.044), v(0.011), 0, 0, Math.PI*2); c2.fill();
+  }
   c2.fillStyle=rgb(body,0.9); c2.fillRect(u(TI[0]-0.07), v(TI[1]-0.12), u(0.14), v(0.24));
-  c2.fillStyle='rgb(120,14,12)';
-  c2.fillRect(u(TI[0]-0.062), v(TI[1]-0.008), u(0.124), v(0.042));   // taillight decal band
-  c2.fillStyle='rgb(10,10,12)';
-  c2.fillRect(u(TI[0]-0.066), v(TI[1]+0.045), u(0.132), v(0.052));   // rear valance
+  if(maskStyle===0){
+    // single-width taillight band + full valance (the original look)
+    c2.fillStyle='rgb(120,14,12)';
+    c2.fillRect(u(TI[0]-0.062), v(TI[1]-0.008), u(0.124), v(0.042));   // taillight decal band
+    c2.fillStyle='rgb(10,10,12)';
+    c2.fillRect(u(TI[0]-0.066), v(TI[1]+0.045), u(0.132), v(0.052));   // rear valance
+  } else if(maskStyle===1){
+    // full-width single taillight strip, thinner and higher on the deck
+    c2.fillStyle='rgb(120,14,12)';
+    c2.fillRect(u(TI[0]-0.066), v(TI[1]-0.020), u(0.132), v(0.028));
+    c2.fillStyle='rgb(10,10,12)';
+    c2.fillRect(u(TI[0]-0.066), v(TI[1]+0.045), u(0.132), v(0.052));   // rear valance
+  } else {
+    // twin split taillight rectangles either side of a blacked-out center
+    c2.fillStyle='rgb(120,14,12)';
+    c2.fillRect(u(TI[0]-0.062), v(TI[1]-0.008), u(0.050), v(0.042));
+    c2.fillRect(u(TI[0]+0.012), v(TI[1]-0.008), u(0.050), v(0.042));
+    c2.fillStyle='rgb(10,10,12)';
+    c2.fillRect(u(TI[0]-0.012), v(TI[1]-0.008), u(0.024), v(0.042));   // center blackout
+    c2.fillRect(u(TI[0]-0.066), v(TI[1]+0.045), u(0.132), v(0.052));   // rear valance
+  }
   // small number decal above the taillight band, with a manufacturer-style
   // badge beneath it so the deck lid doesn't read as just an oversized number
   if(!pace){
@@ -2208,7 +2316,7 @@ function paintLivery(c2, body, accent, num, pace, idx){
   const swp=(sw,cl)=>{ c2.fillStyle=cl; c2.fillRect(u(sw[0]-0.035), v(sw[1]-0.045), u(0.07), v(0.09)); };
   swp(SW.tire,'rgb(14,14,15)'); swp(SW.rim,'rgb(52,52,56)'); swp(SW.chrome,'rgb(185,188,195)');
   swp(SW.dark,'rgb(18,18,21)'); swp(SW.amber,'rgb(245,160,20)'); swp(SW.shadow,'rgb(15,17,15)');
-  swp(SW.body, rgb(body,0.94));
+  swp(SW.body, rgb(body,0.94)); swp(SW.exh, 'rgb(60,62,66)');
 }
 function buildCarTexture(car, pace){
   const cv2 = document.createElement('canvas');
@@ -2738,9 +2846,24 @@ function applyEnvPreset(stadium){
 let placeholderLit = false;
 function ensureCarMesh(num, pace){
   if(!CARBUFS[num]){
-    const mesh = buildCarMesh(num, pace);
-    scene.add(mesh);
-    CARBUFS[num] = { mesh, tex:null, builtFor:null };
+    if(pace){
+      // pace car is always shown near the camera (pit lane / pace laps) —
+      // full detail only, no LOD switch needed.
+      const mesh = buildCarMesh(num, pace);
+      scene.add(mesh);
+      CARBUFS[num] = { mesh, materials: mesh.material, tex:null, builtFor:null };
+    } else {
+      const full = buildCarMesh(num, false, false);
+      const materials = full.material;                 // shared by both levels
+      const low = buildCarMesh(num, false, true, materials);
+      const lod = new THREE.LOD();
+      lod.addLevel(full, 0);
+      lod.addLevel(low, 130);
+      lod.autoUpdate = true;
+      lod.matrixAutoUpdate = false;      // drawGL() writes .matrix directly, same as every other car mesh
+      scene.add(lod);
+      CARBUFS[num] = { mesh: lod, materials, tex:null, builtFor:null };
+    }
   }
   return CARBUFS[num];
 }
@@ -2850,8 +2973,10 @@ function drawGL(){
     const cb = ensureCarMesh(c.num, false);
     if(!cb.tex){
       cb.tex = buildCarTexture(c);
-      cb.mesh.material[0].map = cb.tex; cb.mesh.material[1].map = cb.tex;
-      cb.mesh.material[0].needsUpdate = true; cb.mesh.material[1].needsUpdate = true;
+      // cb.mesh is a THREE.LOD wrapper now (two levels, one shared material
+      // array) — the map goes on cb.materials, not cb.mesh.material.
+      cb.materials[0].map = cb.tex; cb.materials[1].map = cb.tex;
+      cb.materials[0].needsUpdate = true; cb.materials[1].needsUpdate = true;
     }
     cb.mesh.matrixAutoUpdate = false;
     cb.mesh.matrix.fromArray(carModelMat(c));
@@ -2863,8 +2988,8 @@ function drawGL(){
     pb.mesh.visible = true;
     if(!pb.tex){
       pb.tex = buildCarTexture(PACE, true);
-      pb.mesh.material[0].map = pb.tex; pb.mesh.material[1].map = pb.tex;
-      pb.mesh.material[0].needsUpdate = true; pb.mesh.material[1].needsUpdate = true;
+      pb.materials[0].map = pb.tex; pb.materials[1].map = pb.tex;
+      pb.materials[0].needsUpdate = true; pb.materials[1].needsUpdate = true;
     }
     pb.mesh.matrixAutoUpdate = false;
     pb.mesh.matrix.fromArray(carModelMat(PACE));
