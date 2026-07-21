@@ -302,8 +302,12 @@ let TRACK = buildTrack(TRACKS[0]);
 
 /* ---------- 3D surface model (render only; physics stays planar) ----------
    Banking raises the OUTSIDE (+lat) edge. Inside apron edge sits at h=0.  */
-const WALL_LAT = TRACK.halfW + 6.0;      // physics wall (unchanged)
+const WALL_LAT = TRACK.halfW + 6.0;      // physics wall (unchanged) -- also the wall MESH's rendered surface
 const APRON_IN = -(TRACK.halfW + 8.0);
+// the car's center must clamp short of WALL_LAT by its own half-width, or the
+// car's outer half renders inside the wall mesh on every contact
+const CAR_HALF_WID = 1.0;
+const WALL_CLAMP_LAT = WALL_LAT - CAR_HALF_WID;
 function surfH(s, lat){
   const b = TRACK.bankAt(s);
   const l = Math.max(APRON_IN, Math.min(WALL_LAT, lat));
@@ -745,13 +749,22 @@ function stepCar(c){
   c.x += Math.cos(c.vdir)*c.v*DT;
   c.y += Math.sin(c.vdir)*c.v*DT;
 
-  if(off > WALL_LAT){
+  if(off > WALL_CLAMP_LAT){
     const p2 = TRACK.project(c.x,c.y);
     const nx = -Math.sin(p2.hdg), ny = Math.cos(p2.hdg);
-    const excess = Math.abs(p2.lat) - WALL_LAT;
+    const excess = Math.abs(p2.lat) - WALL_CLAMP_LAT;
     c.x -= nx*Math.sign(p2.lat)*excess; c.y -= ny*Math.sign(p2.lat)*excess;
     const vLost = c.v*0.28;
-    c.v *= 0.72; c.hdg = p2.hdg + (c.hdg-p2.hdg)*0.3; c.vdir = c.hdg;
+    // softened per-tick correction: the old 0.72/0.3 pair reapplied in full
+    // every tick pinned against the wall, compounding to ~96% speed loss and
+    // a heading snap within a few tenths of a second ("crazy" instant stop).
+    // Sustained contact should still cost speed, just stretched out; and
+    // while the car is actively spinning (c.spinT>0) the spin mechanic
+    // already owns heading, so forcing it back to track heading every tick
+    // on top of that produced a visible heading teleport.
+    c.v *= 0.95;
+    if(c.spinT <= 0) c.hdg = p2.hdg + (c.hdg-p2.hdg)*0.9;
+    c.vdir = c.hdg;
     // no damage accrual under caution (same rationale as the collide() gate:
     // queue dynamics can nudge a computer-driven car wall-ward at low speed,
     // and grinding a car to a DNF while pacing is unacceptable — the impact
