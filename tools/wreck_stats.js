@@ -89,6 +89,7 @@ const BRAIN = function () {
       const T = {
         cautions: 0, spinEvents: 0, spinEventsBlown: 0, spinEventsClean: 0,
         aiSpinEvents: 0, aiSpinEventsBlown: 0, aiSpinEventsClean: 0,
+        spinEventsUnderYellow: 0, blownSpinEventsUnderYellow: 0,
         wallHits: 0, finished: false,
       };
       let prevFlag = S.flag;
@@ -109,6 +110,10 @@ const BRAIN = function () {
             if (!c.isPlayer) {
               T.aiSpinEvents++;
               if (c.blown) T.aiSpinEventsBlown++; else T.aiSpinEventsClean++;
+            }
+            if (S.flag !== 'green') {
+              T.spinEventsUnderYellow++;
+              if (c.blown) T.blownSpinEventsUnderYellow++;
             }
           }
           wasSpinning.set(c, now);

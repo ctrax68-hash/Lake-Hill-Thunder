@@ -3576,12 +3576,26 @@ function tick(){
   if(S.mode==='race' || S.mode==='victory'){
     for(const c of S.cars){
       if(c.done || c.out || c.pit>0) continue;
-      // worn-out tire can let go
-      if(c.wear > 0.92 && c.spinT<=0 && c.v > 25 && rngR() < 0.0004){
-        c.spinT = 1.8; c.spinDir = rngR()<0.5?-1:1; c.spinCd = 10;
+      // worn-out tire can let go at any time (real, flag-agnostic) -- but the
+      // actual uncontrolled spin is gated to green-flag racing only, same
+      // gate the collide()-based spin roll uses (S.flag==='green' &&
+      // S.greenLockT<=0). Under yellow the whole field (including the
+      // player) is fully computer-driven, single-file, at 9-unit gaps -- a
+      // seized-steering spin there has nowhere to go but through the car
+      // behind. The event itself still fires under yellow: the existing
+      // grip penalty (muSurf *0.7 below) and forced crawl-to-30 clamp still
+      // make the car visibly limp, and the pit-strategy AI's wear reaction
+      // above is untouched. Re-trigger guard switched from c.spinT<=0 to
+      // !c.blown, since spinT is never set under yellow now -- the old
+      // guard would otherwise let this re-roll every tick indefinitely
+      // once a car is blown-but-not-spun.
+      if(c.wear > 0.92 && !c.blown && c.v > 25 && rngR() < 0.0004){
         c.blown = true;
         c.hitFx = 1;
         if(c.isPlayer) spotterSay('FLAT TIRE — PIT NOW!');
+        if(S.flag==='green' && S.greenLockT<=0){
+          c.spinT = 1.8; c.spinDir = rngR()<0.5?-1:1; c.spinCd = 10;
+        }
       }
       // terminal damage: pull off and park (DNF)
       if(c.dmg >= 1 && !c.out){
