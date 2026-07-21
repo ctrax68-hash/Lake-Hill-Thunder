@@ -681,12 +681,33 @@ function stepCar(c){
   } else {
     const vT = targetSpeed(c) * (c.done?0.55:1);
     const pHere = TRACK.pointAt(c.s);
-    let lane = Math.abs(pHere.curv)>1e-6 ? -2.2 : c.laneBias;
+    // restart lane hold: for a short window right after a caution restart,
+    // keep the just-ended single-file queue order instead of letting every
+    // car's target lane snap to the curve-following line (-2.2) and enter
+    // the blocker/pass logic in the same tick -- previously the WHOLE field
+    // (9-unit gaps, near-zero lateral spread) simultaneously qualified as
+    // "blocked" and independently swerved into a fresh pass lane on the
+    // exact tick green dropped, reading as an instant scramble/merge.
+    // Gated on c.cautionSlot>=0 so this never touches the original
+    // double-file gridStart() (those cars' cautionSlot stays at its -1
+    // default until an actual caution happens). Reuses S.greenLockT --
+    // already set to 20 the instant S.flag flips to 'green' on a restart
+    // and decremented only while green -- as the elapsed-time source
+    // instead of a second timer, and staggers each car's release by its
+    // own cautionSlot (0=leader..N=tail) so the field peels off front-to-
+    // back over ~2.5s rather than everyone swerving on one tick.
+    let restartHeld = false;
+    if(S.flag==='green' && S.greenLockT>0 && c.cautionSlot>=0){
+      const sinceGreen = 20 - S.greenLockT;
+      const releaseAt = 0.4 + c.cautionSlot*0.12;
+      restartHeld = sinceGreen < releaseAt;
+    }
+    let lane = restartHeld ? 0 : (Math.abs(pHere.curv)>1e-6 ? -2.2 : c.laneBias);
     let blocker = null, bd = 1e9;
     for(const o of S.cars){ if(o===c) continue;
       let ds = o.s - c.s; if(ds<-TRACK.total/2) ds+=TRACK.total; if(ds>TRACK.total/2) ds-=TRACK.total;
       if(ds>0 && ds<26 && Math.abs(o.lat-c.lat)<2.4 && ds<bd){ bd=ds; blocker=o; } }
-    if(blocker){
+    if(blocker && !restartHeld){
       if(c.passT<=0){
         let side = blocker.lat > 0.3 ? -1 : (blocker.lat < -0.3 ? 1 : (c.passSide || 1));
         // pass-lane gap widened from 3.4/±3.6 to 4.0/±4.4: the old gap put
@@ -707,7 +728,7 @@ function stepCar(c){
       }
       lane = Math.max(-4.4, Math.min(4.4, blocker.lat + c.passSide*4.0));
     }
-    if(c.passT>0){ c.passT -= DT; }
+    if(c.passT>0 && !restartHeld){ c.passT -= DT; }
     const LA = Math.max(12, c.v*0.62);
     const pT = TRACK.pointAt(c.s + LA);
     const tx = pT.x - Math.sin(pT.hdg)*lane, ty = pT.y + Math.cos(pT.hdg)*lane;
