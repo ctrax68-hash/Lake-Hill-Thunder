@@ -380,19 +380,24 @@ function makeCar(isPlayer, idx){
     // the old design had every AI car target the exact same -2.2 in every
     // corner, which is why the whole field was always converging onto one
     // line and needed a one-at-a-time pass to get by anybody, on every lap,
-    // not just at restarts. Tiers are spaced 6 apart with +-0.5 jitter, so
-    // the worst-case gap between adjacent tiers is 5 -- this has to clear
-    // collide()'s min=3.6 EUCLIDEAN contact radius (1 lat unit == 1 world
-    // unit, since lane offsets are applied as an exact perpendicular
-    // projection), not just the 2.4 blocker-detection threshold used below.
-    // An earlier version spaced tiers only 3.8 apart against the 2.4
-    // threshold, which left a worst-case gap of 2.6 -- comfortably UNDER
-    // 3.6, so cars in adjacent grooves were in constant collide() contact
-    // just from running side by side, not from any real blocking. That
-    // organically multiplied caution frequency enough to make Big Sable
-    // (the longest track, so also the slowest to recover from any one
-    // caution) fail to finish inside a normal race length.
-    grooveBias: isPlayer?0: [-5, 1, 7][idx%3] + (rng()*2-1)*0.5,
+    // not just at restarts. Tiers are spaced 5 apart with +-0.3 jitter, so
+    // the worst-case gap between adjacent tiers is 4.4 -- clears collide()'s
+    // min=3.6 EUCLIDEAN contact radius (1 lat unit == 1 world unit, since
+    // lane offsets are applied as an exact perpendicular projection) with a
+    // modest margin, not just the 2.4 blocker-detection threshold used
+    // below. An earlier version spaced tiers 3.8 apart, leaving a
+    // worst-case gap of only 2.6 -- comfortably UNDER 3.6, so cars in
+    // adjacent grooves were in constant collide() contact just from running
+    // side by side, not from any real blocking. A later version widened
+    // tiers to 6 apart to fix that, but the resulting ~12-unit-wide spread
+    // read as an unrealistically wide 3-wide fan-out, especially right off
+    // a restart. 5 apart keeps the same collision-safety property (see
+    // updateAero()'s widened draft threshold, which now also covers this
+    // spacing so adjacent grooves draft each other as one connected pack
+    // instead of three disconnected single-file lanes) while looking like
+    // a normal high/middle/low racing groove rather than three separate
+    // lanes strung across the whole track width.
+    grooveBias: isPlayer?0: [-4, 1, 6][idx%3] + (rng()*2-1)*0.3,
     passSide: 0, passT: 0,
     lapStartT:0, lastLapT:0, bestLapT:0,
     pitch:0,
@@ -511,7 +516,16 @@ function updateAero(){
     for(const o of S.cars){
       if(o===c) continue;
       let ds = o.s - c.s; if(ds < -TRACK.total/2) ds += TRACK.total; if(ds > TRACK.total/2) ds -= TRACK.total;
-      if(ds > 1 && ds < 34 && Math.abs(o.lat - c.lat) < 2.6){
+      // widened from 2.6 to 6.0: 2.6 predates the multi-groove AI (grooveBias
+      // in makeCar()), which spreads the field across 3 lanes 5 apart -- at
+      // the old threshold, only cars in the exact same groove ever drafted
+      // each other, so the 20-car field behaved as three small, disconnected
+      // single-lane packs instead of one connected draft pack running 2-3
+      // wide. 6.0 comfortably spans adjacent-tier spacing (up to ~5.6 worst
+      // case with jitter) so a car in the next lane over still gets draft
+      // benefit -- real pack racing drafts across adjacent lanes, not just
+      // directly nose-to-tail in one exact line.
+      if(ds > 1 && ds < 34 && Math.abs(o.lat - c.lat) < 6.0){
         let f;
         if(ds < 9) f = 1.0; else f = Math.max(0, 1 - (ds-9)/25);
         c.draftF = Math.max(c.draftF, f);
@@ -726,18 +740,32 @@ function stepCar(c){
     // instead of a second timer, and staggers each car's release by its
     // own cautionSlot (0=leader..N=tail) so the field peels off front-to-
     // back over ~2.5s rather than everyone swerving on one tick.
-    let restartHeld = false;
+    let restartHeld = false, laneEase = 1;
     if(S.flag==='green' && S.greenLockT>0 && c.cautionSlot>=0){
       const sinceGreen = 20 - S.greenLockT;
       const releaseAt = 0.4 + c.cautionSlot*0.12;
-      restartHeld = sinceGreen < releaseAt;
+      const heldT = sinceGreen - releaseAt;
+      // hard hold until this car's own staggered release point, exactly as
+      // before; past that, EASE the lane target from 0 up to the full
+      // groove over 4s instead of an instant snap. A binary snap (0 ->
+      // grooveBias in one tick) made every just-released car visibly leap
+      // straight out to its full high/middle/low lane the moment its hold
+      // lifted -- reading as an abrupt, unrealistically wide fan-out right
+      // off the restart instead of cars gradually finding their lines.
+      // Passing stays suppressed for the same 4s (restartHeld covers both
+      // phases below) since a mid-fan-out car is still close in lat to
+      // whoever's near it -- letting the blocker/pass logic fire mid-ease
+      // was producing spurious swerves back toward a shared lane, which is
+      // what read as cars "merging into one lane" right as they hit turn 1.
+      restartHeld = heldT < 4.0;
+      laneEase = Math.max(0, Math.min(1, heldT/4.0));
     }
     // groove-based lane target (both corners and straights) instead of the
     // old blanket -2.2-in-corners/laneBias-on-straights split -- see
     // grooveBias's definition in makeCar() for why: every car wanting the
     // identical corner line was the root cause of constant merging, not
     // just a restart-specific issue.
-    let lane = restartHeld ? 0 : c.grooveBias;
+    let lane = c.grooveBias * laneEase;
     let blocker = null, bd = 1e9;
     for(const o of S.cars){ if(o===c) continue;
       let ds = o.s - c.s; if(ds<-TRACK.total/2) ds+=TRACK.total; if(ds>TRACK.total/2) ds-=TRACK.total;
@@ -745,21 +773,15 @@ function stepCar(c){
     if(blocker && !restartHeld){
       if(c.passT<=0){
         let side = blocker.lat > 0.3 ? -1 : (blocker.lat < -0.3 ? 1 : (c.passSide || 1));
-        // pass-lane swerve widened from 4.0/±4.4 to 6.0/±7: a blocker is by
-        // definition in ~the same groove (blocker-detection requires
-        // |lat diff|<2.4), so the old +-4.0 swerve landed a passing car in
-        // the gap BETWEEN groove tiers (spaced 6 apart) rather than reaching
-        // the next tier over -- well within collide()'s 3.6-unit contact
-        // radius of whichever neighboring tier it crossed toward, since the
-        // gap between tiers isn't wide enough to fit a 3.6-clear "between"
-        // lane at only 6 apart. Swerving a full 6 (matching groove spacing)
-        // instead moves the passing car onto the ACTUAL neighboring tier's
-        // line, where it's simply running alongside whoever's already
-        // legitimately there (normal same-tier following), not straddling
-        // two tiers' collision radii at once. Clamp +-7 keeps the inner
-        // side off the grass boundary at 6.4 and the outer side well inside
-        // the WALL_LAT=12 physics wall.
-        const tryLat = Math.max(-7, Math.min(7, blocker.lat + side*6.0));
+        // pass-lane swerve matches the 5-unit groove spacing (see grooveBias
+        // in makeCar()): a blocker is by definition in ~the same groove
+        // (blocker-detection requires |lat diff|<2.4), so the swerve needs
+        // to reach the ACTUAL neighboring tier rather than stall in the gap
+        // between tiers, which would be well within collide()'s 3.6-unit
+        // contact radius of whichever tier it's crossing toward. Clamp +-6
+        // keeps the inner side off the grass boundary at 6.4 and the outer
+        // side well inside the WALL_LAT=12 physics wall.
+        const tryLat = Math.max(-6, Math.min(6, blocker.lat + side*5.0));
         const laneTaken = S.cars.some(o=>{
           if(o===c || o===blocker) return false;
           let ds2 = o.s - c.s; if(ds2<-TRACK.total/2) ds2+=TRACK.total; if(ds2>TRACK.total/2) ds2-=TRACK.total;
@@ -767,7 +789,7 @@ function stepCar(c){
         });
         c.passSide = laneTaken ? -side : side; c.passT = 2.5;
       }
-      lane = Math.max(-7, Math.min(7, blocker.lat + c.passSide*6.0));
+      lane = Math.max(-6, Math.min(6, blocker.lat + c.passSide*5.0));
     }
     if(c.passT>0 && !restartHeld){ c.passT -= DT; }
     const LA = Math.max(12, c.v*0.62);
@@ -946,23 +968,24 @@ function collide(){
           // widened pass lane above: even if a stray extra sub-3.6 contact
           // still slips through during one 2.5s pass attempt, at most one
           // spin roll can happen per attempt instead of one per incident.
-          if(cv2 > 9 && S.mode==='race' && S.flag==='green' && S.greenLockT<=0
+          if(cv2 > 11 && S.mode==='race' && S.flag==='green' && S.greenLockT<=0
              && victim2.spinT<=0 && victim2.spinCd<=0 && (victim2.spinRollCd||0)<=0){
             victim2.spinRollCd = 2.6;
-            // base probability roughly halved from the previous (cv2-9)*0.04+0.02:
-            // GWC verification (below) surfaced that even after the incident-
-            // multiplication fix above, the organic rate over a 20-car field
-            // was still high enough that its 3-attempt safety-valve cap was
-            // binding almost every time in testing -- i.e. the race routinely
-            // still ended under yellow, the exact thing GWC exists to prevent.
-            // Scaled down further rather than reopening the incident-
-            // multiplication fix, which is verified working correctly on its
-            // own terms (roll attempts properly capped to ~1 per pass).
+            // gate raised from cv2>9 to cv2>11, and base probability halved
+            // again from (cv2-9)*0.02+0.01: real pack/draft racing (see the
+            // widened draft threshold above) means cars are now in sub-3.6
+            // contact range far more often just from running close together
+            // in a pack, not from any real racing incident -- at the old
+            // gate/rate that read as constant, unrealistically frequent
+            // wrecking. Requiring a genuinely harder closing-speed
+            // differential before a spin can even be rolled, at half the
+            // previous odds, keeps wrecks a real but occasional consequence
+            // of a hard racing incident instead of routine pack contact.
             //
             // trackWreckScale (see collide()'s own comment above): normalizes
             // for track length so a longer lap doesn't mean proportionally
             // more chances for an incident to interrupt it.
-            if(rngR() < ((cv2-9)*0.02 + 0.01)*trackWreckScale){
+            if(rngR() < ((cv2-11)*0.01 + 0.005)*trackWreckScale){
               victim2.spinT = 1.6 + rngR()*1.2;
               victim2.spinDir = ny > 0 ? 1 : -1;
               victim2.spinCd = 10;
