@@ -1065,6 +1065,12 @@ try{
   renderer.toneMappingExposure = 1.0;
   gl = true;
 }catch(e){ renderer = null; gl = false; }
+// max anisotropic filtering the device supports — applied to the car livery
+// and world atlas textures below. Both are viewed constantly at shallow
+// grazing angles from the low chase cam (wall/fence/crowd/sponsor tiles
+// receding down a straight), which plain bilinear/mipmap filtering blurs
+// far more aggressively than a straight-on view would.
+const MAX_ANISO = gl ? renderer.capabilities.getMaxAnisotropy() : 1;
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(60, 1, 0.5, 1500);
 let worldMesh = null;
@@ -1139,7 +1145,11 @@ function updateCtlVars(){
   root.setProperty('--ctlPitGap', Math.round(8*UI.scale)+'px');
 }
 function resize(){
-  DPR = Math.min(2, window.devicePixelRatio||1);
+  // was capped at 2 — bumped to 2.5 (still bounded, not uncapped: composer/
+  // bloom cost scales close to quadratically with DPR, and most modern
+  // phones/tablets report 2-3x) since the growing amount of fine trackside
+  // detail (signage, crowd texture, decals) made the old cap read as blurry.
+  DPR = Math.min(2.5, window.devicePixelRatio||1);
   W = window.innerWidth; H = window.innerHeight;
   cv.style.width = W+'px'; cv.style.height = H+'px';
   hud.width = W*DPR; hud.height = H*DPR;
@@ -1696,7 +1706,9 @@ function addNumber(B, num, put, w, h, col){
    all painted into a per-car skin).
    198in x 75in x 51in, 110in wheelbase, 60in angled spoiler.
    ===================================================================== */
-const TX = 512;
+const TX = 768;   // was 512 — bumped for sharper livery detail (numbers, decals,
+                  // nose/tail masks, series bar) now sharing the one canvas;
+                  // paintLivery()'s u()/v() helpers are fully TX-relative
 /* loft stations: [x, halfWidth, beltY, yLow, roofY] — Gen-4 stock car silhouette:
    low wide nose, fender bulges over both axles (x=±1.395), pinched
    greenhouse, long raked windshield, fastback rear glass, long flat deck.
@@ -2254,14 +2266,19 @@ function paintLivery(c2, body, accent, num, pace, idx){
     // hood + deck: text runs laterally, tops toward the nose (read from ahead)
     drawWord(c2, short, u(carU(1.35)), v(0.50), v(0.016), wcol, -Math.PI/2, true, u(0.60));
     drawWord(c2, short, u(carU(-2.10)), v(0.50), v(0.012), wcol, -Math.PI/2, true, u(0.60));
-    // contingency decal rows on both front fenders (white-bordered chips)
+    // contingency decal rows on both front fenders (white-bordered chips).
+    // These were originally authored as absolute pixel offsets (14px pitch,
+    // 12x12/10x10 chips) rather than TX-relative fractions like the rest of
+    // this function — harmless at the original TX=512, but would shrink
+    // relative to the car as TX grows, so scale them explicitly.
+    const dsc = TX/512;
     const DEC=[[218,52,42],[238,198,44],[64,110,214],[240,240,240],[46,168,92],[236,120,30],[150,60,200],[40,180,190]];
     for(const vv of [0.105, 0.79]){
       for(let i=0;i<8;i++){
-        const dx2 = u(carU(2.05)) + (i%4)*14, dy2 = v(vv) + Math.floor(i/4)*14;
-        c2.fillStyle='rgb(240,240,240)'; c2.fillRect(dx2, dy2, 12, 12);
+        const dx2 = u(carU(2.05)) + (i%4)*14*dsc, dy2 = v(vv) + Math.floor(i/4)*14*dsc;
+        c2.fillStyle='rgb(240,240,240)'; c2.fillRect(dx2, dy2, 12*dsc, 12*dsc);
         c2.fillStyle='rgb('+DEC[i][0]+','+DEC[i][1]+','+DEC[i][2]+')';
-        c2.fillRect(dx2+1, dy2+1, 10, 10);
+        c2.fillRect(dx2+dsc, dy2+dsc, 10*dsc, 10*dsc);
       }
     }
     // hood pins: 4 tiny silver circles marking the hood's forward/aft corners
@@ -2359,6 +2376,7 @@ function buildCarTexture(car, pace){
   tex.minFilter = THREE.LinearMipmapLinearFilter;
   tex.magFilter = THREE.LinearFilter;
   tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.anisotropy = MAX_ANISO;
   tex.needsUpdate = true;
   return tex;
 }
@@ -2368,21 +2386,27 @@ function buildCarTexture(car, pace){
    buildCarTexture above), repeats via UV so wall/fence tiles need no
    per-slice re-paint. Pylon/jumbotron numeric content is real 3D geometry
    (addNumber/addDigitQuads) instead — no atlas space needed for those. ---- */
-const WX = 1024;
+const WX = 2048;   // was 1024 — doubled for sharper wall/fence/crowd/sponsor
+                   // detail at the grazing chase-cam angles those tiles are
+                   // almost always viewed at down a straight
 const ATLAS = {
-  wall:    {x:0,   y:0,   w:512,  h:256},
-  fence:   {x:512, y:0,   w:512,  h:256},
-  crowd:   {x:0,   y:256, w:512,  h:512},
-  sponsor: {x:0,   y:768, w:1024, h:256, count:8},
+  wall:    {x:0,    y:0,    w:1024, h:512},
+  fence:   {x:1024, y:0,    w:1024, h:512},
+  crowd:   {x:0,    y:512,  w:1024, h:1024},
+  sponsor: {x:0,    y:1536, w:2048, h:512, count:8},
   // pit-crew billboard figures — 3 figures side by side on a pit-concrete
   // background (the world shader has no alpha, so the quad blends into the
   // pit-box floor it stands on). Lives in the same otherwise-unused region
-  // right of the crowd tile as the white texel below.
-  crew:    {x:520, y:280, w:96,   h:64},
+  // right of the crowd tile as the white texel below. Kept at its original
+  // absolute pixel size when WX doubled (not scaled up with the other
+  // tiles): paintCrewTile()'s figures are drawn at hardcoded absolute pixel
+  // offsets, not w/h-relative, so doubling the tile without reworking that
+  // function would just shrink the figures relative to their tile.
+  crew:    {x:1040, y:530, w:96, h:64},
   // solid white texel for Builder's vertex-colored (non-atlas) triangles —
   // see the comment in Builder.prototype.tri. Sits in the region right of
-  // the crowd tile (x:512-1024, y:256-768), which nothing else uses.
-  white:   {x:1000, y:500, w:8,    h:8}
+  // the crowd tile (x:1024-2048, y:512-1536), which nothing else uses.
+  white:   {x:2000, y:1500, w:8, h:8}
 };
 function atlasUV(r){
   // Inset a few texels from each tile's edge so geometry UVs never sample
@@ -2394,7 +2418,7 @@ function atlasUV(r){
   // a grazing viewing angle a wall/fence quad's on-screen footprint can
   // shrink to a sliver dominated by that one corner texel, reading as a
   // crisp dark line right along the wall top.
-  const INSET = 10;
+  const INSET = 20;   // was 10 — doubled alongside WX so the inset consumes the same fraction of each tile
   return [(r.x+INSET)/WX, (r.y+INSET)/WX, (r.x+r.w-INSET)/WX, (r.y+r.h-INSET)/WX];
 }
 function atlasSponsorUV(i){
@@ -2465,8 +2489,8 @@ function paintSponsorTiles(c2, x0, y0, w, h, count){
     const tx = x0 + i*tw, light = (i%2===0);
     c2.fillStyle = light ? 'rgb(232,232,236)' : 'rgb(18,18,22)';
     c2.fillRect(tx, y0, tw, h);
-    c2.strokeStyle = 'rgb(10,10,12)'; c2.lineWidth = 4;
-    c2.strokeRect(tx+2, y0+2, tw-4, h-4);
+    c2.strokeStyle = 'rgb(10,10,12)'; c2.lineWidth = 8;   // was 4 — matches the doubled WX scale
+    c2.strokeRect(tx+4, y0+4, tw-8, h-8);
     drawWord(c2, SPONSORS[i % SPONSORS.length], tx+tw/2, y0+h/2, h*0.085,
              light ? 'rgb(18,18,22)' : 'rgb(232,232,236)', 0, false, tw*0.86);
   }
@@ -2489,10 +2513,10 @@ function paintWorldAtlas(){
   // wall/fence|crowd seam, and the crowd|sponsor seam) — done last, after
   // all regions are painted, so nothing overwrites it afterward.
   const gutter = (x,y,w,h) => { c2.save(); c2.beginPath(); c2.rect(x,y,w,h); c2.clip();
-    c2.filter = 'blur(3px)'; c2.drawImage(cv, 0, 0); c2.filter = 'none'; c2.restore(); };
-  gutter(ATLAS.wall.w-6, 0, 12, ATLAS.wall.h);                    // wall | fence vertical seam
-  gutter(0, ATLAS.wall.h-6, WX, 12);                              // wall/fence | crowd horizontal seam
-  gutter(0, ATLAS.sponsor.y-6, WX, 12);                           // crowd/unused | sponsor horizontal seam
+    c2.filter = 'blur(6px)'; c2.drawImage(cv, 0, 0); c2.filter = 'none'; c2.restore(); };
+  gutter(ATLAS.wall.w-12, 0, 24, ATLAS.wall.h);                   // wall | fence vertical seam
+  gutter(0, ATLAS.wall.h-12, WX, 24);                             // wall/fence | crowd horizontal seam
+  gutter(0, ATLAS.sponsor.y-12, WX, 24);                          // crowd/unused | sponsor horizontal seam
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
   // atlasUV()/atlasSponsorUV() author their rects assuming a top-left-origin
@@ -2513,6 +2537,11 @@ function paintWorldAtlas(){
   tex.generateMipmaps = false;
   tex.minFilter = THREE.LinearFilter;
   tex.magFilter = THREE.LinearFilter;
+  // no mipmaps (see above), so anisotropic filtering is the only lever left
+  // for the wall/fence/crowd/sponsor tiles' near-constant grazing-angle
+  // viewing from the low chase cam — still real GPU-side benefit even
+  // without a mip chain to sample from.
+  tex.anisotropy = MAX_ANISO;
   // CLAMP (not REPEAT): this is a shared atlas packing several regions into
   // one texture, so wall/fence quads reuse one fixed UV rect per slice
   // (each slice already reproduces the same tile, giving a repeating look)
