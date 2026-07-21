@@ -57,10 +57,34 @@
   .overlay { position:fixed; inset:0; z-index:10; display:flex; flex-direction:column;
       align-items:center; justify-content:center; gap:var(--sp-3);
       background:var(--c-black); }
+  /* #menu overrides .overlay's opaque background (ID beats class) so the
+     live 3D racetrack — rendered continuously behind the menu via
+     updateCamera()'s menu establishing-shot loop — shows through instead of
+     a flat black screen. A dark radial scrim keeps the card's own text
+     legible over whatever the cycling camera shots put behind it (bright
+     sky, floodlit grandstand) without fully hiding the track. */
+  #menu { background:radial-gradient(ellipse at center, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.6) 75%, rgba(0,0,0,0.8) 100%); }
+  .menuCard { display:flex; flex-direction:column; align-items:center; justify-content:center;
+      gap:var(--sp-3); width:100%; max-width:420px; padding:var(--sp-4) var(--sp-6);
+      background:linear-gradient(180deg, rgba(10,10,10,0.86), rgba(0,0,0,0.9));
+      border-left:var(--bw-med) solid var(--c-yellow); border-right:var(--bw-med) solid var(--c-yellow);
+      box-shadow:0 8px 28px rgba(0,0,0,0.55); }
+  /* checkered-flag banner: classic 45deg two-tone check via four offset
+     linear-gradients, framing the card top/bottom like a starter's flag
+     draped over the pre-race card — no image assets needed. */
+  .checkerBand { align-self:stretch; height:9px;
+      background-color:var(--c-white);
+      background-image:
+        linear-gradient(45deg, var(--c-black) 25%, transparent 25%),
+        linear-gradient(-45deg, var(--c-black) 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, var(--c-black) 75%),
+        linear-gradient(-45deg, transparent 75%, var(--c-black) 75%);
+      background-size:12px 12px; background-position:0 0, 0 6px, 6px -6px, -6px 0px; }
   .title { color:var(--c-yellow); font-family:var(--font-head); font-size:36px; font-weight:bold;
-      letter-spacing:4px; text-align:center; border-top:var(--bw-med) solid var(--c-yellow);
-      border-bottom:var(--bw-med) solid var(--c-yellow); padding:var(--sp-2) 0;
-      text-shadow:0 2px 4px rgba(0,0,0,0.5); }
+      letter-spacing:4px; text-align:center; padding:var(--sp-2) 0 0;
+      text-shadow:0 2px 4px rgba(0,0,0,0.7); }
+  .kicker { color:var(--c-white); font-family:var(--font-head); font-size:12px; font-weight:bold;
+      letter-spacing:5px; }
   .subtitle { color:var(--c-graycool); font-family:var(--font-head); font-size:13px; letter-spacing:2px; }
   .mbtn { min-width:230px; padding:13px 22px; font-family:var(--font-head); font-size:16px;
       font-weight:bold; letter-spacing:1px; color:var(--c-white);
@@ -109,16 +133,21 @@
 <div id="bG" class="ctl">GAS</div>
 
 <div id="menu" class="overlay">
-  <div class="title">LAKE HILL<br>THUNDER</div>
-  <div class="subtitle" id="trackSub">THUNDER OVAL &bull; 1.6 KM &bull; 18&deg;/16&deg; BANKING</div>
-  <button id="startBtn" class="mbtn">START RACE</button>
-  <button id="trkTog" class="mbtn">TRACK: THUNDER OVAL</button>
-  <button id="lapTog" class="mbtn">LAPS: 5</button>
-  <button id="qualTog" class="mbtn">QUALIFYING: OFF</button>
-  <button id="sndTog" class="mbtn">SOUND: ON</button>
-  <button id="tiltTog" class="mbtn">TILT STEER: OFF</button>
-  <div class="hint">Landscape only &bull; &#9664; &#9654; steer &bull; GAS / BRAKE right hand<br>
-  Rolling start behind the pace car &bull; green at the line &bull; 20-car field.</div>
+  <div class="menuCard">
+    <div class="checkerBand"></div>
+    <div class="kicker">RACE DAY</div>
+    <div class="title">LAKE HILL<br>THUNDER</div>
+    <div class="subtitle" id="trackSub">THUNDER OVAL &bull; 1.6 KM &bull; 18&deg;/16&deg; BANKING</div>
+    <button id="startBtn" class="mbtn">START RACE</button>
+    <button id="trkTog" class="mbtn">TRACK: THUNDER OVAL</button>
+    <button id="lapTog" class="mbtn">LAPS: 5</button>
+    <button id="qualTog" class="mbtn">QUALIFYING: OFF</button>
+    <button id="sndTog" class="mbtn">SOUND: ON</button>
+    <button id="tiltTog" class="mbtn">TILT STEER: OFF</button>
+    <div class="hint">Landscape only &bull; &#9664; &#9654; steer &bull; GAS / BRAKE right hand<br>
+    Rolling start behind the pace car &bull; green at the line &bull; 20-car field.</div>
+    <div class="checkerBand"></div>
+  </div>
 </div>
 
 <div id="results" class="overlay">
@@ -2938,6 +2967,45 @@ function setHardCam(pos, look){
 }
 function updateCamera(){
   const c = S.player;
+  // race-day establishing loop: while sitting on the start menu (no player/
+  // cars exist yet -- S.player is null and S.cars is empty in 'menu' mode),
+  // cycle a few cinematic angles over the empty, sunlit track instead of
+  // leaving the canvas on whatever the last mode rendered. Driven by
+  // performance.now() rather than S.t, since sim time never advances while
+  // in 'menu'. Each phase continuously resupplies setHardCam() with a
+  // slightly different position every call (no discrete target to blend
+  // toward), which reads as smooth dolly motion; the hard jump at each
+  // phase boundary is an intentional broadcast-style cut, same idiom as
+  // the caution TV montage below.
+  if(S.mode==='menu'){
+    const T = (performance.now()/1000) % 16;
+    if(T < 6){
+      // phase 1: slow dolly down the frontstretch looking out at the main
+      // grandstand -- same framing as the pace-lap intro's opening shot
+      const f = T/6;
+      const sC = TRACK.sFinish + 90 - f*160;
+      const pC = pos3(sC, -34); pC[1] += 11;
+      const pL = pos3(sC - 40, WALL_LAT + 8); pL[1] += 7;
+      setHardCam(pC, pL);
+    } else if(T < 11){
+      // phase 2: low trackside shot at turn 1, the track curving away into
+      // the distance -- a classic pre-race establishing angle
+      const f = (T-6)/5;
+      const sC = TRACK.sFinish + TRACK.total*0.08;
+      const pC = pos3(sC, TRACK.halfW + 5); pC[1] += 2.2;
+      const pL = pos3(sC + 60 + f*40, -6); pL[1] += 1.2;
+      setHardCam(pC, pL);
+    } else {
+      // phase 3: high wide shot over the frontstretch showing the full
+      // grandstand vista and start/finish line
+      const f = (T-11)/5;
+      const sC = TRACK.sFinish - 40;
+      const pC = pos3(sC, -20 + f*10); pC[1] += 34;
+      const pL = pos3(sC + 100, 0); pL[1] += 2;
+      setHardCam(pC, pL);
+    }
+    return;
+  }
   // broadcast intro: a grandstand pass, then the grid sweep, during the
   // opening of the pace lap
   if(S.mode==='pace' && S.t < 9 && S.cars.length > 1){
@@ -3620,7 +3688,12 @@ function frame(ts){
   if(S.shakeT>0) S.shakeT = Math.max(0, S.shakeT-dt);
   emitFX(dt);
   audioTick();
-  if(S.mode!=='menu') drawGL();
+  // menu mode used to skip drawGL() entirely, leaving the canvas blank
+  // behind the start screen -- now it renders every frame same as any
+  // other mode (S.cars is empty in 'menu', so it's just the empty track/
+  // grandstands/sky, no gameplay state touched) so updateCamera()'s menu
+  // establishing-shot loop below can actually show the racetrack.
+  drawGL();
   drawHUD();
 }
 function tick(){
