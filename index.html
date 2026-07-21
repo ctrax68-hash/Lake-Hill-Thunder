@@ -393,8 +393,20 @@ const S = {
   shakeT:0,
   qual:false, gridOrder:null, qualPos:0,
   flag:'green', yellowT:0, cautionUntilLap:-1, greenLockT:0,
-  oneToGo:false, pitsOpen:true, cautionMaxSlot:-1
+  oneToGo:false, pitsOpen:true, cautionMaxSlot:-1,
+  // green-white-checkered: finishLaps is the EFFECTIVE final lap (grows
+  // past S.laps during overtime); gwcState machine walks
+  // 'none' -> 'watch' -> 'clean1' -> 'white' -> (arbitration ends the race)
+  finishLaps:5, gwcState:'none', gwcAttempts:0, gwcMarkLap:-1
 };
+// Started at 3 per the original plan; empirical testing showed even a
+// halved wreck-roll probability still exhausts 3 attempts routinely --
+// restarts are inherently the highest-incident moment (bunched field, full
+// throttle), and GWC's "clean1" phase demands a fully incident-free lap
+// across all 20 cars immediately after one. Raised to 8 so the safety valve
+// essentially never binds in practice, matching the original intent, without
+// further suppressing organic racing incidents beyond the tuning already done.
+const GWC_MAX_ATTEMPTS = 8;
 
 /* ---------- rolling start: pace car + formation on the backstretch ---------- */
 const PACE = { s:0, lat:0, v:0, hdg:0, x:0, y:0, state:'lead',
@@ -794,19 +806,46 @@ function stepCar(c){
       if(!c.bestLapT || c.lastLapT < c.bestLapT) c.bestLapT = c.lastLapT;
     }
     c.lapStartT = S.t;
-    // !c.out: a car already retired for terminal damage can still be
-    // limping across the stripe when its lap count ticks over (it doesn't
-    // stop instantly) — without this guard it would get marked done and
-    // ranked as a finisher via S.finishOrder while still carrying the `out`
-    // flag, so the results screen displayed "DNF" for a car sitting ahead
-    // of real finishers in the standings.
-    if(c.lap >= S.laps && !c.out){ c.done = true; c.finishT = S.t; S.finishOrder.push(c); }
+    // finish arbitration (was here) moved to a dedicated pass in tick(),
+    // run after the caution controller and GWC controller for the tick --
+    // this runs before either of those in the same tick, so a car crossing
+    // the line exactly as a fresh caution/GWC transition occurs would have
+    // used stale S.flag / S.finishLaps if judged right here.
   }
   c.prog = c.lap + rel/TRACK.total;
 }
 
+// first still-racing (not done/out) car in running order -- the caution
+// controller uses this as its restart-timing reference. S.order[0] itself
+// can be a car that has ALREADY finished (frozen c.lap, since stepCar()
+// stops incrementing lap once c.done) once a green-white-checkered
+// extension lets the front of the field finish while a later incident
+// throws a fresh caution for the cars still racing toward the (further
+// extended) finish line -- using a frozen lap value as "lead" for the
+// lead.lap >= S.cautionUntilLap restart gate would hang the caution
+// forever, since a done car's lap can never advance again.
+function activeLead(){
+  for(const o of S.order) if(!o.done && !o.out) return o;
+  return S.order[0];
+}
 /* ---------- collisions ---------- */
+// GWC verification surfaced that Big Sable Speedway (TRACK.total ~2600,
+// the longest of the 4 tracks by a wide margin over Thunder Oval's ~1600)
+// had a far higher green-white-checkered failure rate than the other
+// tracks even after the flat wreck-rate halving below. Root cause isn't
+// speed (measured per-track average speeds are actually comparable) --
+// it's that a longer track means a longer "clean lap" in real time, and
+// the same per-incident roll rate over more elapsed time (and more AI
+// passing opportunities) compounds into a much higher chance that SOME
+// car somewhere has a fresh incident before the lap completes. Scaling
+// the roll probability down proportionally to how much longer a track's
+// lap runs vs Thunder Oval keeps the per-LAP incident-free odds roughly
+// comparable across tracks instead of just the per-incident odds.
+// Clamped to never exceed 1 -- shorter tracks (e.g. Milltown Bullring)
+// keep the already-tuned baseline rate rather than being pushed higher.
+const WRECK_SCALE_BASELINE_LEN = 1600;
 function collide(){
+  const trackWreckScale = Math.min(1, WRECK_SCALE_BASELINE_LEN / TRACK.total);
   for(let i=0;i<S.cars.length;i++) for(let j=i+1;j<S.cars.length;j++){
     const a=S.cars[i], b=S.cars[j];
     const dx=b.x-a.x, dy=b.y-a.y, d=Math.hypot(dx,dy), min=3.6;
@@ -848,7 +887,20 @@ function collide(){
           if(cv2 > 9 && S.mode==='race' && S.flag==='green' && S.greenLockT<=0
              && victim2.spinT<=0 && victim2.spinCd<=0 && (victim2.spinRollCd||0)<=0){
             victim2.spinRollCd = 2.6;
-            if(rngR() < (cv2-9)*0.04 + 0.02){
+            // base probability roughly halved from the previous (cv2-9)*0.04+0.02:
+            // GWC verification (below) surfaced that even after the incident-
+            // multiplication fix above, the organic rate over a 20-car field
+            // was still high enough that its 3-attempt safety-valve cap was
+            // binding almost every time in testing -- i.e. the race routinely
+            // still ended under yellow, the exact thing GWC exists to prevent.
+            // Scaled down further rather than reopening the incident-
+            // multiplication fix, which is verified working correctly on its
+            // own terms (roll attempts properly capped to ~1 per pass).
+            //
+            // trackWreckScale (see collide()'s own comment above): normalizes
+            // for track length so a longer lap doesn't mean proportionally
+            // more chances for an incident to interrupt it.
+            if(rngR() < ((cv2-9)*0.02 + 0.01)*trackWreckScale){
               victim2.spinT = 1.6 + rngR()*1.2;
               victim2.spinDir = ny > 0 ? 1 : -1;
               victim2.spinCd = 10;
@@ -3201,7 +3253,7 @@ function drawSegBar(x,y,w,h,frac,segN,color){
 /* ---- unified race-state banner: one visual treatment, one shared slide-in timer ---- */
 let bannerState = { key:null, t0:0 };
 /* ---- procedural flag icon: green / yellow(caution) / checkered(victory) ---- */
-const FLAG_ICON = { pace:'yellow', caution:'yellow', onetogo:'yellow', green:'green', victory:'checkered' };
+const FLAG_ICON = { pace:'yellow', caution:'yellow', onetogo:'yellow', green:'green', victory:'checkered', overtime:'green' };
 const FLAG_GREEN = '#1F9D55';   // content-accurate flag color; UI chrome itself stays on-palette
 function drawFlagIcon(x,y,s,pattern){
   cx.save();
@@ -3298,8 +3350,12 @@ function drawHUD(){
   panel(lap.x,lap.y,lap.w,lap.h,THEME.white,1);
   cx.fillStyle=THEME.yellow; sharpRect(lap.x,lap.y,lap.w,3*s); cx.fill();
   cx.fillStyle=THEME.white; cx.font=`bold ${15*s}px monospace`; cx.textAlign='center';
-  const lapNo = Math.min(S.laps, Math.max(1, P.lap<1 ? 1 : P.lap+1));
-  cx.fillText('LAP '+(P.done?S.laps:lapNo)+' / '+S.laps, W/2, lap.y+lap.h*0.6);
+  // S.finishLaps (not S.laps) is the denominator: it's the EFFECTIVE final
+  // lap, and grows past S.laps during a green-white-checkered extension --
+  // using S.laps here was the actual HUD "freeze" bug (denominator stuck at
+  // e.g. "20/20" while the race kept going under overtime)
+  const lapNo = Math.min(S.finishLaps, Math.max(1, P.lap<1 ? 1 : P.lap+1));
+  cx.fillText('LAP '+(P.done?S.finishLaps:lapNo)+' / '+S.finishLaps, W/2, lap.y+lap.h*0.6);
   panel(lastBest.x,lastBest.y,lastBest.w,lastBest.h,THEME.white,1);
   cx.textAlign='left'; cx.font=`bold ${9*s}px 'Arial Narrow',sans-serif`;
   cx.fillStyle=THEME.graycool; cx.fillText('LAST', lastBest.x+8*s, lastBest.y+9*s);
@@ -3343,6 +3399,9 @@ function drawHUD(){
   }
   else if(S.greenT>0) drawStateBanner('green','GREEN GREEN GREEN!',THEME.blue,L.bannerY);
   else if(S.msgT>0) drawStateBanner('msg', S.msgTxt, THEME.white, L.bannerY);
+  else if(S.gwcState==='clean1' || S.gwcState==='white') drawStateBanner('overtime',
+    S.gwcState==='clean1' ? 'OVERTIME — GREEN WHITE CHECKERED' : 'OVERTIME — WHITE FLAG',
+    THEME.yellow, L.bannerY);
   else if(S.mode==='victory') drawStateBanner('victory','CHECKERED FLAG!',THEME.yellow,L.bannerY);
   else bannerState.key = null;
   // --- merged DRAFT / spotter status chip: one bottom-center panel instead
@@ -3515,7 +3574,7 @@ function tick(){
       for(const c of S.cars){
         if(c.spinT > 0 && !c.done){                 // wreck on track → yellow
           S.flag='yellow'; S.yellowT = 0;
-          const lead = S.order[0];
+          const lead = activeLead();
           S.cautionUntilLap = lead.lap + 2;
           PACE.state='lead'; PACE.lat=0; PACE.v=38;
           PACE.s = (lead.s + 90) % TRACK.total;
@@ -3572,7 +3631,7 @@ function tick(){
       // the natural rank "noise" from gap/bunching dynamics (which AI cars
       // experience amongst themselves all the time, unpenalized) started
       // false-triggering drive-through penalties on totally fair restarts.
-      const lead = S.order[0];
+      const lead = activeLead();
       // "bunched" = every car is at (or near) its assigned pacing slot. Slots
       // give an exact per-car target, so this is a direct error measure
       // instead of the old adjacent-gap heuristic. A couple of outliers are
@@ -3644,7 +3703,16 @@ function tick(){
         // ~30-40 sim-seconds to compress. Under 8x fast-forward this cap is
         // still under ~10 real seconds; it exists only to stop pathological
         // hangs (e.g. a car that keeps spinning), not as the normal path.
-        if(lead.lap >= S.cautionUntilLap && S.yellowT > 8 && (bunched || S.yellowT > 75)){
+        // The lead.lap>=cautionUntilLap half had NO time-based fallback of
+        // its own (unlike bunched) until a green-white-checkered saga with
+        // several extension/abort cycles surfaced a real hang: "lead" can
+        // legitimately point to a different, less-advanced active car later
+        // in a long GWC saga than the one cautionUntilLap was computed
+        // against, so the lap-count target can end up permanently out of
+        // that car's reach. 120s is a generous ceiling (still ~15s of real
+        // time under the 8x caution fast-forward) that guarantees this gate
+        // can't hang regardless of which car "lead" ends up being.
+        if((lead.lap >= S.cautionUntilLap || S.yellowT > 120) && S.yellowT > 8 && (bunched || S.yellowT > 75)){
           // field collected and caution laps served: one to go. Lights off,
           // pit road closes, fast-forward ends (frame() checks oneToGo) so
           // the player watches the restart build at normal speed.
@@ -3668,6 +3736,75 @@ function tick(){
           PACE.state='peel';
         }
       }
+    }
+  }
+  // ---- green-white-checkered: the race must never end under yellow. If
+  // the leader would complete the scheduled final lap while caution is out,
+  // extend: let the (unmodified) caution controller above bunch the field
+  // and throw green as normal, require one full lap with no new caution,
+  // then one more lap to the checkered flag. A fresh caution during either
+  // extra lap aborts back to the top and retries, bounded at
+  // GWC_MAX_ATTEMPTS -- in the astronomically rare case all attempts fail,
+  // the unconditional arbitration pass below ends the race at the current
+  // lap regardless of flag, as a safety valve. ----
+  if(S.mode==='race'){
+    // activeLead(), not S.order[0]: once the actual fastest car has legally
+    // finished (reached finishLaps under green), later incidents among the
+    // trailing pack are just normal racing for lower positions and must not
+    // reopen "did the race end under yellow" using that car's now-frozen
+    // lap count (same reasoning as the caution controller's own lead fix).
+    const gwcLead = activeLead();
+    if(gwcLead && !gwcLead.done && !gwcLead.out){
+      if(S.gwcState==='none'){
+        if(S.flag==='yellow' && gwcLead.lap >= S.finishLaps && S.gwcAttempts < GWC_MAX_ATTEMPTS){
+          S.finishLaps += 1;
+          S.gwcState = 'watch';
+          S.gwcAttempts++;
+          S.msgTxt = 'OVERTIME — GREEN WHITE CHECKERED'; S.msgT = 3.2;
+        }
+      } else if(S.gwcState==='watch'){
+        // caution controller above runs untouched; if it runs long enough
+        // that the leader organically laps past the extended target while
+        // STILL under yellow, keep pushing the target out ahead of them
+        if(S.flag==='yellow' && gwcLead.lap >= S.finishLaps) S.finishLaps = gwcLead.lap + 1;
+        if(S.flag==='green'){
+          // the restart itself immediately crosses the leader's lap counter
+          // by +1: the restart-timing check a few lines up throws green
+          // once the leader is WITHIN 60 units of the stripe (approaching
+          // it, not yet across), so within a second or two of taking the
+          // green they physically cross the line and their lap count ticks
+          // over -- that crossing is the restart itself, not a lap of green
+          // racing. Mark here, then require +2 (not +1) in 'clean1' below to
+          // skip that artifact crossing and demand one genuine full lap.
+          S.gwcMarkLap = gwcLead.lap;
+          S.finishLaps = gwcLead.lap + 3;      // +1 restart-crossing artifact, +1 clean lap, +1 checkered lap
+          S.gwcState = 'clean1';
+        }
+      } else if(S.gwcState==='clean1'){
+        if(S.flag==='yellow'){
+          S.gwcState = 'none';                 // fresh caution mid-clean-lap: abort, retry from the top
+        } else if(gwcLead.lap >= S.gwcMarkLap + 2){
+          S.finishLaps = gwcLead.lap + 1;      // clean lap done: exactly one more lap to the checkered flag
+          S.gwcState = 'white';
+          S.msgTxt = 'WHITE FLAG — FINAL LAP'; S.msgT = 2.8;
+        }
+      } else if(S.gwcState==='white'){
+        if(S.flag==='yellow') S.gwcState = 'none';   // fresh caution mid-white-flag-lap: abort, retry
+        // otherwise the arbitration pass below ends the race naturally once finishLaps is reached under green
+      }
+    }
+    // unconditional finish arbitration -- runs after the caution and GWC
+    // controllers above so a car crossing the line this tick sees this
+    // tick's final S.flag/S.finishLaps, not stale values from before a
+    // fresh incident (see the note left in stepCar() where this used to live)
+    for(const c of S.cars){
+      // !c.out: a car already retired for terminal damage can still be
+      // limping across the stripe when its lap count ticks over (it doesn't
+      // stop instantly) — without this guard it would get marked done and
+      // ranked as a finisher via S.finishOrder while still carrying the
+      // `out` flag, so the results screen displayed "DNF" for a car sitting
+      // ahead of real finishers in the standings.
+      if(!c.done && !c.out && c.lap >= S.finishLaps){ c.done = true; c.finishT = S.t; S.finishOrder.push(c); }
     }
   }
   if(S.greenT>0) S.greenT -= DT;
@@ -3736,6 +3873,7 @@ function startRace(){
   S.spotT = 0; S.spotTxt = ''; S.spotState = 'clear'; S.togoMsg = 0;
   S.fuelMsg = 0; S.tireMsg = 0; S.penaltyT = 0;
   S.oneToGo = false; S.pitsOpen = true; S.cautionMaxSlot = -1;
+  S.finishLaps = S.laps; S.gwcState = 'none'; S.gwcAttempts = 0; S.gwcMarkLap = -1;
   if(CAR_MAT_AMBER) CAR_MAT_AMBER.emissiveIntensity = 1.2;
   S.mode='pace';
 }
