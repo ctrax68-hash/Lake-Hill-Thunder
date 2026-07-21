@@ -1243,7 +1243,23 @@ function resize(){
     renderer.setSize(W, H, false);
     camera.aspect = W/H;
     camera.updateProjectionMatrix();
-    if(composer) composer.setSize(W, H);
+    if(composer){
+      // EffectComposer snapshots the renderer's pixel ratio ONCE at
+      // construction time (renderer.getPixelRatio(), captured before this
+      // resize() has ever run, so still the WebGLRenderer default of 1) and
+      // never re-reads it afterward -- composer.setSize() alone resizes its
+      // internal render targets using the composer's OWN frozen ratio, not
+      // the renderer's current DPR. Without this call, the entire post-fx
+      // image (bloom/grade/output -- everything, since composer.render() is
+      // what actually draws every frame) renders at 1x and gets GPU-upscaled
+      // into the DPR-scaled canvas, silently defeating the DPR cap and all
+      // texture-resolution work above regardless of how high either is set.
+      // resize() already runs synchronously at module load (below), before
+      // the first requestAnimationFrame(frame), so this one call also
+      // covers the construction-time mismatch.
+      composer.setPixelRatio(DPR);
+      composer.setSize(W, H);
+    }
   }
   readSafeArea();
   UI.scale = Math.max(0.68, Math.min(1.15, H/500));
@@ -1362,7 +1378,13 @@ function buildFlagTexture(){
     c2.fillRect(64, row*64 + 16, 4, 16);
   }
   const tex = new THREE.CanvasTexture(cvF);
-  tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+  // was NearestFilter/NearestFilter -- the only hard-edged texture in the
+  // file, causing a visibly blocky look on the waving flag mesh at any
+  // distance/angle. Same filtering treatment as the car livery/world-atlas
+  // textures below.
+  tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = true;
+  tex.anisotropy = MAX_ANISO;
   tex.repeat.set(0.5, 1/3);
   return tex;
 }
