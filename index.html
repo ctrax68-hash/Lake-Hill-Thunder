@@ -373,7 +373,26 @@ function makeCar(isPlayer, idx){
     wear:0, draftF:0, dirty:false,
     skill: isPlayer?1: 0.90 + rng()*0.085,
     aggr:  isPlayer?1: 0.4 + rng()*0.6,
-    laneBias: isPlayer?0: (rng()*2-1)*0.8,
+    // personal preferred racing groove (low/mid/high), ~evenly split across
+    // the AI field by idx%3 with a little organic jitter within each tier.
+    // Real multi-groove ovals let cars run 2-3 wide because different cars
+    // legitimately prefer different lines, not just one shared "the" line —
+    // the old design had every AI car target the exact same -2.2 in every
+    // corner, which is why the whole field was always converging onto one
+    // line and needed a one-at-a-time pass to get by anybody, on every lap,
+    // not just at restarts. Tiers are spaced 6 apart with +-0.5 jitter, so
+    // the worst-case gap between adjacent tiers is 5 -- this has to clear
+    // collide()'s min=3.6 EUCLIDEAN contact radius (1 lat unit == 1 world
+    // unit, since lane offsets are applied as an exact perpendicular
+    // projection), not just the 2.4 blocker-detection threshold used below.
+    // An earlier version spaced tiers only 3.8 apart against the 2.4
+    // threshold, which left a worst-case gap of 2.6 -- comfortably UNDER
+    // 3.6, so cars in adjacent grooves were in constant collide() contact
+    // just from running side by side, not from any real blocking. That
+    // organically multiplied caution frequency enough to make Big Sable
+    // (the longest track, so also the slowest to recover from any one
+    // caution) fail to finish inside a normal race length.
+    grooveBias: isPlayer?0: [-5, 1, 7][idx%3] + (rng()*2-1)*0.5,
     passSide: 0, passT: 0,
     lapStartT:0, lastLapT:0, bestLapT:0,
     pitch:0,
@@ -533,8 +552,20 @@ function stepCar(c){
     c.hdg += 3.1*DT;
     c.v = Math.max(7, c.v*0.985);
     skid = Math.min(1, skid+0.25);
-  } else if(c.out){
-    // DNF: limp to the infield apron and park
+  } else if(c.out || c.done){
+    // DNF, or already-finished (cool-down): limp to the infield apron and
+    // park -- reuses the exact same off-track routing as a DNF. Finished
+    // cars used to keep circulating the racing line at a reduced (0.55x)
+    // target speed alongside cars still racing; when several finished
+    // within a few ticks of each other (most likely after a long
+    // green-white-checkered battle), they could crowd together on the
+    // racing surface, mutually brake for each other via the normal
+    // AI-else-branch "closing" check, and settle into a stable v~=0
+    // gridlock that then blocked whoever was still racing behind them --
+    // hanging the race, since nobody stuck in that pile could progress
+    // enough to trigger the finish arbitration either. Routing done cars
+    // off to the apron the instant they finish (like a real cool-down lap)
+    // clears them off the line entirely instead.
     const lane = -9.5;
     const LAo = Math.max(8, c.v*0.62);
     const pTo = TRACK.pointAt(c.s + LAo);
@@ -679,12 +710,11 @@ function stepCar(c){
     steerIn *= 1 - 0.10*Math.min(1, c.v/85);       // calm the wheel at speed (full lock must still reach the corner grip limit)
     steerIn += c.dmg*0.02;                         // bent bodywork pulls gently toward the wall
   } else {
-    const vT = targetSpeed(c) * (c.done?0.55:1);
-    const pHere = TRACK.pointAt(c.s);
+    const vT = targetSpeed(c);
     // restart lane hold: for a short window right after a caution restart,
     // keep the just-ended single-file queue order instead of letting every
-    // car's target lane snap to the curve-following line (-2.2) and enter
-    // the blocker/pass logic in the same tick -- previously the WHOLE field
+    // car's target lane snap straight to its groove and enter the
+    // blocker/pass logic in the same tick -- previously the WHOLE field
     // (9-unit gaps, near-zero lateral spread) simultaneously qualified as
     // "blocked" and independently swerved into a fresh pass lane on the
     // exact tick green dropped, reading as an instant scramble/merge.
@@ -702,7 +732,12 @@ function stepCar(c){
       const releaseAt = 0.4 + c.cautionSlot*0.12;
       restartHeld = sinceGreen < releaseAt;
     }
-    let lane = restartHeld ? 0 : (Math.abs(pHere.curv)>1e-6 ? -2.2 : c.laneBias);
+    // groove-based lane target (both corners and straights) instead of the
+    // old blanket -2.2-in-corners/laneBias-on-straights split -- see
+    // grooveBias's definition in makeCar() for why: every car wanting the
+    // identical corner line was the root cause of constant merging, not
+    // just a restart-specific issue.
+    let lane = restartHeld ? 0 : c.grooveBias;
     let blocker = null, bd = 1e9;
     for(const o of S.cars){ if(o===c) continue;
       let ds = o.s - c.s; if(ds<-TRACK.total/2) ds+=TRACK.total; if(ds>TRACK.total/2) ds-=TRACK.total;
@@ -710,15 +745,21 @@ function stepCar(c){
     if(blocker && !restartHeld){
       if(c.passT<=0){
         let side = blocker.lat > 0.3 ? -1 : (blocker.lat < -0.3 ? 1 : (c.passSide || 1));
-        // pass-lane gap widened from 3.4/±3.6 to 4.0/±4.4: the old gap put
-        // the target lane UNDER collide()'s 3.6-unit contact radius by
-        // design, so a single 2.5s pass attempt could rack up several
-        // separate sub-3.6 contact incidents, each an independent spin-
-        // chance roll -- the actual reason wrecks stayed frequent even
-        // after gating the roll to once per 0.6s incident. TRACK.halfW=6.0,
-        // so a car's outer edge at the new clamp (~5.4 with half-width)
-        // still stays clear of the grass boundary at 6.4.
-        const tryLat = Math.max(-4.4, Math.min(4.4, blocker.lat + side*4.0));
+        // pass-lane swerve widened from 4.0/±4.4 to 6.0/±7: a blocker is by
+        // definition in ~the same groove (blocker-detection requires
+        // |lat diff|<2.4), so the old +-4.0 swerve landed a passing car in
+        // the gap BETWEEN groove tiers (spaced 6 apart) rather than reaching
+        // the next tier over -- well within collide()'s 3.6-unit contact
+        // radius of whichever neighboring tier it crossed toward, since the
+        // gap between tiers isn't wide enough to fit a 3.6-clear "between"
+        // lane at only 6 apart. Swerving a full 6 (matching groove spacing)
+        // instead moves the passing car onto the ACTUAL neighboring tier's
+        // line, where it's simply running alongside whoever's already
+        // legitimately there (normal same-tier following), not straddling
+        // two tiers' collision radii at once. Clamp +-7 keeps the inner
+        // side off the grass boundary at 6.4 and the outer side well inside
+        // the WALL_LAT=12 physics wall.
+        const tryLat = Math.max(-7, Math.min(7, blocker.lat + side*6.0));
         const laneTaken = S.cars.some(o=>{
           if(o===c || o===blocker) return false;
           let ds2 = o.s - c.s; if(ds2<-TRACK.total/2) ds2+=TRACK.total; if(ds2>TRACK.total/2) ds2-=TRACK.total;
@@ -726,7 +767,7 @@ function stepCar(c){
         });
         c.passSide = laneTaken ? -side : side; c.passT = 2.5;
       }
-      lane = Math.max(-4.4, Math.min(4.4, blocker.lat + c.passSide*4.0));
+      lane = Math.max(-7, Math.min(7, blocker.lat + c.passSide*6.0));
     }
     if(c.passT>0 && !restartHeld){ c.passT -= DT; }
     const LA = Math.max(12, c.v*0.62);
@@ -3727,11 +3768,33 @@ function tick(){
           while(se >  TRACK.total/2) se -= TRACK.total;
           if(se > 30){
             const sNew = ((o.s + se) % TRACK.total + TRACK.total) % TRACK.total;
-            const p = TRACK.pointAt(sNew);
-            o.s = sNew; o.lat = 0;
-            o.x = p.x; o.y = p.y;
-            o.hdg = o.vdir = p.hdg; o.v = 38;
-            o.px = o.x; o.py = o.y; o.phdg = o.hdg; o.ps = o.s; o.plat = 0;
+            // the queue "sloshes" +-10-20 units around the ideal slot
+            // schedule (chained speed control has finite damping -- see the
+            // 25-unit "bunched" tolerance below), so the car actually
+            // holding the slot ahead/behind on any given tick can be well
+            // off its theoretical position. Landing sNew blindly could warp
+            // this car to within collide()'s 3.6-unit contact radius of a
+            // real car that's currently running behind schedule -- a sudden
+            // teleport-into-occupied-space overlap, which collide()'s push/
+            // velocity-delta slowdown (both flag-agnostic) then resolves
+            // violently: reads exactly like a crash even though spinT never
+            // fires. Skip the warp this tick if it would land too close to
+            // any other active car; positions keep evolving every tick, so
+            // it retries on a later tick once the way is actually clear.
+            let clear = true;
+            for(const other of activeY){
+              if(other===o) continue;
+              let dso = Math.abs(other.s - sNew);
+              if(dso > TRACK.total/2) dso = TRACK.total - dso;
+              if(dso < 12){ clear = false; break; }
+            }
+            if(clear){
+              const p = TRACK.pointAt(sNew);
+              o.s = sNew; o.lat = 0;
+              o.x = p.x; o.y = p.y;
+              o.hdg = o.vdir = p.hdg; o.v = 38;
+              o.px = o.x; o.py = o.y; o.phdg = o.hdg; o.ps = o.s; o.plat = 0;
+            }
           }
         }
       }
@@ -3823,11 +3886,26 @@ function tick(){
     const gwcLead = activeLead();
     if(gwcLead && !gwcLead.done && !gwcLead.out){
       if(S.gwcState==='none'){
-        if(S.flag==='yellow' && gwcLead.lap >= S.finishLaps && S.gwcAttempts < GWC_MAX_ATTEMPTS){
-          S.finishLaps += 1;
-          S.gwcState = 'watch';
-          S.gwcAttempts++;
-          S.msgTxt = 'OVERTIME — GREEN WHITE CHECKERED'; S.msgT = 3.2;
+        if(S.flag==='yellow' && gwcLead.lap >= S.finishLaps){
+          if(S.gwcAttempts < GWC_MAX_ATTEMPTS){
+            S.finishLaps += 1;
+            S.gwcState = 'watch';
+            S.gwcAttempts++;
+            S.msgTxt = 'OVERTIME — GREEN WHITE CHECKERED'; S.msgT = 3.2;
+          } else {
+            // safety valve, actually implemented: retries are exhausted and
+            // gwcLead is STILL stuck reaching a stale extended finishLaps
+            // target under yellow -- without this, finishLaps stays frozen
+            // at whatever attempt 8 last set it to, and the "unconditional"
+            // arbitration pass right below can in fact never fire (it only
+            // triggers once some car's lap reaches finishLaps, which never
+            // happens if gwcLead keeps getting caught by a fresh caution
+            // before getting there), hanging the race forever. Pull the
+            // target back down to gwcLead's actual current lap so that same
+            // arbitration pass ends the race THIS tick, regardless of flag,
+            // exactly as the comment above already promised.
+            S.finishLaps = gwcLead.lap;
+          }
         }
       } else if(S.gwcState==='watch'){
         // caution controller above runs untouched; if it runs long enough
