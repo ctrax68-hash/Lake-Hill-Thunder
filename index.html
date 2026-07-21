@@ -503,6 +503,7 @@ function stepCar(c){
   let thr, brk, steerIn;
   if(c.spinCd > 0) c.spinCd -= DT;
   if(c.dmgCd > 0) c.dmgCd -= DT;
+  if(c.spinRollCd > 0) c.spinRollCd -= DT;
   // arm pit entry as the car reaches the frontstretch
   if((c.pitReq || c.dtPending) && c.pit===0 && !c.done && !c.out && c.spinT<=0
      && (S.flag!=='yellow' || S.pitsOpen)){     // pit road closed early in a caution + at one-to-go
@@ -676,7 +677,15 @@ function stepCar(c){
     if(blocker){
       if(c.passT<=0){
         let side = blocker.lat > 0.3 ? -1 : (blocker.lat < -0.3 ? 1 : (c.passSide || 1));
-        const tryLat = Math.max(-3.6, Math.min(3.6, blocker.lat + side*3.4));
+        // pass-lane gap widened from 3.4/±3.6 to 4.0/±4.4: the old gap put
+        // the target lane UNDER collide()'s 3.6-unit contact radius by
+        // design, so a single 2.5s pass attempt could rack up several
+        // separate sub-3.6 contact incidents, each an independent spin-
+        // chance roll -- the actual reason wrecks stayed frequent even
+        // after gating the roll to once per 0.6s incident. TRACK.halfW=6.0,
+        // so a car's outer edge at the new clamp (~5.4 with half-width)
+        // still stays clear of the grass boundary at 6.4.
+        const tryLat = Math.max(-4.4, Math.min(4.4, blocker.lat + side*4.0));
         const laneTaken = S.cars.some(o=>{
           if(o===c || o===blocker) return false;
           let ds2 = o.s - c.s; if(ds2<-TRACK.total/2) ds2+=TRACK.total; if(ds2>TRACK.total/2) ds2-=TRACK.total;
@@ -684,7 +693,7 @@ function stepCar(c){
         });
         c.passSide = laneTaken ? -side : side; c.passT = 2.5;
       }
-      lane = Math.max(-3.6, Math.min(3.6, blocker.lat + c.passSide*3.4));
+      lane = Math.max(-4.4, Math.min(4.4, blocker.lat + c.passSide*4.0));
     }
     if(c.passT>0){ c.passT -= DT; }
     const LA = Math.max(12, c.v*0.62);
@@ -830,11 +839,20 @@ function collide(){
           // ticks re-rolled the spin chance every tick (50/sec) instead of
           // once per contact, making any sustained pack contact an
           // almost-guaranteed wreck within a fraction of a second.
+          // spinRollCd is a SEPARATE cooldown from dmgCd (0.6s), set on every
+          // roll attempt regardless of outcome and lasting just over one
+          // pass-maneuver duration (2.5s) -- defense-in-depth alongside the
+          // widened pass lane above: even if a stray extra sub-3.6 contact
+          // still slips through during one 2.5s pass attempt, at most one
+          // spin roll can happen per attempt instead of one per incident.
           if(cv2 > 9 && S.mode==='race' && S.flag==='green' && S.greenLockT<=0
-             && victim2.spinT<=0 && victim2.spinCd<=0 && rngR() < (cv2-9)*0.04 + 0.02){
-            victim2.spinT = 1.6 + rngR()*1.2;
-            victim2.spinDir = ny > 0 ? 1 : -1;
-            victim2.spinCd = 10;
+             && victim2.spinT<=0 && victim2.spinCd<=0 && (victim2.spinRollCd||0)<=0){
+            victim2.spinRollCd = 2.6;
+            if(rngR() < (cv2-9)*0.04 + 0.02){
+              victim2.spinT = 1.6 + rngR()*1.2;
+              victim2.spinDir = ny > 0 ? 1 : -1;
+              victim2.spinCd = 10;
+            }
           }
         }
         hitter.hitFx = Math.min(1, (hitter.hitFx||0) + cv2*0.04);
