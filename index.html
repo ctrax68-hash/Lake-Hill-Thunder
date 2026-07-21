@@ -3741,6 +3741,16 @@ function tick(){
           S.oneToGo = true;
           S.pitsOpen = false;
           if(CAR_MAT_AMBER) CAR_MAT_AMBER.emissiveIntensity = 0.15;
+          // hard cut from the caution TV montage's last static pad straight
+          // to the live chase cam: the montage (updateCamera(), gated on
+          // !S.oneToGo) already stops the instant oneToGo flips true, same
+          // as the fast-forward above, but without this the normal SMOOTHED
+          // chase-cam block would glide from wherever the montage last
+          // parked the camera (up to a 40-unit-high aerial shot) instead of
+          // cutting -- reusing the same snap-instead-of-glide idiom already
+          // used by startRace()/startQualifying() (cam.pos=null triggers
+          // updateCamera()'s self-init guard to snap straight to target).
+          cam.pos = null;
         }
       } else {
         // pace car pulls into the pits at the pit-entry zone, then green as
