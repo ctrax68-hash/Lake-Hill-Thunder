@@ -73,6 +73,11 @@ int main(int argc, char** argv)
     Track track(TRACKS[trackIdx]);
     renderer.setTrack(track);
     renderer.setChaseTarget(0); // idx 0 is always the player, see car.h
+    // Debug-only: force chase mode on at startup instead of waiting for a
+    // live C keypress -- for scripted headless screenshot verification
+    // (see PORT_PROGRESS.md's Phase 2 notes), same rationale as
+    // LHT_FORCE_RACE below.
+    if (std::getenv("LHT_START_CHASE")) renderer.setCameraMode(Renderer::CameraMode::Chase);
 
     Mulberry32 rng(12345);
     Mulberry32 rngR(999);
@@ -81,6 +86,16 @@ int main(int argc, char** argv)
     std::vector<Car> cars;
     gridStart(track, rng, state, pace, cars, nullptr);
     state.mode = "pace";
+    // Debug-only: skip straight past the ~28-sim-second pace phase (during
+    // which every car, including the player, is formation-driven --
+    // keyboard input is ignored, matching the JS original) so keyboard
+    // responsiveness can actually be tested without waiting real-time for
+    // green flag. Same seeded-starting-state philosophy as the --force flag
+    // used throughout this port's determinism tests, not a physics bypass.
+    if (std::getenv("LHT_FORCE_RACE")) {
+        state.mode = "race";
+        state.flag = "green";
+    }
     PlayerInput input;
     std::vector<Car*> finishOrder;
 

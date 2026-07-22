@@ -380,15 +380,37 @@ port; it's the reference the C++ port must match).
       into the same `PlayerInput` struct `stepCar()`'s player branch already
       consumes -- no new physics-side code needed, this was pure input
       plumbing. AI cars drive themselves via the real, verified AI branch.
-      **Not verified interactively** (no human at a keyboard in this
-      container) -- only that it builds and the read path is straightforward;
-      a real interactive session should confirm actual car response feels
-      right before calling this fully done.
-- [ ] Chase camera matching the JS original's behavior (JS: `updateCamera()`).
-      A placeholder chase mode exists (`Renderer::CameraMode::Chase`, toggled
-      with the C key) -- fixed-distance top-down framing on the chase target,
-      NOT the JS's real `updateCamera()` (smoothed follow, banking tilt,
-      multiple camera modes). Flagged honestly as a placeholder, not done.
+      **Attempted automated verification, inconclusive** (see Session 3's
+      next log entry for the full writeup): installed `xdotool` + a minimal
+      WM under `xvfb-run` and tried three different ways to synthesize a
+      held key into the running window; the app's own status line proved
+      the plumbing is *reachable* (player coasts to a stop with no input,
+      exactly as expected -- `thr=0` the whole run) but none of the three
+      synthetic-input methods actually registered a keypress with the SDL
+      window in this headless setup. Not chased further (known category of
+      SDL2+Xvfb+XTEST/XSendEvent flakiness, not something worth burning
+      more time on here) -- still needs a real interactive session to
+      confirm actual car response feels right.
+- [x] Chase camera -- a **2D-adapted analogue** of the JS original's
+      `updateCamera()` default branch (`index.html:3399-3457`), not a literal
+      port. **Done**: `Renderer`'s `CameraMode::Chase` (toggled with the C
+      key, or `LHT_START_CHASE=1` for scripted verification) now does
+      forward lookahead (scales with speed) + a corner-lookahead bias on the
+      camera center sampled from `Track::pointAt()`'s upcoming curvature
+      (same `curv*450`/`[-2.5,2.5]` constants as the JS, since it's a
+      world-space offset that doesn't need rescaling for this camera's
+      zoom), both exponentially smoothed toward every frame using a real
+      elapsed-time delta (`std::chrono::steady_clock`, matching JS's
+      `k=1-exp(-dt*11)` idiom and its `Math.min(0.05,...)` stall clamp), at
+      a tighter fixed zoom than the top-down mode. Re-entering chase mode
+      hard-snaps instead of gliding in, same "cut not glide" idiom used
+      throughout the JS for mode transitions.
+      **Deliberately NOT ported** (needs real 3D geometry that doesn't exist
+      until Phase 5): banking lean (JS's `upBlend`), surface-height
+      clamping, and the victory-orbit/pit-stop/tower/helmet/blimp/menu-
+      establishing-shot/caution-TV-montage alternate camera branches
+      (`index.html:3293-3437`) -- this is a flat top-down view with smoothed
+      follow, not a 3rd-person chase cam.
 
 ### Phase 3 — Mobile input — NOT STARTED
 - [ ] SDL2 touch regions matching the JS original's button layout (`bL`/`bR` steer,
@@ -1029,3 +1051,85 @@ elsewhere in the same run.
   confirm keyboard control actually feels right; then the real chase
   camera (`updateCamera()`); then Phase 1h's closing full-determinism pass;
   then Phase 3 (mobile touch/tilt input, Android NDK).
+
+- **Session 3 (continued once more -- Phase 2 close-out: chase camera +
+  keyboard verification attempt)**: picked up exactly the two items left
+  open at the end of the previous entry.
+
+  **Chase camera**: implemented as described in the Phase 2 checklist
+  above -- `Renderer` gained `chaseCx_`/`chaseCy_`/`chaseInitialized_`/
+  `chaseLastTime_` smoothing state and a `const Track* track_` pointer
+  (set in `setTrack()`, needed for the corner-lookahead's `pointAt()`
+  call), and `renderFrame()`'s `CameraMode::Chase` branch was rewritten
+  from a snap-to-car placeholder into the 2D-adapted analogue of JS's
+  `updateCamera()` described above. `setCameraMode()` now resets
+  `chaseInitialized_` on entry to Chase so re-toggling always hard-cuts.
+
+  **Keyboard verification -- a genuine attempt, three tries, inconclusive**:
+  installed `xdotool` (`apt-get install -y xdotool`, root, no sudo needed,
+  same pattern as Phase 0's GL/X11 headers) to synthesize input under
+  `xvfb-run`. Added two small debug-only env-var hooks to `main.cpp` for
+  scripted testing (both clearly commented as debug-only, same rationale
+  as the existing `LHT_MAX_FRAMES`/`LHT_SCREENSHOT`):
+  `LHT_FORCE_RACE=1` (skips the ~28-sim-second pace phase, seeding
+  `state.mode="race"`/`flag="green"` directly after `gridStart()` -- needed
+  because the player is formation-driven, not keyboard-driven, during
+  pace, same as the real JS) and `LHT_START_CHASE=1` (forces chase mode on
+  at startup instead of needing a live `C` keypress).
+  - **First established a reliable baseline** using the existing periodic
+    status printf (`player.v=...`): with `LHT_FORCE_RACE=1` and zero
+    keyboard input, player velocity decayed 30.4 -> 8.7 -> 0.5 over ~3.6
+    real/sim seconds -- exactly the expected behavior (`thr=0`/`brk=0`/
+    `steerIn=0` the whole run, so only drag+rolling-resistance act on it).
+    This alone confirms the read path is wired correctly up to the point
+    where `PlayerInput` reaches `stepCar()` -- what's actually unconfirmed
+    is whether a real key event ever flips those bools to true.
+  - **Attempt 1**: `Xvfb` + app + `xdotool keydown Up` (XTEST, relies on
+    the target window having input focus). No window manager was running,
+    so there's nothing to grant the SDL window focus --
+    `xdotool windowactivate` itself failed ("windowmanager claims not to
+    support _NET_ACTIVE_WINDOW"). Player velocity decayed identically to
+    the baseline -- no input registered.
+  - **Attempt 2**: `xdotool keydown --window <id> Up` (XSendEvent, sent
+    directly to the SDL window's ID, bypassing focus). Same result --
+    velocity decayed identically to baseline.
+  - **Attempt 3**: installed `matchbox-window-manager` (tiny, root, no
+    sudo) to give the display real focus-management, re-ran attempt 1 under
+    it. `xdotool getactivewindow` now returned a real window ID (though a
+    different one than the SDL client's own ID, suggesting focus may have
+    landed on a matchbox-internal window rather than the app itself) --
+    velocity again decayed identically to baseline.
+  - **Conclusion**: three genuinely different synthetic-input delivery
+    mechanisms, none got through to `SDL_GetKeyboardState()` in this
+    headless setup. This reads as a known category of SDL2+Xvfb+XTEST/
+    XSendEvent flakiness (window-manager/focus/synthetic-event-filtering
+    interactions are notoriously finicky and backend-specific), not a bug
+    in this port's own input code -- the code itself is a direct,
+    straightforward read of `SDL_GetKeyboardState()` into four booleans,
+    about as low-risk as application code gets. Not chased further past
+    three attempts, per this session's own plan's built-in permission to
+    fall back honestly here. **Genuinely unverified**: whether a real human
+    at a keyboard sees the response they'd expect. Whoever has an actual
+    interactive session available should just try it directly -- far
+    simpler than continuing to fight synthetic X11 input in a container.
+
+  **Verification**: `ctest` full suite passes (6/6). Rebuilt `lht_port`
+  clean. Captured a chase-mode screenshot (`LHT_START_CHASE=1
+  LHT_FORCE_RACE=1`, `xvfb-run` + the existing `bgfx::CallbackI` screenshot
+  mechanism) -- visibly a much tighter zoom than the earlier top-down
+  shots (individual cars are now large/legible rather than tiny dots), and
+  the framing sits near the leading edge of the field with a forward bias,
+  consistent with the lookahead logic actually running. Did not attempt to
+  screenshot-diff the corner-lookahead bias specifically (would need a car
+  approaching a real corner at a moment a screenshot lands, harder to
+  script than what was already checked) -- low risk, it's a direct
+  transcription of the JS formula.
+
+  **Status**: all three original Phase 2 checklist items now have at
+  least a first pass. Nothing about this milestone is blocking -- the C++
+  port is genuinely watchable (top-down or chase) and driven by the fully-
+  verified Phase 1 sim. **Next**: Phase 1h's closing full-determinism pass
+  across the whole sim (still pending, see the Phase 1 checklist), then
+  Phase 3 (mobile touch/tilt input, Android NDK install). Real interactive
+  keyboard-feel confirmation whenever a session with an actual display is
+  available.

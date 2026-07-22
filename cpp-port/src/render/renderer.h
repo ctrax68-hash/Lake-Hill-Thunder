@@ -12,6 +12,7 @@
 
 #include <bgfx/bgfx.h>
 
+#include <chrono>
 #include <vector>
 
 class Renderer {
@@ -27,7 +28,15 @@ public:
     void resize(int width, int height);
 
     enum class CameraMode { TopDown, Chase };
-    void setCameraMode(CameraMode mode) { cameraMode_ = mode; }
+    // Re-entering Chase always hard-snaps on the next renderFrame() rather
+    // than smoothing in from wherever the camera last was (same "hard cut,
+    // not glide" idiom the JS uses for mode-transition cuts, e.g.
+    // startRace()/startQualifying()/the caution-restart cut noted in
+    // race.cpp's cautionController() comments).
+    void setCameraMode(CameraMode mode) {
+        if (mode == CameraMode::Chase && cameraMode_ != CameraMode::Chase) chaseInitialized_ = false;
+        cameraMode_ = mode;
+    }
 
     // If cameraMode() == Chase, follows the car at `chaseCarIdx` (matched
     // against Car::idx, same convention as everywhere else in this port).
@@ -49,9 +58,24 @@ private:
     CameraMode cameraMode_ = CameraMode::TopDown;
     int chaseCarIdx_ = 0;
 
+    // Set by setTrack(); needed by the chase camera's corner-lookahead bias
+    // (Track::pointAt() ahead of the chased car). Not owned -- caller's
+    // Track must outlive this Renderer, true for main.cpp's usage.
+    const Track* track_ = nullptr;
+
     // Top-down framing, computed once in setTrack() from the ribbon's
     // bounding box.
     float topCx_ = 0, topCy_ = 0, topHalfW_ = 50, topHalfH_ = 50;
+
+    // Chase-camera smoothing state (index.html:3451-3457's cam.pos/cam.look
+    // self-init-then-exponentially-blend idiom, adapted to 2D -- see
+    // renderFrame()'s CameraMode::Chase branch for the full writeup of what
+    // this is and isn't a port of). Renderer keeps its own clock for this
+    // (rather than taking a dt parameter) so main.cpp's render call site
+    // doesn't need to know the camera has frame-rate-dependent state.
+    bool chaseInitialized_ = false;
+    float chaseCx_ = 0, chaseCy_ = 0;
+    std::chrono::steady_clock::time_point chaseLastTime_;
 
     bgfx::VertexLayout layout_;
     bgfx::ProgramHandle program_ = BGFX_INVALID_HANDLE;

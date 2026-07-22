@@ -118,6 +118,7 @@ void Renderer::shutdown() {
 }
 
 void Renderer::setTrack(const Track& track) {
+    track_ = &track;
     if (bgfx::isValid(trackVb_)) bgfx::destroy(trackVb_);
 
     const double halfW = track.halfW();
@@ -201,17 +202,61 @@ void Renderer::renderFrame(const std::vector<Car>& cars) {
     float cx = topCx_, cy = topCy_;
     float halfW = topHalfW_, halfH = topHalfH_;
     if (cameraMode_ == CameraMode::Chase) {
+        const Car* car = nullptr;
         for (auto& c : cars) {
             if (c.idx == chaseCarIdx_) {
-                cx = (float)c.x;
-                cy = (float)c.y;
+                car = &c;
                 break;
             }
         }
-        // Placeholder tight framing until the real chase camera (matching
-        // updateCamera(), PORT_PROGRESS.md's Phase 2 checklist item 3) lands.
-        halfW = 40.0f;
-        halfH = 40.0f;
+        // 2D-adapted analogue of the JS default chase camera
+        // (index.html:3399-3457): forward lookahead + corner-lookahead bias
+        // on the look target, both exponentially smoothed toward every
+        // frame. Deliberately NOT ported: banking lean (upBlend), surface-
+        // height clamping, and the victory/pit-stop/tower/helmet/blimp/menu/
+        // caution-montage alternate camera branches (index.html:3293-3437)
+        // -- all of those need real 3D track/car geometry (elevation,
+        // banking mesh, a car model matrix) that doesn't exist until
+        // Phase 5. This is a flat top-down view with a tighter zoom and
+        // smoothed follow, not a 3rd-person chase cam.
+        if (car && track_) {
+            const auto now = std::chrono::steady_clock::now();
+            double dtSec = 0.0;
+            if (chaseInitialized_) {
+                dtSec = std::chrono::duration<double>(now - chaseLastTime_).count();
+                if (dtSec > 0.05) dtSec = 0.05; // matches JS's stall clamp (index.html:3452)
+            }
+            chaseLastTime_ = now;
+
+            const double fwx = std::cos(car->hdg), fwy = std::sin(car->hdg);
+            const double lookAheadDist = 10.0 + car->v * 0.35;
+            double targetCx = car->x + fwx * lookAheadDist;
+            double targetCy = car->y + fwy * lookAheadDist;
+
+            // Corner-lookahead bias (index.html:3446-3449's pAh/lookLat,
+            // same constants -- this is a world-space offset, not a
+            // screen-space one, so it doesn't need rescaling for this
+            // camera's tighter zoom).
+            PointResult pAh = track_->pointAt(car->s + std::max(20.0, car->v * 0.7));
+            const double lookLat = std::max(-2.5, std::min(2.5, pAh.curv * 450.0));
+            const double nx = -std::sin(pAh.hdg), ny = std::cos(pAh.hdg);
+            targetCx += nx * lookLat;
+            targetCy += ny * lookLat;
+
+            if (!chaseInitialized_) {
+                chaseCx_ = (float)targetCx;
+                chaseCy_ = (float)targetCy;
+                chaseInitialized_ = true;
+            } else {
+                const double k = 1.0 - std::exp(-dtSec * 11.0); // index.html:3453
+                chaseCx_ += (float)((targetCx - chaseCx_) * k);
+                chaseCy_ += (float)((targetCy - chaseCy_) * k);
+            }
+        }
+        cx = chaseCx_;
+        cy = chaseCy_;
+        halfW = 50.0f;
+        halfH = 50.0f;
     }
 
     const float winAspect = (height_ > 0) ? (float)width_ / (float)height_ : 1.0f;
