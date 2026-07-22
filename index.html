@@ -196,6 +196,9 @@
   bottom:calc(var(--ctlGap) + var(--ctlH) + var(--ctlPitGap) + var(--safeB));
   width:var(--ctlW); height:var(--ctlPitH);
   font-size:15px; border-color:var(--c-orange);">PIT</button>
+<button id="camBtn" class="ctl" style="display:none;
+  top:calc(var(--ctlGap) + var(--safeT)); right:calc(var(--ctlGap) + var(--safeR));
+  width:72px; height:32px; font-size:11px; letter-spacing:0.5px;">CAM</button>
 
 <div id="rotate"><div class="phone"></div><p>ROTATE YOUR PHONE</p></div>
 
@@ -493,7 +496,9 @@ function makeCar(isPlayer, idx){
     pit:0, pitT:0, pitReq:false,
     fuel:1, dmg:0, out:false,
     cautionSlot:-1, gridSlot:-1, gridLane:0,
-    progHist:[]     // rolling {t,prog} samples for the live leaderboard gap (see gapTimeAt())
+    progHist:[],    // rolling {t,prog} samples for the live leaderboard gap (see gapTimeAt())
+    replayHist:[], histTick:0   // coarser rolling {t,x,y,hdg} buffer -- see the
+                                // replay-feasibility spike note in stepCar()
   };
 }
 
@@ -503,6 +508,7 @@ const S = {
   t:0, countT:0, laps:5,
   order:[], finishOrder:[],
   sound:true, volume:1, tilt:false, tiltG:0,
+  camMode:'chase',
   shakeT:0,
   qual:false, gridOrder:null, qualPos:0,
   flag:'green', yellowT:0, cautionUntilLap:-1, greenLockT:0, sinceGreenT:0,
@@ -1085,6 +1091,21 @@ function stepCar(c){
   if(S.mode==='race'){
     c.progHist.push({t:S.t, prog:c.prog});
     while(c.progHist.length>2 && S.t-c.progHist[0].t>6) c.progHist.shift();
+    // instant-replay feasibility spike (see the Step 4 plan note): a
+    // coarser, longer rolling buffer of actual renderable pose (x,y,hdg),
+    // sampled every 3rd tick (~16.7Hz) and trimmed to an 8s trailing
+    // window -- exists to let a future replay feature scrub backward
+    // through recent car motion. Deliberately NOT wired to any playback
+    // UI yet: this commit is the feasibility spike only (build + measure
+    // the cost), per the plan's explicit "spike first, decide after" call
+    // for this specific item -- a full replay mode (pausing live sim,
+    // overriding render state from this buffer, a scrub/resume UI) is a
+    // meaningfully bigger, separate follow-up, not bundled in here.
+    c.histTick++;
+    if(c.histTick % 3 === 0){
+      c.replayHist.push({t:S.t, x:c.x, y:c.y, hdg:c.hdg});
+      while(c.replayHist.length>2 && S.t-c.replayHist[0].t>8) c.replayHist.shift();
+    }
   }
 }
 // Real-time leaderboard gap: given the car AHEAD's recent {t,prog} history,
@@ -3240,6 +3261,17 @@ function drawParticlesThree(){
 /* ---------- chase camera + broadcast presentation cameras ---------- */
 const cam = { pos:null, look:null };
 let camFov = 60;        // smoothed FOV (speed/draft zoom, written in drawGL)
+// fixed TV-tower camera anchors for the 'tower' player camera mode --
+// expressed as a fraction of lap distance from the start/finish line
+// rather than absolute `s`, so the same 4 generic anchors (roughly one per
+// straight/corner quadrant) work correctly across all 4 tracks regardless
+// of TRACK.total, with no per-track authoring needed.
+const TOWER_CAMS = [
+  { sFrac:0.02, lat:WALL_LAT+14, h:16 },   // frontstretch tower
+  { sFrac:0.27, lat:WALL_LAT+10, h:11 },   // turn 1-2 tower
+  { sFrac:0.52, lat:WALL_LAT+14, h:16 },   // backstretch tower
+  { sFrac:0.77, lat:WALL_LAT+10, h:11 },   // turn 3-4 tower
+];
 function setHardCam(pos, look){
   cam.pos = pos.slice(); cam.look = look.slice(); cam.t = performance.now();
   camera.position.set(pos[0],pos[1],pos[2]); camera.up.set(0,1,0);
@@ -3367,6 +3399,42 @@ function updateCamera(){
   const M = carModelMat(c);
   const fw=[M[0],M[1],M[2]], up=[M[4],M[5],M[6]];
   const base=[M[12],M[13],M[14]];
+  if(S.mode==='race' && S.camMode && S.camMode!=='chase'){
+    if(S.camMode==='helmet'){
+      // eye point at roughly driver-head height, right at the car's own
+      // position (not offset back like the chase cam) -- rigidly attached
+      // to the live model matrix, so a hard cut every frame is inherently
+      // smooth (the car itself doesn't teleport frame to frame).
+      const pos = [base[0]+up[0]*1.05, base[1]+up[1]*1.05, base[2]+up[2]*1.05];
+      const look = [pos[0]+fw[0]*20, pos[1]+fw[1]*20, pos[2]+fw[2]*20];
+      return setHardCam(pos, look);
+    }
+    if(S.camMode==='tower'){
+      // fixed TV-tower anchors, generic across all 4 tracks via lap-
+      // fraction offsets from the start/finish line (their absolute `s`
+      // scales automatically with each track's own TRACK.total) -- picks
+      // whichever anchor is currently closest to the player and pans to
+      // track them, same "fixed position, continuously updated look"
+      // idiom the caution TV montage already uses above.
+      let best=null, bestD=1e9;
+      for(const t of TOWER_CAMS){
+        const ts = TRACK.sFinish + t.sFrac*TRACK.total;
+        const d = Math.abs(((ts - c.s + TRACK.total*1.5) % TRACK.total) - TRACK.total/2);
+        if(d<bestD){ bestD=d; best=t; }
+      }
+      const ts = TRACK.sFinish + best.sFrac*TRACK.total;
+      const pC = pos3(ts, best.lat); pC[1] += best.h;
+      const pL = [base[0], base[1]+1.2, base[2]];
+      return setHardCam(pC, pL);
+    }
+    if(S.camMode==='blimp'){
+      // high, slow-drifting overhead follow -- offset slightly behind and
+      // well above the car, looking down and ahead at it
+      const pC = [base[0]-fw[0]*10, base[1]+55, base[2]-fw[2]*10];
+      const pL = [base[0]+fw[0]*15, base[1], base[2]+fw[2]*15];
+      return setHardCam(pC, pL);
+    }
+  }
   const dist = 6.9 + c.v*0.020, hgt = 2.55;
   const tgtPos = [ base[0]-fw[0]*dist+up[0]*hgt,
                    base[1]-fw[1]*dist+up[1]*hgt,
@@ -3859,6 +3927,7 @@ function drawStateBanner(key, text, tone, y){
 function drawHUD(){
   cx.clearRect(0,0,W,H);
   refreshPitBtn();
+  refreshCamBtn();
   if(S.mode==='menu' || S.mode==='menuwait') return;
   const P = S.player;
   cx.textBaseline = 'middle';
@@ -4603,6 +4672,22 @@ function refreshPitBtn(){
   const show = S.mode==='race' && P && !P.done;
   bPitEl.style.display = show ? 'flex' : 'none';
   if(show) bPitEl.classList.toggle('pressed', !!(P.pitReq || P.pit));
+}
+// player-selectable camera modes: cockpit/helmet, fixed tower, blimp,
+// alongside the existing automatic chase cam. Only offered during actual
+// green-flag racing -- the automatic broadcast cuts (menu/pace-intro/
+// pit-stop/caution-montage/victory) always take priority over S.camMode
+// regardless of what the player picked, since those are deliberate
+// non-interruptible broadcast moments, not the player's live view.
+const CAM_MODES = ['chase','helmet','tower','blimp'];
+const camBtnEl = document.getElementById('camBtn');
+camBtnEl.addEventListener('click', ()=>{
+  S.camMode = CAM_MODES[(CAM_MODES.indexOf(S.camMode)+1) % CAM_MODES.length];
+  camBtnEl.textContent = 'CAM: '+S.camMode.toUpperCase();
+});
+function refreshCamBtn(){
+  const show = S.mode==='race' && S.player && !S.player.done;
+  camBtnEl.style.display = show ? 'flex' : 'none';
 }
 document.getElementById('againBtn').addEventListener('click', ()=>{
   document.getElementById('results').style.display='none';
