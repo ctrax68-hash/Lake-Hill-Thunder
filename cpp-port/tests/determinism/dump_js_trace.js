@@ -51,6 +51,15 @@ const server = http.createServer((req, res) => {
   });
   const page = await browser.newPage({ viewport: { width: 900, height: 500 } });
   page.on('pageerror', err => console.error('PAGE ERROR:', err.message));
+  // index.html runs its own requestAnimationFrame(frame) loop from page load,
+  // which calls tick() at real-wall-clock rate independent of anything this
+  // script does -- neutering rAF before that loop ever gets to schedule its
+  // first real callback is the only way to make tick() calls fully
+  // deterministic and exclusively driven by this script's own explicit loop
+  // below. Without this, every await (waitForTimeout, click, etc.) lets real
+  // time pass and the game's own loop silently ticks the sim in the
+  // background, corrupting the trace with wall-clock-dependent extra ticks.
+  await page.addInitScript(() => { window.requestAnimationFrame = () => 0; });
   await page.goto(`http://localhost:${port}/index.html`);
   await page.waitForTimeout(400);
   await page.evaluate(i => { if (typeof selectTrack === 'function') selectTrack(i); }, TRACK_ARG);

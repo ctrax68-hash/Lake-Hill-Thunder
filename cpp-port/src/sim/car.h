@@ -100,6 +100,14 @@ struct Car {
     double spinT = 0;
     int spinDir = 1;
     double spinCd = 0;
+    // spinRollCd/dmgCd/blown are dynamically added by JS (tick()/collide())
+    // rather than being in makeCar()'s literal object -- e.g. `c.dmgCd||0`
+    // reads as 0 until first set. They ARE physics-relevant (gate damage
+    // timing and tire-blowout speed) so get real, zero-defaulted fields here
+    // rather than being treated as cosmetic/HUD-only like hitFx/slipFx.
+    double spinRollCd = 0;
+    double dmgCd = 0;
+    bool blown = false;
 
     int pit = 0;
     double pitT = 0;

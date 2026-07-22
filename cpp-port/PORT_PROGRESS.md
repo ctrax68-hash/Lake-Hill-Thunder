@@ -154,22 +154,49 @@ port; it's the reference the C++ port must match).
       dead code — preserve that context), caution/pace-car following, spin/wreck
       (`spinT`/`spinDir`/`spinCd`), damage/blowout. Port and verify one branch at a
       time, not the whole function at once.
-- [ ] Port pace car (`stepPace()`, JS: `index.html:599`), grid start (`gridStart()`),
-      the race state object `S` (JS: `index.html:506`), green-white-checkered logic
-      (`S.gwcState` machine: `'none'→'watch'→'clean1'→'white'`, JS: `index.html:4480`+).
-      **Scope correction found while building the Session 2 determinism harness:**
-      `tick()` (JS: `index.html:4180`) is bigger than "call stepCar() per car" --
-      it's the actual per-frame orchestrator and does a lot that isn't inside
-      `stepCar()` at all: `stepPace()`, `updateAero()`, the `stepCar()` loop,
-      `collide()`, the `S.order` sort, the pace→race mode transition, qual-lap
-      completion, AI pit-strategy decisions (`c.pitReq`), blowout/DNF rolls
-      (using `rngR()`), and the entire caution controller (yellow-flag trigger,
-      restart sequencing) all live directly in `tick()`, not in a sub-function.
-      Porting "`stepCar()`" alone will NOT be enough to run a real race scenario
-      through the determinism harness -- budget for porting `tick()`'s full
-      orchestration logic as its own body of work, likely deserving its own
-      further sub-split (e.g. pace/aero/collide first, caution controller
-      after, GWC/qual last), not just a footnote under this checklist item.
+      **Progress (Session 3): the `S.mode==='pace'` branch (index.html:837-858,
+      formation-following) is done, plus the shared physics tail every branch
+      needs (index.html:977-1109: steering blend, track projection, tire
+      grip/wear, fuel burn, drag/engine force, speed/yaw integration, wall
+      clamp, lap counting) -- see `src/sim/step_car.cpp`. All other branches
+      (victory, out/done, spin, pit, yellow-caution, player-input, AI-race)
+      throw `std::logic_error` rather than silently running wrong physics if
+      reached -- none of them CAN be reached yet because the only scenario
+      exercised so far (the pace phase of a fresh green-flag start) never
+      triggers them (see below). `Car` gained `blown`/`dmgCd`/`spinRollCd`
+      fields the tail needs (JS adds these dynamically outside `makeCar()`,
+      not part of its literal object, but they're physics-relevant so they're
+      real zero-defaulted `Car` fields here, not skipped like the HUD-only
+      dynamic fields). The pit-entry arming block (index.html:692-701) is
+      also not ported yet, but is provably a no-op during the pace phase
+      (its guard needs `pitReq`/`dtPending`, both unreachable before
+      `S.mode==='race'`) so this is a real, not just assumed, inert omission.
+- [x] Port pace car (`stepPace()`, JS: `index.html:599`), grid start (`gridStart()`),
+      updateAero() and collide() are also done this session even though the
+      checklist line doesn't mention them -- see below for why they had to
+      come along with this item. The race state object `S` (JS:
+      `index.html:506`) has a physics-relevant subset ported as `RaceState`
+      (`src/sim/race_state.h`); UI/audio/render-only fields (sound, volume,
+      tilt, tiltG, camMode, shakeT) are skipped, same rationale as Car's
+      progHist/replayHist. Green-white-checkered logic (`S.gwcState` machine:
+      `'none'→'watch'→'clean1'→'white'`, JS: `index.html:4480`+) is
+      NOT ported yet -- it can't fire before a race reaches its final laps,
+      well beyond what's been verified so far.
+      **Scope correction found while building the Session 2 determinism harness
+      (confirmed true while doing this work in Session 3):** `tick()` (JS:
+      `index.html:4180`) is bigger than "call stepCar() per car" -- it's the
+      actual per-frame orchestrator, and `stepPace()`/`updateAero()`/
+      `collide()` all had to be ported alongside `stepCar()`'s pace-mode
+      branch just to get ONE tick of the pace phase to run at all. AI
+      pit-strategy decisions, blowout/DNF rolls, and the entire caution
+      controller are still not ported -- all gated on `S.mode==='race'` in
+      JS, so genuinely unreachable during the pace phase (not just assumed
+      so -- see the Session 3 log entry for how this was actually confirmed).
+      `src/sim/race.cpp`'s `tick()` ports exactly the pace-phase-relevant
+      subset of the real `tick()`; see its own header comment in `race.h`
+      for the precise list of what's deliberately deferred (render-only
+      previous-pose storage, `S.order` sort, qual/pit-strategy/blowout/
+      caution-controller blocks).
 - [x] **Determinism harness**: instrument the JS (headless Node/Playwright — this
       repo already has `tools/playtest.js` and `tools/wreck_stats.js` as a working
       example of exactly this kind of headless harness, reuse its patterns) to dump
@@ -209,6 +236,28 @@ port; it's the reference the C++ port must match).
         scoped to "build and prove the harness plumbing works," not "verify
         stepCar()" -- that verification happens incrementally as each branch
         of `stepCar()` lands, per the checklist item below.
+      - **Critical bug found and fixed in Session 3, logged so it's never
+        rediscovered the hard way**: `dump_js_trace.js`'s original version
+        called `tick()` directly in a loop but did NOT stop `index.html`'s own
+        `requestAnimationFrame(frame)` loop (started unconditionally at page
+        load, index.html:4730) from *also* calling `tick()` at real-wall-clock
+        rate via its own `acc += simDt; while(acc>=DT){tick(); acc-=DT;}`
+        accumulator. Every `await` in the Playwright script (waitForTimeout,
+        click, ...) let real time pass, during which the page's own rAF loop
+        silently ticked the sim in the background -- so the "tick 0" the
+        script captured was actually already several real ticks ahead of a
+        true fresh start (observed: `S.t` was `0.46` instead of the expected
+        `0.02` at the first captured tick). This produced a JS trace that
+        looked plausible but was NOT what a byte-for-bit-correct C++ port
+        would ever match, because it included nondeterministic wall-clock-
+        dependent extra ticks before the script's own loop even started. Fixed
+        by neutering `requestAnimationFrame` via `page.addInitScript()` before
+        `page.goto()`, so the page's own loop never fires and `tick()` is
+        *exclusively* driven by the script's explicit loop. **Any trace
+        generated before this fix is invalid and must be regenerated** --
+        there should be no such traces committed (the fixture is intentionally
+        never committed, see above), but if a stale one is ever found lying
+        around, throw it away rather than trusting it.
 
 ### Phase 2 — Minimal renderer (desktop-first) — NOT STARTED
 - [ ] Static camera, flat-shaded track ribbon + car boxes, no postprocessing
@@ -311,3 +360,58 @@ logged yet — Phase 0 doesn't touch simulation logic.)*
   can take a `Car&` and whatever state it reads as explicit parameters), but
   a *full* race-scenario determinism run will eventually need all of it
   wired together, so don't leave it unexamined until the very end.
+
+- **Session 3**: Ported and verified the pace phase end-to-end -- the first
+  real slice of `stepCar()`/`tick()` with an actual C++ simulation running
+  and matching JS tick-for-tick, not just isolated pure functions. New files:
+  `src/sim/race_state.h` (`RaceState`, `PaceCar`), `src/sim/race.{h,cpp}`
+  (`gridStart()`, `stepPace()`, `updateAero()`, `collide()`, `tick()`),
+  `src/sim/step_car.{h,cpp}` (`stepCar()`, pace-mode branch + shared physics
+  tail only -- every other branch throws `std::logic_error` if reached).
+  `Car` gained `blown`/`dmgCd`/`spinRollCd` (JS adds these dynamically, not
+  in `makeCar()`'s literal, but they're physics-relevant so they're real
+  fields here now). `tests/race_sim_test.cpp` unit-tests `gridStart()`/
+  `stepPace()`/`updateAero()`/`collide()` against small hand-checked JS
+  ground truth. `tests/determinism_pace_check.cpp` is the real end-to-end
+  check -- runs the ported `gridStart()`+`tick()` loop and diffs against a
+  JS-generated trace via the Phase 1e harness; **not** a `ctest` target
+  since it needs an external Playwright-generated fixture (build it and run
+  it manually: `./build/determinism_pace_check <trace_file> <track_idx>
+  <num_ticks>`).
+  **Result: full match, byte-for-bit, for the ENTIRE pace phase** -- 1395
+  ticks on Thunder Oval (every tick from grid formation through the pace
+  car's lead→peel→parked transitions, right up to the tick before the
+  leader takes the green and `S.mode` flips to `'race'`), plus 600 ticks
+  verified on Big Sable Speedway (the symmetric track) for cross-track
+  confidence. This is a real, substantial, `stepCar()`-adjacent physics
+  surface working correctly: track projection, tire grip/wear, fuel burn,
+  drag/engine force, speed/yaw integration, drafting, and pairwise collision
+  resolution, all bit-matching JS across ~28 sim-seconds x 20 cars.
+  Along the way, found and fixed a real bug in the Session 2 harness itself
+  (not the C++ port) -- see the Phase 1e checklist item's new note on
+  `requestAnimationFrame` double-stepping. This means the Session 2 claim
+  "verified reproducible" was still true (both runs had the SAME bug, so
+  they still matched each other), but the trace's actual tick-0 content was
+  wrong until this session's fix. Lesson: reproducibility-with-itself is
+  necessary but not sufficient -- it doesn't catch a bug that's present
+  identically in every run.
+  **Next run: keep working through `stepCar()`'s remaining branches.** The
+  natural next branch is whichever comes right after the pace phase in a
+  real race's timeline -- once `S.mode` flips to `'race'`, EVERY car (AI and
+  player) needs either the player-input branch (`c.isPlayer`, index.html:
+  859-864, trivial) or the AI-race branch (the final `else`, index.html:
+  865-975, the big one: pack-hold/lane-ease, groove-based lane targeting,
+  blocker detection, and the pass-side swerve logic). Recommend porting the
+  player-input branch first (small, and player-only so it's independently
+  testable against the exact same synthetic brain script already used for
+  trace generation), then the AI-race branch (budget real time for it --
+  it's dense and has several interacting sub-behaviors, see its own
+  extensive JS comments for why each piece exists before touching any of
+  it). After that: spin (`spinT>0`, short), then pit (`c.pit>0`, a small
+  state machine), then the yellow-caution branch and `tick()`'s caution
+  controller together (they're two halves of the same restart-sequencing
+  behavior), then GWC/qual last, matching the original checklist's
+  suggested order. Keep using `determinism_pace_check`-style verification
+  (extend it or add a sibling tool) for each new branch -- generate a JS
+  trace that actually exercises the new branch (e.g. a scenario that forces
+  a caution to check the yellow branch), diff, fix, repeat.
