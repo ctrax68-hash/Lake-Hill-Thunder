@@ -156,14 +156,59 @@ port; it's the reference the C++ port must match).
       time, not the whole function at once.
 - [ ] Port pace car (`stepPace()`, JS: `index.html:599`), grid start (`gridStart()`),
       the race state object `S` (JS: `index.html:506`), green-white-checkered logic
-      (`S.gwcState` machine: `'none'→'watch'→'clean1'→'white'`, JS: `index.html:4480`+)
-- [ ] **Determinism harness**: instrument the JS (headless Node/Playwright — this
+      (`S.gwcState` machine: `'none'→'watch'→'clean1'→'white'`, JS: `index.html:4480`+).
+      **Scope correction found while building the Session 2 determinism harness:**
+      `tick()` (JS: `index.html:4180`) is bigger than "call stepCar() per car" --
+      it's the actual per-frame orchestrator and does a lot that isn't inside
+      `stepCar()` at all: `stepPace()`, `updateAero()`, the `stepCar()` loop,
+      `collide()`, the `S.order` sort, the pace→race mode transition, qual-lap
+      completion, AI pit-strategy decisions (`c.pitReq`), blowout/DNF rolls
+      (using `rngR()`), and the entire caution controller (yellow-flag trigger,
+      restart sequencing) all live directly in `tick()`, not in a sub-function.
+      Porting "`stepCar()`" alone will NOT be enough to run a real race scenario
+      through the determinism harness -- budget for porting `tick()`'s full
+      orchestration logic as its own body of work, likely deserving its own
+      further sub-split (e.g. pace/aero/collide first, caution controller
+      after, GWC/qual last), not just a footnote under this checklist item.
+- [x] **Determinism harness**: instrument the JS (headless Node/Playwright — this
       repo already has `tools/playtest.js` and `tools/wreck_stats.js` as a working
       example of exactly this kind of headless harness, reuse its patterns) to dump
       per-car `{x,y,hdg,v,lap,s,lat}` every tick for a fixed scenario/seed. Run the
       same scenario through the C++ port and diff. Any divergence is a bug to find,
       not a rounding error to shrug off — match float operation *order*, not just
       formulas, since that's what determinism actually depends on.
+      **Done (scaffolding half)**:
+      - `tests/determinism/dump_js_trace.js` runs the REAL `index.html` headlessly
+        (Playwright, same pattern as `tools/playtest.js`, including its exact
+        synthetic player-brain verbatim -- that brain is a pure function of car/
+        track state with no RNG, so reusing it doesn't perturb the game's own
+        `rng()`/`rngR()` call sequence). Drives `tick()` directly for a fixed
+        tick count and dumps a flat-text trace: one `TICK ...` line (sim time,
+        mode, flag, greenLockT, sinceGreenT, PACE state) followed by one
+        `CAR ...` line per car (see the script's own field-order comment) per
+        tick. **Verified reproducible**: ran it twice independently for 400
+        ticks on track 0 -- the two 2.17MB output files were byte-identical.
+        The fixture itself is regeneratable on demand (see the script's usage
+        comment) and intentionally NOT committed -- it's multi-MB and fully
+        reproducible from the script + committed `index.html`, so committing it
+        would just be repo bloat. Regenerate with:
+        `NODE_PATH=$(npm root -g) node cpp-port/tests/determinism/dump_js_trace.js --track=0 --ticks=400 --out=cpp-port/tests/fixtures/trace_track0_green.txt`
+      - `tests/determinism/trace.{h,cpp}` is the C++-side reader (`loadTrace()`)
+        and comparator (`diffTraces()`, stops at the first diverging tick and
+        reports every field that diverged there, since later ticks are almost
+        always cascading noise from the same root cause). Self-tested in
+        `tests/determinism_test.cpp` against a tiny hand-written 2-tick/2-car
+        fixture (`tests/fixtures/trace_synthetic.txt`, committed -- it's ~10
+        lines, not regeneratable-and-large like the real trace) -- confirms
+        parsing is correct and that `diffTraces()` both reports clean on an
+        identical trace and correctly localizes an injected single-field
+        divergence to its exact tick/car/field.
+      - **What's NOT done yet, deliberately**: there is no C++ simulation to
+        actually run and diff against a real JS trace yet, because `stepCar()`/
+        `tick()` don't exist in C++ (that's Phase 1f/1g). This sub-task was
+        scoped to "build and prove the harness plumbing works," not "verify
+        stepCar()" -- that verification happens incrementally as each branch
+        of `stepCar()` lands, per the checklist item below.
 
 ### Phase 2 — Minimal renderer (desktop-first) — NOT STARTED
 - [ ] Static camera, flat-shaded track ribbon + car boxes, no postprocessing

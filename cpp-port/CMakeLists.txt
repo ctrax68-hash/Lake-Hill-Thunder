@@ -65,3 +65,8 @@ add_test(NAME car_test COMMAND car_test)
 
 add_executable(speed_model_test tests/speed_model_test.cpp src/sim/track.cpp src/sim/car.cpp)
 add_test(NAME speed_model_test COMMAND speed_model_test)
+
+add_executable(determinism_test tests/determinism_test.cpp tests/determinism/trace.cpp)
+add_test(NAME determinism_test COMMAND determinism_test)
+# Reads tests/fixtures/trace_synthetic.txt by a repo-relative path.
+set_tests_properties(determinism_test PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
