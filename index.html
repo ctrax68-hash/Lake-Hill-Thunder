@@ -403,17 +403,33 @@ const CAR_PALETTE = {
   green: [0.0392,0.5608,0.0000],   // #0A8F00
   purple:[0.3529,0.1725,0.6275]    // #5A2CA0
 };
+// Per-driver authored livery: {stripe:0-4, mask:0-2, sponsor: SPONSORS index,
+// acc2: secondary accent color}. Threaded through paintLivery() in place of
+// the old car.idx-based modulo picks (see paintLivery()'s `scheme` param) --
+// entries sharing a base CAR_PALETTE color (e.g. the three blues) are
+// deliberately given different stripe/mask/sponsor/acc2 combinations so they
+// still read as distinct cars, not just "the blue ones." Any ROSTER entry
+// without a `scheme` falls back to the original idx%N mechanical picks.
 const ROSTER = [
-  {name:'B. HOLLISTER', num:28, col:CAR_PALETTE.red},    {name:'D. MCCREADY', num:7,  col:CAR_PALETTE.blue},
-  {name:'R. LAFONTAINE',num:44, col:CAR_PALETTE.green},  {name:'T. VANCE',    num:3,  col:CAR_PALETTE.black},
-  {name:'C. DELGADO',   num:91, col:CAR_PALETTE.orange}, {name:'W. STROUD',   num:15, col:CAR_PALETTE.purple},
-  {name:'E. KOWALSKI',  num:62, col:CAR_PALETTE.blue},   {name:'J. WHITFIELD',num:5,  col:CAR_PALETTE.white},
-  {name:'M. OKONKWO',   num:12, col:CAR_PALETTE.purple}, {name:'A. CERVANTES',num:18, col:CAR_PALETTE.orange},
-  {name:'P. LINDQVIST', num:24, col:CAR_PALETTE.blue},   {name:'G. THIBODEAUX',num:31,col:CAR_PALETTE.green},
-  {name:'H. NAKAGAWA',  num:37, col:CAR_PALETTE.red},    {name:'S. MCALLISTER',num:48,col:CAR_PALETTE.silver},
-  {name:'D. FONTAINE',  num:53, col:CAR_PALETTE.yellow}, {name:'K. BRENNAN',  num:66, col:CAR_PALETTE.black},
-  {name:'V. ROSSI',     num:73, col:CAR_PALETTE.yellow}, {name:'L. HARGROVE', num:82, col:CAR_PALETTE.green},
-  {name:'C. BJORNSTAD', num:88, col:CAR_PALETTE.silver}
+  {name:'B. HOLLISTER', num:28, col:CAR_PALETTE.red,    scheme:{stripe:0, mask:0, sponsor:0, acc2:CAR_PALETTE.white}},
+  {name:'D. MCCREADY',  num:7,  col:CAR_PALETTE.blue,   scheme:{stripe:1, mask:1, sponsor:1, acc2:CAR_PALETTE.yellow}},
+  {name:'R. LAFONTAINE',num:44, col:CAR_PALETTE.green,  scheme:{stripe:2, mask:0, sponsor:2, acc2:CAR_PALETTE.white}},
+  {name:'T. VANCE',     num:3,  col:CAR_PALETTE.black,  scheme:{stripe:1, mask:2, sponsor:3, acc2:CAR_PALETTE.orange}},
+  {name:'C. DELGADO',   num:91, col:CAR_PALETTE.orange, scheme:{stripe:0, mask:1, sponsor:4, acc2:CAR_PALETTE.black}},
+  {name:'W. STROUD',    num:15, col:CAR_PALETTE.purple, scheme:{stripe:1, mask:0, sponsor:5, acc2:CAR_PALETTE.white}},
+  {name:'E. KOWALSKI',  num:62, col:CAR_PALETTE.blue,   scheme:{stripe:3, mask:2, sponsor:4, acc2:CAR_PALETTE.white}},
+  {name:'J. WHITFIELD', num:5,  col:CAR_PALETTE.white,  scheme:{stripe:2, mask:1, sponsor:6, acc2:CAR_PALETTE.blue}},
+  {name:'M. OKONKWO',   num:12, col:CAR_PALETTE.purple, scheme:{stripe:4, mask:2, sponsor:2, acc2:CAR_PALETTE.yellow}},
+  {name:'A. CERVANTES', num:18, col:CAR_PALETTE.orange, scheme:{stripe:2, mask:2, sponsor:9, acc2:CAR_PALETTE.white}},
+  {name:'P. LINDQVIST', num:24, col:CAR_PALETTE.blue,   scheme:{stripe:4, mask:0, sponsor:8, acc2:CAR_PALETTE.black}},
+  {name:'G. THIBODEAUX',num:31, col:CAR_PALETTE.green,  scheme:{stripe:0, mask:2, sponsor:6, acc2:CAR_PALETTE.black}},
+  {name:'H. NAKAGAWA',  num:37, col:CAR_PALETTE.red,    scheme:{stripe:3, mask:2, sponsor:7, acc2:CAR_PALETTE.black}},
+  {name:'S. MCALLISTER',num:48, col:CAR_PALETTE.silver, scheme:{stripe:0, mask:2, sponsor:7, acc2:CAR_PALETTE.red}},
+  {name:'D. FONTAINE',  num:53, col:CAR_PALETTE.yellow, scheme:{stripe:1, mask:2, sponsor:8, acc2:CAR_PALETTE.black}},
+  {name:'K. BRENNAN',   num:66, col:CAR_PALETTE.black,  scheme:{stripe:3, mask:0, sponsor:5, acc2:CAR_PALETTE.silver}},
+  {name:'V. ROSSI',     num:73, col:CAR_PALETTE.yellow, scheme:{stripe:4, mask:0, sponsor:3, acc2:CAR_PALETTE.black}},
+  {name:'L. HARGROVE',  num:82, col:CAR_PALETTE.green,  scheme:{stripe:4, mask:1, sponsor:9, acc2:CAR_PALETTE.yellow}},
+  {name:'C. BJORNSTAD', num:88, col:CAR_PALETTE.silver, scheme:{stripe:3, mask:1, sponsor:1, acc2:CAR_PALETTE.blue}}
 ];
 const FIELD = ROSTER.length + 1;      // 19 AI + player
 function makeCar(isPlayer, idx){
@@ -422,6 +438,7 @@ function makeCar(isPlayer, idx){
     isPlayer, idx,
     name: isPlayer ? 'YOU' : ROSTER[idx-1].name,
     num:  isPlayer ? 21 : ROSTER[idx-1].num,
+    scheme: isPlayer ? null : ROSTER[idx-1].scheme,
     col:  isPlayer ? [1.0,0.82,0.24] : ROSTER[idx-1].col,
     x:p.x, y:p.y, hdg:p.hdg, vdir:p.hdg, v:0,
     s:0, lat:0, lap:-1, prog:0, done:false, finishT:0,
@@ -2495,7 +2512,7 @@ function drawFlameLick(c2x, baseU, baseV, len, amp, dir, col){
     c2x.beginPath(); c2x.arc(x,y,r,0,Math.PI*2); c2x.fill();
   }
 }
-function paintLivery(c2, body, accent, num, pace, idx){
+function paintLivery(c2, body, accent, num, pace, idx, scheme){
   const u=(f)=>f*TX, v=(f)=>f*TX;
   const rgb=(a,m)=>'rgb('+Math.round(a[0]*255*(m||1))+','+Math.round(a[1]*255*(m||1))+','+Math.round(a[2]*255*(m||1))+')';
   // base + 3-tone flat panel shading (shadow/base/highlight only, hard edges, no ramps):
@@ -2507,9 +2524,11 @@ function paintLivery(c2, body, accent, num, pace, idx){
     c2.fillRect(0, v(a), TX, v(b-a)+1); }
   const U0=u(0.02), U1=u(0.78);
   if(!pace){
-    // stripe package (accent): twin side stripes + hood/deck runners
-    const style = (idx||0) % 5;
-    const acc2 = ACCENT2[((idx||0)*3+1) % ACCENT2.length];
+    // stripe package (accent): twin side stripes + hood/deck runners --
+    // prefers the driver's authored scheme, falls back to the old
+    // idx-based mechanical pick when no scheme is set (e.g. the player)
+    const style = scheme && scheme.stripe!=null ? scheme.stripe : (idx||0) % 5;
+    const acc2 = scheme && scheme.acc2 ? scheme.acc2 : ACCENT2[((idx||0)*3+1) % ACCENT2.length];
     if(style===0){
       // twin side stripes + hood band (classic). Kept at v>=0.26 — below that
       // is the wheel-arch relief zone (see ringPts/WHEEL_CLEAR), so painting a
@@ -2655,7 +2674,7 @@ function paintLivery(c2, body, accent, num, pace, idx){
       drawWord(c2, 'LHT CUP', u(carU(-0.10)), v(0.691), v(0.010), 'rgb(10,10,12)', 0, false, u(barW*0.9));
     }
     // ---- sponsor wordmarks (fictional, 3x5 pixel font) ----
-    const short = SPONSORS[(idx||0) % SPONSORS.length].split(' ')[0];
+    const short = SPONSORS[scheme && scheme.sponsor!=null ? scheme.sponsor : (idx||0) % SPONSORS.length].split(' ')[0];
     const lumA = accent[0]*0.5+accent[1]*0.4+accent[2]*0.1;
     const wcol = lumA > 0.5 ? rgb(accent) : 'rgb(248,248,248)';
     // rear quarters, high on the panel so the 3D tires don't occlude. Capped to
@@ -2697,7 +2716,7 @@ function paintLivery(c2, body, accent, num, pace, idx){
   // headlight/taillight graphic. Cap fan UV windows unchanged (NI/TI ± the
   // same margins as the original single style, now "style 0").
   const NI=[0.845,0.24], TI=[0.845,0.74];
-  const maskStyle = (idx||0) % 3;
+  const maskStyle = scheme && scheme.mask!=null ? scheme.mask : (idx||0) % 3;
   c2.fillStyle=rgb(body,0.96); c2.fillRect(u(NI[0]-0.07), v(NI[1]-0.06), u(0.14), v(0.12));
   if(!pace){ c2.fillStyle=rgb(accent);
     c2.fillRect(u(NI[0]-0.068), v(NI[1]-0.040), u(0.136), v(0.016)); }  // upper accent stripe
@@ -2768,7 +2787,7 @@ function buildCarTexture(car, pace){
   const body = pace ? CAR_PALETTE.white : car.col;
   const lum = body[0]*0.5+body[1]*0.4+body[2]*0.1;
   const accent = pace ? CAR_PALETTE.orange : (lum > 0.5 ? CAR_PALETTE.black : CAR_PALETTE.white);
-  paintLivery(c2, body, accent, pace?0:car.num, !!pace, pace?0:(car.idx||0));
+  paintLivery(c2, body, accent, pace?0:car.num, !!pace, pace?0:(car.idx||0), pace?null:car.scheme);
   const tex = new THREE.CanvasTexture(cv2);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.flipY = false;          // matches carU()/carV()'s top-left-origin authoring (see paintWorldAtlas)
