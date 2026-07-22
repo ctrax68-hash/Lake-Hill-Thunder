@@ -1439,13 +1439,19 @@ function updateCtlVars(){
   root.setProperty('--ctlPitH', Math.round(44*UI.scale)+'px');
   root.setProperty('--ctlPitGap', Math.round(8*UI.scale)+'px');
 }
+function viewportW(){ return (window.visualViewport && window.visualViewport.width)  || window.innerWidth; }
+function viewportH(){ return (window.visualViewport && window.visualViewport.height) || window.innerHeight; }
 function resize(){
   // was capped at 2 — bumped to 2.5 (still bounded, not uncapped: composer/
   // bloom cost scales close to quadratically with DPR, and most modern
   // phones/tablets report 2-3x) since the growing amount of fine trackside
   // detail (signage, crowd texture, decals) made the old cap read as blurry.
   DPR = Math.min(2.5, window.devicePixelRatio||1);
-  W = window.innerWidth; H = window.innerHeight;
+  // visualViewport (when available) is the more reliable viewport source on
+  // iOS Safari, especially for home-screen standalone PWAs -- see the
+  // trigger/deferred-recheck stack below this function for why plain
+  // innerWidth/innerHeight alone isn't enough there.
+  W = viewportW(); H = viewportH();
   cv.style.width = W+'px'; cv.style.height = H+'px';
   hud.width = W*DPR; hud.height = H*DPR;
   hud.style.width = W+'px'; hud.style.height = H+'px';
@@ -1477,7 +1483,25 @@ function resize(){
   UI.scale = Math.max(0.68, Math.min(1.15, H/500));
   updateCtlVars();
 }
-window.addEventListener('resize', resize); resize();
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', resize);
+window.addEventListener('pageshow', resize);
+if(window.visualViewport) window.visualViewport.addEventListener('resize', resize);
+resize();
+// iOS Safari home-screen PWAs launched directly in landscape can report
+// stale (portrait) window.innerWidth/innerHeight -- and even a stale
+// visualViewport -- at initial script execution, before WebKit finishes
+// settling the launch-orientation viewport. No `resize` event is
+// guaranteed to follow and self-correct it (the OS doesn't consider
+// orientation to have "changed" since the app launched already-landscape).
+// Re-run resize() a few times on a schedule generous enough to catch that
+// settling: two rAFs catch anything that resolves within the next couple
+// of paints, and a longer setTimeout catches slower post-launch settling
+// reported for this class of iOS bug. resize() is cheap/idempotent, so
+// redundant calls here cost nothing perceptible.
+requestAnimationFrame(resize);
+requestAnimationFrame(() => requestAnimationFrame(resize));
+setTimeout(resize, 300);
 
 /* ---------- mesh builder ---------- */
 function Builder(){
