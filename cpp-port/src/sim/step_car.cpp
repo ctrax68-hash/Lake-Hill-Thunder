@@ -40,11 +40,79 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         // index.html:708-730
         throw std::logic_error("stepCar: out/done branch not yet ported");
     } else if (c.spinT > 0) {
-        // index.html:731-736
-        throw std::logic_error("stepCar: spin branch not yet ported");
+        // index.html:731-736: wrecked -- no control, rotating slide until it
+        // scrubs off. c.isPlayer's `skid` bump (index.html:736) is a
+        // render-only screen-shake variable, not ported.
+        c.spinT -= DT;
+        thr = 0;
+        brk = 0.4;
+        steerIn = 0;
+        c.hdg += (c.spinDir != 0 ? c.spinDir : 1) * 4.0 * DT;
     } else if (c.pit > 0) {
-        // index.html:737-773
-        throw std::logic_error("stepCar: pit branch not yet ported");
+        // index.html:737-773: auto-pit -- drive the apron lane, stop at the
+        // stall, service, exit.
+        const Seg& seg0 = track.segs()[0];
+        const double sStall = pitStallS(track, c.idx);
+        const double sOut = seg0.s0 + seg0.len * 0.97;
+        double lane = (c.pit == 2) ? -10.5 : -8.4;
+        double vT;
+        if (c.pit == 1) {
+            double ds = sStall - c.s;
+            if (ds < -track.total() / 2) ds += track.total();
+            if (ds > track.total() / 2) ds -= track.total();
+            vT = std::min(22.0, std::max(0.0, ds * 0.35));
+            if (ds < 2.0 && c.v < 0.8) {
+                c.pit = 2;
+                c.pitT = 4 + (c.fuel < 0.3 ? 2 : 0) + (c.dmg > 0.3 ? 3 : 0);
+            }
+        } else if (c.pit == 2) {
+            vT = 0;
+            c.pitT -= DT;
+            if (c.pitT <= 0) {
+                c.wear = 0;
+                c.fuel = 1;
+                c.dmg = std::max(0.0, c.dmg - 0.5);
+                c.blown = false;
+                c.pit = 3;
+            }
+        } else if (c.pit == 4) {
+            vT = 22;
+            double de2 = sOut - c.s;
+            if (de2 < -track.total() / 2) de2 += track.total();
+            if (de2 > track.total() / 2) de2 -= track.total();
+            if (de2 < 4) {
+                c.pit = 0;
+                c.pitReq = false;
+                c.dtPending = false;
+                if (state.flag == "yellow") c.cautionSlot = ++state.cautionMaxSlot;
+            }
+        } else {
+            vT = 22;
+            double de = sOut - c.s;
+            if (de < -track.total() / 2) de += track.total();
+            if (de > track.total() / 2) de -= track.total();
+            if (de < 4) {
+                c.pit = 0;
+                c.pitReq = false;
+                if (state.flag == "yellow") c.cautionSlot = ++state.cautionMaxSlot;
+            }
+        }
+        const double LAp = std::max(8.0, c.v * 0.62);
+        PointResult pTp = track.pointAt(c.s + LAp);
+        const double txp = pTp.x - std::sin(pTp.hdg) * lane, typ = pTp.y + std::cos(pTp.hdg) * lane;
+        double dHp = wrapPi(std::atan2(typ - c.y, txp - c.x) - c.hdg);
+        const double cFF = track.pointAt(c.s + std::max(6.0, c.v * 0.3)).curv;
+        steerIn = std::max(-1.0, std::min(1.0, (c.v * cFF) / std::max(0.05, c.v * 0.24) + dHp * 1.5));
+        if (c.v < vT - 0.3) {
+            thr = 0.4;
+            brk = 0;
+        } else if (c.v > vT + 0.4) {
+            thr = 0;
+            brk = 0.8;
+        } else {
+            thr = 0.15;
+            brk = 0;
+        }
     } else if (state.mode == "race" && state.flag == "yellow") {
         // index.html:774-836
         throw std::logic_error("stepCar: yellow-caution branch not yet ported");

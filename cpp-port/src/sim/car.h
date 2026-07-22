@@ -112,6 +112,11 @@ struct Car {
     int pit = 0;
     double pitT = 0;
     bool pitReq = false;
+    // Drive-through-penalty pending flag (index.html:698, 758): dynamically
+    // added by JS's race-control penalty logic (not yet ported -- Phase 1g
+    // territory), but the pit branch itself reads/clears it, so it's a real
+    // field here now rather than deferred.
+    bool dtPending = false;
 
     double fuel = 1, dmg = 0;
     bool out = false;
@@ -131,6 +136,10 @@ struct Car {
 // grooveBias), zero times for the player, in that order, to stay
 // bit-for-bit consistent with the JS original's call sequence.
 Car makeCar(bool isPlayer, int idx, const Track& track, Mulberry32& rng);
+
+// pitStallS() (index.html:682-685): each car's assigned pit-stall center on
+// the frontstretch.
+double pitStallS(const Track& track, int idx);
 
 // AI target-speed model (index.html:629-649). Takes the active Track
 // explicitly rather than closing over a single global instance like the JS

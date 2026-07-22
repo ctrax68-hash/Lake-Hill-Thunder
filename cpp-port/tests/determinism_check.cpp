@@ -28,6 +28,8 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <sstream>
+#include <stdexcept>
 
 namespace {
 
@@ -81,16 +83,56 @@ TickSnapshot buildSnapshot(int tickIdx, const RaceState& state, const PaceCar& p
     return ts;
 }
 
+// Applies the same --force=idx:scenario[,idx:scenario...] seeding
+// dump_js_trace.js's --force flag does, so a forced JS trace and this C++
+// run start from identical seeded state. Scenario strings match exactly.
+void applyForce(std::vector<Car>& cars, const std::string& spec) {
+    std::istringstream ss(spec);
+    std::string entry;
+    while (std::getline(ss, entry, ',')) {
+        auto colon = entry.find(':');
+        if (colon == std::string::npos) throw std::runtime_error("--force: bad entry '" + entry + "'");
+        int idx = std::atoi(entry.substr(0, colon).c_str());
+        std::string scenario = entry.substr(colon + 1);
+        Car* c = nullptr;
+        for (auto& cc : cars) {
+            if (cc.idx == idx) {
+                c = &cc;
+                break;
+            }
+        }
+        if (!c) throw std::runtime_error("--force: no car with idx " + std::to_string(idx));
+        if (scenario == "spin") {
+            c->spinT = 1.6;
+            c->spinDir = 1;
+            c->spinCd = 10;
+        } else if (scenario == "pit1") {
+            c->pit = 1;
+        } else if (scenario == "pit2") {
+            c->pit = 2;
+            c->pitT = 2;
+        } else if (scenario == "pit3") {
+            c->pit = 3;
+        } else if (scenario == "pit4") {
+            c->pit = 4;
+            c->dtPending = true;
+        } else {
+            throw std::runtime_error("--force: unknown scenario '" + scenario + "'");
+        }
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     if (argc < 4) {
-        std::fprintf(stderr, "usage: %s <js_trace_file> <track_index> <num_ticks>\n", argv[0]);
+        std::fprintf(stderr, "usage: %s <js_trace_file> <track_index> <num_ticks> [force_spec]\n", argv[0]);
         return 2;
     }
     const std::string jsTracePath = argv[1];
     const int trackIdx = std::atoi(argv[2]);
     const int numTicks = std::atoi(argv[3]);
+    const std::string forceSpec = argc > 4 ? argv[4] : "";
 
     Track track(TRACKS[trackIdx]);
     Mulberry32 rng(12345);
@@ -102,6 +144,7 @@ int main(int argc, char** argv) {
     gridStart(track, rng, state, pace, cars, nullptr);
     state.mode = "pace";
     state.tilt = true; // matches dump_js_trace.js's `S.tilt = true;`
+    if (!forceSpec.empty()) applyForce(cars, forceSpec);
 
     PlayerInput input;
 

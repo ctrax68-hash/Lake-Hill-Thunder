@@ -17,6 +17,17 @@
  *   NODE_PATH=$(npm root -g) node cpp-port/tests/determinism/dump_js_trace.js \
  *     --track=0 --ticks=400 --out=cpp-port/tests/fixtures/trace_track0_green.txt
  *
+ * Optional --force=idx:scenario[,idx:scenario...] seeds specific cars'
+ * state right after the grid forms (still unmodified index.html -- this
+ * just pokes S.cars from the test script, exactly like a real incident
+ * would set that state), for exercising branches that rarely occur
+ * organically in a short trace: spin/pit/etc. Scenario values:
+ *   spin  -> spinT=1.6, spinDir=1, spinCd=10 (matches collide()'s own wreck-roll seed)
+ *   pit1  -> pit=1 (approach)
+ *   pit2  -> pit=2, pitT=2 (in service)
+ *   pit3  -> pit=3 (exit lane)
+ *   pit4  -> pit=4, dtPending=true (drive-through penalty)
+ *
  * Requires playwright installed globally, chromium at /opt/pw-browsers (or
  * set CHROMIUM_PATH) -- same requirements as tools/playtest.js.
  */
@@ -29,6 +40,7 @@ const ROOT = path.join(__dirname, '..', '..', '..'); // repo root (index.html li
 const TRACK_ARG = (process.argv.find(a => a.startsWith('--track=')) || '--track=0').split('=')[1] | 0;
 const TICKS_ARG = (process.argv.find(a => a.startsWith('--ticks=')) || '--ticks=400').split('=')[1] | 0;
 const OUT_ARG = (process.argv.find(a => a.startsWith('--out=')) || '--out=').split('=')[1];
+const FORCE_ARG = (process.argv.find(a => a.startsWith('--force=')) || '--force=').split('=')[1];
 const EXE = process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.png': 'image/png', '.json': 'application/json' };
@@ -65,6 +77,23 @@ const server = http.createServer((req, res) => {
   await page.evaluate(i => { if (typeof selectTrack === 'function') selectTrack(i); }, TRACK_ARG);
   await page.click('#startBtn');
   await page.waitForTimeout(300);
+
+  if (FORCE_ARG) {
+    await page.evaluate((forceSpec) => {
+      for (const entry of forceSpec.split(',')) {
+        const [idxStr, scenario] = entry.split(':');
+        const idx = +idxStr;
+        const c = S.cars.find(c => c.idx === idx);
+        if (!c) throw new Error(`--force: no car with idx ${idx}`);
+        if (scenario === 'spin') { c.spinT = 1.6; c.spinDir = 1; c.spinCd = 10; }
+        else if (scenario === 'pit1') { c.pit = 1; }
+        else if (scenario === 'pit2') { c.pit = 2; c.pitT = 2; }
+        else if (scenario === 'pit3') { c.pit = 3; }
+        else if (scenario === 'pit4') { c.pit = 4; c.dtPending = true; }
+        else throw new Error(`--force: unknown scenario '${scenario}'`);
+      }
+    }, FORCE_ARG);
+  }
 
   // Same synthetic driver brain as tools/playtest.js, verbatim -- a pure
   // function of car/track state (no RNG), so running it doesn't change the

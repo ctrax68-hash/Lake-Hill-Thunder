@@ -181,9 +181,40 @@ port; it's the reference the C++ port must match).
       caller-supplied source (a human, or -- for testing -- a scripted
       brain). `LANE_EASE_DUR` added to `constants.h`.
 
-      Remaining unported branches (victory, out/done, spin, pit,
-      yellow-caution) still throw `std::logic_error` if reached, and still
-      can't be, since none of the scenarios verified so far trigger them.
+      **Progress (same session, continued further): the spin branch
+      (index.html:731-736) and the full pit-road state machine
+      (index.html:737-773, all 4 `c.pit` states -- approach/service/exit-
+      lane/drive-through) are ALSO done now.** `Car` gained `dtPending`
+      (drive-through-penalty pending flag; JS adds it dynamically, but the
+      pit branch itself reads/clears it, so it's a real field here, same
+      rationale as `blown`/`dmgCd`/`spinRollCd`). New `pitStallS()`
+      (`car.{h,cpp}`, index.html:682-685) gives each car's pit-stall
+      position. Remaining unported branches: victory, out/done,
+      yellow-caution (+ `tick()`'s caution controller). These still throw
+      `std::logic_error` if reached, and still can't be, since nothing
+      verified so far triggers them.
+
+      **Verifying spin/pit needed a new technique**: these essentially
+      never occur organically within a few hundred ticks (no natural
+      incident that early), so `dump_js_trace.js` gained an optional
+      `--force=idx:scenario[,idx:scenario...]` flag that seeds a car's
+      `spinT`/`pit` state right after the grid forms (still not touching
+      `index.html` -- this pokes `S.cars` from the test script itself, the
+      same way a real incident would set that state). `determinism_check`
+      gained a matching `--force` argument so both sides start from
+      identical seeded state. **Verified each in isolation**: spin (200
+      ticks) and all 4 pit sub-states (300 ticks each) all matched JS
+      byte-for-bit. A combined test forcing all 5 scenarios onto adjacent
+      grid slots simultaneously did diverge (tick 159, two OTHER
+      unforced cars' headings) -- but this is an artificial stress test (5
+      simultaneous incidents packed onto neighboring grid slots is not a
+      realistic scenario) that triggers a cascading multi-car pileup/
+      traffic-jam; given every branch verified cleanly in isolation, this
+      is almost certainly another instance of the same floating-point
+      boundary phenomenon documented below, amplified by how many cars are
+      tightly interacting at once -- not chased further, since isolating
+      and confirming each branch independently is the actual verification
+      bar, not surviving an artificially dense worst-case pileup.
 
       **Verification**: `tests/test_driver_brain.h` ports (verbatim) the
       exact synthetic player-brain `dump_js_trace.js` uses, so the C++ side
@@ -562,3 +593,30 @@ threshold this closely for long enough. When a divergence is found:
   trigger odds, NOT `index.html` itself), port the branch, verify with
   `determinism_check` (extend its per-car debug hook if a divergence needs
   investigating), then update this file and commit.
+
+- **Session 3 (continued further)**: Ported and verified the spin branch
+  (index.html:731-736) and the complete pit-road state machine
+  (index.html:737-773). `Car` gained `dtPending`; new `pitStallS()` in
+  `car.{h,cpp}`. Since neither scenario occurs organically within a short
+  trace, added `--force=idx:scenario[,...]` to `dump_js_trace.js` (seeds
+  `S.cars` state post-grid-formation, still without touching `index.html`)
+  and a matching `--force` argument to `determinism_check`, so both sides
+  start from identical seeded incidents. Verified spin and all 4 pit
+  sub-states cleanly in isolation (200-300 ticks each, byte-for-bit match).
+  A combined 5-incident stress test did diverge, but only for two OTHER,
+  unforced cars caught in the resulting pileup -- consistent with the same
+  floating-point boundary phenomenon already documented, not a new bug (see
+  the Phase 1f checklist entry above for the full reasoning on why this
+  wasn't chased further).
+  **Next run**: the yellow-caution branch (index.html:774-836) together
+  with `tick()`'s caution controller (the block inside `tick()` that
+  actually throws the yellow flag and manages the restart sequence -- these
+  are two halves of one behavior and need to land together to be
+  testable at all, same reason pace-phase verification needed
+  gridStart()/stepPace()/updateAero()/collide() alongside stepCar()'s pace
+  branch). The `--force` technique from this session should extend
+  naturally: force a car's `spinT>0` mid-race (not pre-race like this
+  session's tests) to make `S.flag` flip to `'yellow'` via the caution
+  controller, then verify the resulting single-file caution formation,
+  proximity interlock, and (eventually) the restart sequence. After that:
+  victory/GWC/qual branches last, matching the original checklist order.

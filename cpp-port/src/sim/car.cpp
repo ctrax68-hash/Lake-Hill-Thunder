@@ -133,3 +133,9 @@ double targetSpeed(const Track& track, const Car& car) {
     }
     return vT;
 }
+
+// pitStallS() (index.html:682-685)
+double pitStallS(const Track& track, int idx) {
+    const Seg& seg0 = track.segs()[0];
+    return seg0.s0 + seg0.len * (0.18 + 0.55 * idx / static_cast<double>(FIELD));
+}
