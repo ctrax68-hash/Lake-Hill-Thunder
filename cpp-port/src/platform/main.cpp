@@ -13,6 +13,7 @@
 #include "../sim/race.h"
 #include "../sim/rng.h"
 #include "../sim/tracks_data.h"
+#include "../ui/touch_controls.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -99,6 +100,29 @@ int main(int argc, char** argv)
     PlayerInput input;
     std::vector<Car*> finishOrder;
 
+    // Phase 3a (PORT_PROGRESS.md): touch/click input regions matching the JS
+    // original's bL/bR/bB/bG/bP on-screen buttons (index.html:1235-1246,
+    // 4664-4669). No visible button is drawn yet -- that's Phase 4's job --
+    // this is input recognition only. `touchLeft/Right/Gas/Brake` are held
+    // state, OR-combined with keyboard below so either input method works.
+    TouchRegions touchRegions = computeTouchRegions(width, height);
+    bool touchLeft = false, touchRight = false, touchGas = false, touchBrake = false;
+
+    // Mirrors bP's JS click handler (index.html:4665-4669) exactly: an
+    // independent toggle on the player's own pitReq, guarded the same way,
+    // not threaded through PlayerInput/stepCar() at all -- the player has no
+    // other way to request a pit stop (tick()'s AI pit-strategy block
+    // deliberately skips the player, matching JS).
+    auto togglePlayerPit = [&]() {
+        Car* player = nullptr;
+        for (auto& c : cars) {
+            if (c.isPlayer) { player = &c; break; }
+        }
+        if (player && state.mode == "race" && !player->done && player->pit == 0) {
+            player->pitReq = !player->pitReq;
+        }
+    };
+
     // Bounded by default so this stays scriptable/verifiable in a headless
     // run too (same idea as Phase 0's main.cpp) -- set LHT_MAX_FRAMES for an
     // actual interactive session (e.g. a very large number).
@@ -125,19 +149,51 @@ int main(int argc, char** argv)
                     renderer.setCameraMode(chaseCam ? Renderer::CameraMode::Chase
                                                      : Renderer::CameraMode::TopDown);
                 }
+                // Debug-only: JS has no keyboard binding for pit at all (bP
+                // is touch/click-only) -- this is a desktop-testing
+                // convenience, same rationale as LHT_FORCE_RACE/
+                // LHT_START_CHASE, not a JS behavior being ported.
+                if (ev.key.keysym.sym == SDLK_p && !ev.key.repeat) togglePlayerPit();
             }
             if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_RESIZED) {
                 width = ev.window.data1;
                 height = ev.window.data2;
                 renderer.resize(width, height);
+                touchRegions = computeTouchRegions(width, height);
+            }
+            // Mouse (desktop stand-in) and real touch, hit-tested against the
+            // same regions -- bL/bR/bG/bB are press-and-hold (index.html's
+            // pointerdown/up), bP is a single toggle on press (index.html's
+            // click), matching bindBtn()'s and bP's own listener exactly.
+            if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_LEFT) {
+                const int x = ev.button.x, y = ev.button.y;
+                if (pointInRect(x, y, touchRegions.bL)) touchLeft = true;
+                if (pointInRect(x, y, touchRegions.bR)) touchRight = true;
+                if (pointInRect(x, y, touchRegions.bG)) touchGas = true;
+                if (pointInRect(x, y, touchRegions.bB)) touchBrake = true;
+                if (pointInRect(x, y, touchRegions.bP)) togglePlayerPit();
+            }
+            if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_LEFT) {
+                touchLeft = touchRight = touchGas = touchBrake = false;
+            }
+            if (ev.type == SDL_FINGERDOWN) {
+                const int x = (int)(ev.tfinger.x * width), y = (int)(ev.tfinger.y * height);
+                if (pointInRect(x, y, touchRegions.bL)) touchLeft = true;
+                if (pointInRect(x, y, touchRegions.bR)) touchRight = true;
+                if (pointInRect(x, y, touchRegions.bG)) touchGas = true;
+                if (pointInRect(x, y, touchRegions.bB)) touchBrake = true;
+                if (pointInRect(x, y, touchRegions.bP)) togglePlayerPit();
+            }
+            if (ev.type == SDL_FINGERUP) {
+                touchLeft = touchRight = touchGas = touchBrake = false;
             }
         }
 
         const Uint8* keys = SDL_GetKeyboardState(nullptr);
-        input.gas = keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W];
-        input.brake = keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S];
-        input.left = keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A];
-        input.right = keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D];
+        input.gas = keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W] || touchGas;
+        input.brake = keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S] || touchBrake;
+        input.left = keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A] || touchLeft;
+        input.right = keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D] || touchRight;
 
         const Uint64 now = SDL_GetPerformanceCounter();
         double dt = (double)(now - last) / (double)perfFreq;

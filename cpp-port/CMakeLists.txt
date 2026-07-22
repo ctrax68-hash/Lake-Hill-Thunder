@@ -97,6 +97,7 @@ add_custom_target(lht_shaders DEPENDS ${LHT_VS_FLAT_OUTPUTS} ${LHT_FS_FLAT_OUTPU
 add_executable(lht_port
   src/platform/main.cpp
   src/render/renderer.cpp
+  src/ui/touch_controls.cpp
   ${SIM_SOURCES}
 )
 add_dependencies(lht_port lht_shaders)
@@ -124,6 +125,13 @@ add_test(NAME car_test COMMAND car_test)
 
 add_executable(speed_model_test tests/speed_model_test.cpp src/sim/track.cpp src/sim/car.cpp)
 add_test(NAME speed_model_test COMMAND speed_model_test)
+
+# touch_controls_test only needs SDL2's headers (SDL_Rect) for the region
+# math -- linked against SDL2::SDL2 for its include path the same way
+# lht_port is, not because this test touches any actual SDL subsystem.
+add_executable(touch_controls_test tests/touch_controls_test.cpp src/ui/touch_controls.cpp)
+target_link_libraries(touch_controls_test PRIVATE SDL2::SDL2)
+add_test(NAME touch_controls_test COMMAND touch_controls_test)
 
 add_executable(determinism_test tests/determinism_test.cpp tests/determinism/trace.cpp)
 add_test(NAME determinism_test COMMAND determinism_test)

@@ -412,9 +412,36 @@ port; it's the reference the C++ port must match).
       (`index.html:3293-3437`) -- this is a flat top-down view with smoothed
       follow, not a 3rd-person chase cam.
 
-### Phase 3 — Mobile input — NOT STARTED
-- [ ] SDL2 touch regions matching the JS original's button layout (`bL`/`bR` steer,
-      `bB` brake, `bG` gas, `bP` pit)
+### Phase 3 — Mobile input — IN PROGRESS (Session 3)
+- [x] SDL2 touch regions matching the JS original's button layout (`bL`/`bR` steer,
+      `bB` brake, `bG` gas, `bP` pit). **Done**: `src/ui/touch_controls.{h,cpp}` --
+      `computeTouchRegions()` mirrors the JS CSS layout's relative positions/sizes
+      (`index.html:19-20,46-51,194-198`'s `--ctl*` values, at their base UI.scale===1
+      pixel sizes -- not yet DPI/viewport-adaptive the way the JS's own `UI.scale` is).
+      `main.cpp` hit-tests `SDL_MOUSEBUTTONDOWN/UP` (desktop stand-in) and
+      `SDL_FINGERDOWN/UP` (real touch, normalized coords scaled by window size) against
+      these regions: `bL`/`bR`/`bG`/`bB` are press-and-hold (OR-combined with keyboard
+      state so either input method works), `bP` is a single toggle on press, matching
+      `bindBtn()`'s and `bP`'s own JS listener exactly (`index.html:1235-1246,4664-4669`).
+      This is input recognition only -- no visible on-screen button is drawn (that's
+      Phase 4's "UI overlay" job).
+      **Also closes a real gap found while implementing this**: the player previously had
+      *no way at all* to request a pit stop in this port -- `tick()`'s AI pit-strategy
+      block (added in Phase 1h) explicitly skips the player, matching JS (where `pitReq`
+      is only ever set by clicking `bP`). `main.cpp` now has a `togglePlayerPit()`
+      mirroring `bP`'s JS click handler exactly (same guard: `mode=="race" &&
+      !player.done && player.pit==0`), wired to both the new `bP` touch region and a
+      debug-only `P` keydown (JS has no keyboard binding for pit at all -- this is a
+      desktop-testing convenience, not a ported behavior, same rationale as
+      `LHT_FORCE_RACE`/`LHT_START_CHASE`).
+      **Verified**: new `tests/touch_controls_test.cpp` (no SDL/bgfx dependency, same
+      pattern as `rng_test`) checks region layout/hit-testing logic directly -- all 7
+      `ctest` suites pass. **Live click-through-region responsiveness attempted once**
+      (`xdotool click` at the `bG` region's center under `xvfb-run`+
+      `matchbox-window-manager`, same setup as the Phase 2 keyboard attempt) and did not
+      register -- same known category of SDL2+Xvfb synthetic-input flakiness already
+      documented below, not chased further per that same precedent (one attempt, not
+      three, once the pattern is already this well established).
 - [ ] `SDL_Sensor` accelerometer/gyro read for tilt-steer, matching `S.tiltG`
 - [ ] Portrait-lock rotate prompt (landscape-only)
 - [ ] **Install Android NDK here** (deferred from Phase 0 per the sequencing decision)
@@ -1195,3 +1222,108 @@ elsewhere in the same run.
   confirmation for Phase 2 remains open whenever a session with an actual
   display/keyboard is available, and the real chase-camera 3D parity
   (banking lean, alternate camera modes) waits on Phase 5's real geometry.
+
+- **Session 3 (continued once more -- Phase 3a, touch/click input
+  regions)**: Scoped to the first of Phase 3's four checklist items --
+  SDL2 touch/mouse regions matching the JS original's on-screen button
+  layout -- per the "one phase/sub-task per run" ground rule, leaving
+  the tilt-steer sensor, portrait-lock prompt, and Android NDK install
+  for future runs (different enough in kind -- hardware sensors, UI
+  polish, toolchain setup -- that folding them in here would blur what
+  each run actually verified).
+
+  **New `src/ui/touch_controls.h`/`.cpp`** (first use of the `ui`
+  directory Phase 0's layout had reserved): `computeTouchRegions(w, h)`
+  returns a `TouchRegions{bL, bR, bB, bG, bP}` of `SDL_Rect`s, transcribed
+  directly from the JS CSS layout's `--ctl*` constants
+  (`index.html:19-20,46-51,194-198`: `ctlW=88 ctlH=76 ctlGasH=96 ctlGap=14
+  ctlPairGap=10 ctlPitH=44 ctlPitGap=8`) at their base `UI.scale===1`
+  pixel sizes -- `bL`/`bR` bottom-left steer pair, `bB`/`bG` bottom-right
+  brake/gas pair (`bG` taller, sharing `bB`'s bottom edge not its top),
+  `bP` stacked directly above `bB` with a gap. Not yet DPI/viewport-
+  adaptive the way JS's own `UI.scale` responds to window size --
+  positions scale with the window, but proportions don't shrink/grow
+  relative to it the way JS's scale factor would. `pointInRect()` is a
+  trivial inclusive-bounds helper. This is input *recognition* only, per
+  the plan's own scope note -- no visible button is drawn yet (Phase 4's
+  "UI overlay" job).
+
+  **`main.cpp` wiring**: computes `TouchRegions` on init and recomputes on
+  window resize. `SDL_MOUSEBUTTONDOWN/UP` (desktop stand-in) and
+  `SDL_FINGERDOWN/UP` (real touch, normalized `[0,1]` coords scaled by
+  current window size) are hit-tested against the regions.
+  `bL`/`bR`/`bG`/`bB` set/clear held booleans (press-and-hold, matching
+  JS's `bindBtn()` pointerdown/up semantics, `index.html:1235-1246`) that
+  get OR-combined with keyboard state each frame
+  (`input.gas = keys[...] || touchGas`, etc.) so either input method
+  works without one clobbering the other. `bP` is a single toggle on
+  press, not a held state, matching JS's plain `click` handler
+  (`index.html:4664-4669`) rather than `bindBtn()`'s press/release pair.
+
+  **Real gap found and closed while implementing this, not part of the
+  original ask**: the player had *no way at all* to request a pit stop
+  in this port before this session. `tick()`'s AI pit-strategy block
+  (added back in Phase 1h) deliberately skips the player --
+  `if (c.isPlayer || ...) continue;` -- matching JS, where `pitReq` is
+  only ever set by the human clicking `bP`. But nothing in the C++ port
+  filled JS's role of "the human clicking `bP`," so the player's
+  `pitReq` simply could never become true. Added a `togglePlayerPit()`
+  lambda in `main.cpp` that mirrors JS's `bP` click handler exactly
+  (`index.html:4665-4669`'s own guard: `state.mode=="race" &&
+  !player->done && player->pit==0`), wired to both the new `bP` touch
+  region's press event and a debug-only `P` keydown -- JS has no
+  keyboard binding for pit at all, so the keydown is purely a desktop-
+  testing convenience, clearly commented as such, same rationale as the
+  existing `LHT_FORCE_RACE`/`LHT_START_CHASE` env hooks. This runs
+  independently of `PlayerInput`/`stepCar()`, exactly like JS's own
+  click handler runs independently of the input-polling path.
+
+  **New `tests/touch_controls_test.cpp`** (no SDL/bgfx runtime
+  dependency, same pattern as `rng_test`/`track_test` -- links SDL2 only
+  for the `SDL_Rect` header, doesn't touch any actual SDL subsystem):
+  checks all five regions stay inside the window bounds with positive
+  size, `bL` sits left of `bR` on the same row, `bB` sits left of `bG`
+  sharing the same *bottom* edge (not top -- `bG` is taller per
+  `ctlGasH=96` vs `ctlH=76`, an assertion I got backwards on the first
+  pass and fixed after actually reasoning through which edge they'd
+  share), `bP` sits above `bB` aligned on `x` with a gap, the steer pair
+  doesn't overlap the pedal pair, each region's own center hits itself
+  and nothing else, and the window's top-left corner hits nothing. Wired
+  into `CMakeLists.txt`/`add_test()`. Caught one real compile error along
+  the way (`<initializer_list>` needed for brace-init deduction in a
+  range-for) and one real logic bug in the test itself (the `bB`/`bG`
+  top-edge assertion above) before it passed.
+
+  **Live verification**: full `ctest` suite passes, 7/7 (added
+  `touch_controls_test` to the prior 6). `lht_port` rebuilds clean with
+  the new sources linked in. One best-effort live attempt --
+  `xvfb-run` + `matchbox-window-manager` (same setup as the Phase 2
+  keyboard attempts) + a single `xdotool mousemove`+`click` at the
+  computed `bG` (gas) region's center, with `LHT_FORCE_RACE=1` so the
+  sim is already in green-flag race mode -- watching the periodic status
+  line for `player.v` climbing instead of decaying toward ~0 the way it
+  does with zero input. It did **not** register: velocity decayed
+  identically to the no-input baseline. This is the same known category
+  of SDL2+Xvfb synthetic-input flakiness already documented for the
+  three failed keyboard attempts in the Phase 2 session log above (not a
+  new failure mode, not chased with two more attempts per the
+  established "one attempt, not three" precedent once a pattern is this
+  well confirmed). The application code itself is a direct hit-test
+  against `SDL_MOUSEBUTTONDOWN`/`SDL_FINGERDOWN` event coordinates, about
+  as low-risk as this kind of code gets -- **genuinely unverified**
+  end-to-end in this container is whether a real human's click/tap
+  actually reaches the game; whoever next has an interactive session
+  with a real display should just try it directly rather than fight
+  synthetic X11 input further here.
+
+  **Status**: Phase 3 item 1 (SDL2 touch regions + the player pit-toggle
+  gap it exposed) is done and verified as far as this environment
+  allows. Items 2-4 (tilt sensor, portrait-lock prompt, Android NDK
+  install) remain open, each deserving its own scoped run -- NDK install
+  in particular is toolchain/environment setup with no gameplay code at
+  all, a genuinely different kind of task from everything else in this
+  phase.
+
+  **Next**: Phase 3 items 2-4, or real interactive verification (both
+  keyboard from Phase 2 and touch/click from this session) whenever a
+  session with an actual display and input devices is available.
