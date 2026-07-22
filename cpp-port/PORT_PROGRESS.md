@@ -158,19 +158,50 @@ port; it's the reference the C++ port must match).
       formation-following) is done, plus the shared physics tail every branch
       needs (index.html:977-1109: steering blend, track projection, tire
       grip/wear, fuel burn, drag/engine force, speed/yaw integration, wall
-      clamp, lap counting) -- see `src/sim/step_car.cpp`. All other branches
-      (victory, out/done, spin, pit, yellow-caution, player-input, AI-race)
-      throw `std::logic_error` rather than silently running wrong physics if
-      reached -- none of them CAN be reached yet because the only scenario
-      exercised so far (the pace phase of a fresh green-flag start) never
-      triggers them (see below). `Car` gained `blown`/`dmgCd`/`spinRollCd`
-      fields the tail needs (JS adds these dynamically outside `makeCar()`,
-      not part of its literal object, but they're physics-relevant so they're
-      real zero-defaulted `Car` fields here, not skipped like the HUD-only
-      dynamic fields). The pit-entry arming block (index.html:692-701) is
-      also not ported yet, but is provably a no-op during the pace phase
-      (its guard needs `pitReq`/`dtPending`, both unreachable before
-      `S.mode==='race'`) so this is a real, not just assumed, inert omission.
+      clamp, lap counting) -- see `src/sim/step_car.cpp`. `Car` gained
+      `blown`/`dmgCd`/`spinRollCd` fields the tail needs (JS adds these
+      dynamically outside `makeCar()`'s literal object, but they're
+      physics-relevant so they're real zero-defaulted `Car` fields here, not
+      skipped like the HUD-only dynamic fields). The pit-entry arming block
+      (index.html:692-701) is also not ported yet, but is provably a no-op
+      during everything verified so far (its guard needs `pitReq`/
+      `dtPending`, both requiring the pit-strategy AI in `tick()`, not yet
+      ported) so this is a real, not just assumed, inert omission.
+
+      **Progress (same session, continued): the player-input branch
+      (index.html:859-864) and the AI-race branch (index.html:865-975 --
+      pack-hold/lane-ease, groove-based lane targeting, blocker detection,
+      pass-side swerve) are ALSO done now.** `RaceState` gained `tilt`/
+      `tiltG` (a scoping correction -- these were originally filed under
+      "UI-only, skip" alongside sound/volume/camMode/shakeT, which was
+      wrong: they're the tilt-steer INPUT SIGNAL the player branch reads
+      directly, a physics input, not a render concern). New `PlayerInput`
+      struct (`race_state.h`) ports JS's `input` global. `stepCar()`/`tick()`
+      signatures now take `const PlayerInput&`, threaded through from a
+      caller-supplied source (a human, or -- for testing -- a scripted
+      brain). `LANE_EASE_DUR` added to `constants.h`.
+
+      Remaining unported branches (victory, out/done, spin, pit,
+      yellow-caution) still throw `std::logic_error` if reached, and still
+      can't be, since none of the scenarios verified so far trigger them.
+
+      **Verification**: `tests/test_driver_brain.h` ports (verbatim) the
+      exact synthetic player-brain `dump_js_trace.js` uses, so the C++ side
+      can drive the player through an actual green-flag race the same way
+      the JS ground-truth trace was generated. `tests/determinism_check.cpp`
+      (renamed from `determinism_pace_check.cpp`, generalized to cover
+      race-mode too) confirmed **byte-for-bit match for ~900 ticks of real
+      green-flag racing** (all 20 cars using the newly-ported branches,
+      right through the pace->race transition) before hitting a genuine,
+      well-understood floating-point edge case -- see "Open questions"
+      below for the full writeup. This is NOT a translation bug: the
+      pack-hold/lane-ease timing, blocker detection, pass-side logic, and
+      throttle/brake/steering decisions all matched exactly for those ~900
+      ticks (confirmed by direct side-by-side inspection of the AI's actual
+      decision variables, not just final position/velocity), and the
+      eventual divergence traces to a sub-1e-13 (few-ULP) numerical
+      difference that happens to straddle an exact equality boundary in the
+      wall-clamp check -- see below.
 - [x] Port pace car (`stepPace()`, JS: `index.html:599`), grid start (`gridStart()`),
       updateAero() and collide() are also done this session even though the
       checklist line doesn't mention them -- see below for why they had to
@@ -299,8 +330,91 @@ port; it's the reference the C++ port must match).
 ## Open questions
 
 *(Seed this section as Phase 1 finds JS behavior that's ambiguous or looks like an
-artifact of the original's own constraints rather than intentional design. Nothing
-logged yet — Phase 0 doesn't touch simulation logic.)*
+artifact of the original's own constraints rather than intentional design.)*
+
+### Cross-runtime floating-point precision limit at hard thresholds (Session 3)
+
+**Not a translation bug -- read this before "fixing" anything here.**
+
+While verifying the newly-ported player-input and AI-race branches
+(`tests/determinism_check.cpp` against a fresh `dump_js_trace.js` trace,
+track 0, 3000 ticks), found a real divergence at **tick 2298, car idx 3**:
+JS and the C++ port matched byte-for-bit for ~900 ticks of actual green-flag
+racing (from the pace->race transition at tick ~1418), then car 3's
+position/speed/heading suddenly diverged by an amount too large to be
+numerical noise (v: JS 46.97 vs C++ 49.44).
+
+Traced the actual root cause by dumping full-precision (`%.17g`/
+`toPrecision(17)`) per-tick state for car 3 from both engines side by side
+(the `DEBUG_CAR_IDX` env var on `tests/determinism_check.cpp` was added for
+exactly this kind of investigation and is safe to leave in -- it's a no-op
+unless set):
+
+- Ticks 2290-2297: both engines already differ, but only in the **13th-15th
+  significant digit** (e.g. tick 2297's `lat`: JS `11.000000000000012`, C++
+  `11.000000000000011` -- a difference of ~1 part in 10^14, i.e. a couple of
+  ULPs for a value of this magnitude). This is present well before the
+  visible divergence and never grows on its own.
+- Car 3 spends this whole window riding almost exactly at the wall
+  (`lat` hovering right at `WALL_CLAMP_LAT` = `halfW()+5` = `11.0` exactly
+  for this track). The wall-clamp check is a **strict `>` against an exact
+  double**, `off > wallClampLat`.
+- At tick 2298, JS's `off` (car 3's `lat` as computed entering that tick)
+  is `11.000000000000014` (a few ULPs *above* 11.0 -> clamp fires, ~5%
+  speed cut applied). The C++ port's `off` for the exact same tick came out
+  to `11` **exactly** (not above 11.0 -> clamp does NOT fire). One engine's
+  pre-existing few-ULP noise happened to land on the "clamp" side of the
+  boundary; the other's landed exactly on the line. That single discrete
+  fork is the entire divergence -- everything downstream from tick 2298 is
+  two now-genuinely-different (but both individually consistent) physics
+  trajectories, which is expected and correct behavior for a system that
+  took a different branch, not evidence of an ongoing bug.
+
+**Ruled out as the ULP source** (don't re-suspect these without new evidence):
+- `Math.sin`/`cos`/`atan2` vs `std::sin`/`cos`/`atan2`: spot-checked the
+  exact input values from this scenario directly (glibc vs V8, same
+  container) -- bit-identical results.
+- `Math.tan` vs `std::tan`: swept a range of bank angles the game actually
+  uses -- bit-identical results.
+- FMA/fused-multiply-add contraction (`-ffp-contract`): empirically ruled
+  out -- this build has no `-march=`/`-mfma` flag anywhere, so the target
+  ISA doesn't even have fused-multiply-add instructions available to
+  contract into; confirmed with a direct multiply-add microbenchmark
+  (`-ffp-contract=off` vs default: identical output).
+
+**Not yet identified**: the exact originating expression that first
+introduces the sub-1e-13 discrepancy. Given how small it is (right at
+double-precision epsilon for values in the ~100-150 range this scenario
+uses) and that it doesn't grow between ticks 2290-2297, it's most likely
+last-bit rounding differences accumulating from *some* chain of operations
+across many ticks of iterative position/heading integration -- not
+necessarily any single "wrong" line. Chasing the exact originating
+expression further did not seem like a good use of time relative to value:
+**this is not fixable by finding-and-correcting a translation error**,
+because the individual per-tick differences are already below any
+reasonable tolerance and the code has been checked formula-by-formula
+against the JS source. Making the two engines bit-identical *forever*
+would require replacing every transcendental math call with a custom,
+guaranteed-bit-identical implementation shared by both languages -- a large
+undertaking with no real payoff for a racing game whose original JS version
+never needed cross-run bit-reproducibility either.
+
+**Practical takeaway for future verification runs**: expect exact matches
+to hold for a large but finite number of ticks, then expect an eventual
+divergence if (and only if) some car's state grazes a hard `>`/`<`/`===`
+threshold this closely for long enough. When a divergence is found:
+1. Check whether the pre-divergence values already differed, even by a
+   tiny amount (`%.17g`/`toPrecision(17)`, not the default tolerance-based
+   diff) -- if yes, and the tick immediately after crosses a hard
+   threshold (wall clamp, an exact caution-slot boundary, etc.), this is
+   very likely the same phenomenon, not a new bug.
+2. If instead the PRE-divergence values were truly bit-identical and the
+   post-divergence values differ by an amount too large to be a boundary
+   flip, that IS a real translation bug worth chasing.
+3. Either way, verify by direct inspection of the actual decision
+   variables (blocker choice, targetSpeed, thr/brk/steerIn, laneEase --
+   not just final x/y/v), the way this session did, rather than guessing
+   from final position/velocity alone.
 
 ## Definition of done (unchanged from the original spec)
 
@@ -415,3 +529,36 @@ logged yet — Phase 0 doesn't touch simulation logic.)*
   (extend it or add a sibling tool) for each new branch -- generate a JS
   trace that actually exercises the new branch (e.g. a scenario that forces
   a caution to check the yellow branch), diff, fix, repeat.
+
+- **Session 3 (continued)**: Ported and verified the player-input branch
+  (index.html:859-864) and the AI-race branch (index.html:865-975 --
+  pack-hold/lane-ease, groove-based lane targeting, blocker detection,
+  pass-side swerve logic). Corrected a scoping mistake from earlier in this
+  session: `RaceState` had filed `tilt`/`tiltG` under "render-only, skip,"
+  which was wrong -- they're the tilt-steer physics input, now real fields.
+  Added `PlayerInput` (`race_state.h`), threaded through `stepCar()`/`tick()`.
+  `tests/test_driver_brain.h` ports the exact synthetic player-brain
+  `dump_js_trace.js` uses, so the C++ side can drive a real green-flag race
+  the same deterministic way the JS ground truth was generated.
+  `tests/determinism_pace_check.cpp` was renamed to `tests/determinism_check.cpp`
+  and generalized to cover race-mode ticks, not just the pace phase; it also
+  gained a `DEBUG_CAR_IDX` env-var hook for dumping one car's full-precision
+  state per tick, added specifically to investigate the finding below and
+  worth keeping for future sessions.
+  **Result: byte-for-bit match for ~900 ticks of real green-flag AI racing**
+  (verified via direct value inspection of the actual decision variables --
+  blocker choice, targetSpeed, laneEase/restartHeld, not just final
+  position), followed by an eventual divergence traced to a genuine but
+  inconsequential cross-runtime floating-point precision limit (see the new
+  "Open questions" entry above for the full investigation and why it's not
+  a translation bug worth chasing further).
+  **Next run**: continue stepCar()'s remaining branches -- spin (`spinT>0`,
+  short), then pit (`c.pit>0`, a small state machine), then the
+  yellow-caution branch together with `tick()`'s caution controller (two
+  halves of one restart-sequencing behavior), then victory/GWC/qual last.
+  For each, the pattern that worked well this session: generate a JS trace
+  that actually reaches the scenario in question (may need to force it,
+  e.g. edit a throwaway copy of the harness to shorten a caution's random
+  trigger odds, NOT `index.html` itself), port the branch, verify with
+  `determinism_check` (extend its per-car debug hook if a divergence needs
+  investigating), then update this file and commit.

@@ -28,15 +28,14 @@ void updateAero(std::vector<Car>& cars, const Track& track);
 // branch-by-branch splitting stepCar() does).
 void collide(std::vector<Car>& cars, const RaceState& state, const Track& track, Mulberry32& rngR);
 
-// tick()'s pace-phase-relevant orchestration only (index.html:4180-4204):
-// advance sim time, step the pace car, update aero, step every car, resolve
-// collisions, handle the pace->race mode transition, and the green-flag
-// clocks. NOT ported here (deliberately, not yet needed): storing previous
-// poses for render interpolation (render-only), S.order (HUD/leaderboard
-// only, not read by any physics this phase touches), qual-lap completion,
-// AI pit-strategy/blowout/DNF rolls and the caution controller (all gated
-// on S.mode==='race' in JS, meaning they cannot fire during the pace phase
-// at all -- see PORT_PROGRESS.md's Phase 1f notes for why this is a
-// genuinely inert omission for THIS phase, not a shortcut).
+// tick()'s pace-phase- and green-flag-racing-relevant orchestration
+// (index.html:4180-4204): advance sim time, step the pace car, update aero,
+// step every car, resolve collisions, handle the pace->race mode transition,
+// and the green-flag clocks. NOT ported here (deliberately, not yet
+// needed): storing previous poses for render interpolation (render-only),
+// S.order (HUD/leaderboard only, not read by any physics ported so far),
+// qual-lap completion, AI pit-strategy/blowout/DNF rolls, and the caution
+// controller (see PORT_PROGRESS.md's Phase 1f/1g notes for exactly what
+// each of those needs and why they're still safe to defer).
 void tick(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& track,
-          Mulberry32& rngR);
+          Mulberry32& rngR, const PlayerInput& input);

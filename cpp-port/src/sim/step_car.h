@@ -13,6 +13,9 @@
 //
 // `allCars` and `pace` are needed even by branches not yet ported (e.g. the
 // pace-mode branch reads `allCars[c.gridAhead]` and `pace.s`/`pace.state`),
-// so the signature is settled now rather than growing per-branch.
+// so the signature is settled now rather than growing per-branch. `input` is
+// only read by the player branch, but JS's `input` is a plain global
+// visible to every stepCar() call, so it's passed unconditionally here too
+// rather than special-cased only for the player's own call site.
 void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car>& allCars,
-             const PaceCar& pace);
+             const PaceCar& pace, const PlayerInput& input);

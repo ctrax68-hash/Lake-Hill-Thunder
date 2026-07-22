@@ -159,7 +159,7 @@ void collide(std::vector<Car>& cars, const RaceState& state, const Track& track,
 // tick() (index.html:4180-4204), pace-phase-relevant subset only -- see
 // race.h's comment for exactly what's deliberately not ported yet.
 void tick(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& track,
-          Mulberry32& rngR) {
+          Mulberry32& rngR, const PlayerInput& input) {
     state.t += DT;
 
     if (state.mode == "pace") {
@@ -168,7 +168,7 @@ void tick(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& 
     }
 
     updateAero(cars, track);
-    for (auto& c : cars) stepCar(c, state, track, cars, pace);
+    for (auto& c : cars) stepCar(c, state, track, cars, pace, input);
     collide(cars, state, track, rngR);
 
     if (state.mode == "pace") {

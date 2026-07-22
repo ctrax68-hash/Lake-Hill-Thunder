@@ -14,3 +14,9 @@ inline constexpr double DT = 0.02;
 // restart release. Preserve that reasoning rather than re-deriving it if
 // this ever needs revisiting.
 inline constexpr double GREEN_LOCK_DUR = 28;
+
+// How long each car takes to ease its lane target from a tight starting
+// formation toward its personal groove after any green flag (index.html:538).
+// See the JS source's own comment there for the full rationale (why ~22s,
+// why this fixed AI cars merging into one lane at restarts).
+inline constexpr double LANE_EASE_DUR = 22;

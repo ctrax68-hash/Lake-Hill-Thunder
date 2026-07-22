@@ -19,7 +19,7 @@ double wrapPi(double a) {
 } // namespace
 
 void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car>& allCars,
-             const PaceCar& pace) {
+             const PaceCar& pace, const PlayerInput& input) {
     double thr = 0, brk = 0, steerIn = 0;
 
     if (c.spinCd > 0) c.spinCd -= DT;
@@ -83,10 +83,87 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         }
     } else if (c.isPlayer) {
         // index.html:859-864
-        throw std::logic_error("stepCar: player-input branch not yet ported");
+        thr = input.gas ? 1 : 0;
+        brk = input.brake ? 1 : 0;
+        steerIn = (input.left ? -1 : 0) + (input.right ? 1 : 0);
+        if (state.tilt) steerIn = std::max(-1.0, std::min(1.0, state.tiltG / 22));
+        steerIn *= 1 - 0.10 * std::min(1.0, c.v / 85);
+        steerIn += c.dmg * 0.02;
     } else {
         // index.html:865-975 (AI race branch)
-        throw std::logic_error("stepCar: AI race branch not yet ported");
+        const double vT = targetSpeed(track, c);
+
+        bool restartHeld = false;
+        double laneEase = 1;
+        const double holdLane = c.cautionSlot >= 0 ? 0 : c.gridLane;
+        const int holdSlot = c.cautionSlot >= 0 ? c.cautionSlot : std::max(0, c.gridSlot);
+        if (state.flag == "green") {
+            const double releaseAt = 0.4 + holdSlot * 0.12;
+            const double heldT = state.sinceGreenT - releaseAt;
+            restartHeld = heldT < LANE_EASE_DUR;
+            laneEase = std::max(0.0, std::min(1.0, heldT / LANE_EASE_DUR));
+        }
+        double lane = holdLane + (c.grooveBias - holdLane) * laneEase;
+
+        const Car* blocker = nullptr;
+        double bd = 1e9;
+        for (auto& o : allCars) {
+            if (&o == &c) continue;
+            double ds = o.s - c.s;
+            if (ds < -track.total() / 2) ds += track.total();
+            if (ds > track.total() / 2) ds -= track.total();
+            if (ds > 0 && ds < 26 && std::abs(o.lat - c.lat) < 2.4 && ds < bd) {
+                bd = ds;
+                blocker = &o;
+            }
+        }
+        if (blocker && !restartHeld) {
+            if (c.passT <= 0) {
+                double side = blocker->lat > 0.3 ? -1 : (blocker->lat < -0.3 ? 1 : (c.passSide != 0 ? c.passSide : 1));
+                const double tryLat = std::max(-6.0, std::min(6.0, blocker->lat + side * 5.0));
+                bool laneTaken = false;
+                for (auto& o : allCars) {
+                    if (&o == &c || &o == blocker) continue;
+                    double ds2 = o.s - c.s;
+                    if (ds2 < -track.total() / 2) ds2 += track.total();
+                    if (ds2 > track.total() / 2) ds2 -= track.total();
+                    if (ds2 > -4 && ds2 < 26 && std::abs(o.lat - tryLat) < 2.4) {
+                        laneTaken = true;
+                        break;
+                    }
+                }
+                c.passSide = laneTaken ? -static_cast<int>(side) : static_cast<int>(side);
+                c.passT = 2.5;
+            }
+            lane = std::max(-6.0, std::min(6.0, blocker->lat + c.passSide * 5.0));
+        }
+        if (c.passT > 0 && !restartHeld) c.passT -= DT;
+
+        const double LA = std::max(12.0, c.v * 0.62);
+        PointResult pT = track.pointAt(c.s + LA);
+        const double tx = pT.x - std::sin(pT.hdg) * lane, ty = pT.y + std::cos(pT.hdg) * lane;
+        double dHdg = wrapPi(std::atan2(ty - c.y, tx - c.x) - c.hdg);
+        const double curvFF = track.pointAt(c.s + std::max(6.0, c.v * 0.3)).curv;
+        const double muNow = CAR.mu * (1 - 0.12 * c.wear) + CAR.dfK * c.v * c.v;
+        const double yawLim = std::min({1.3, std::max(0.05, c.v * 0.24),
+                                         cornerCap(muNow, track.bankAt(c.s + 10)) / std::max(3.0, c.v) * 1.15});
+        const double ff = (c.v * curvFF) / std::max(0.05, yawLim);
+        steerIn = std::max(-1.0, std::min(1.0, ff + dHdg * 1.3));
+
+        const bool closing = blocker && bd < 8 && c.v > blocker->v - 0.5;
+        if (closing) {
+            thr = 0;
+            brk = 0.7;
+        } else if (c.v < vT - 0.4) {
+            thr = std::min(1.0, 0.55 + 0.45 * c.aggr);
+            brk = 0;
+        } else if (c.v > vT + 0.8) {
+            thr = 0;
+            brk = std::min(1.0, (c.v - vT) * 0.35);
+        } else {
+            thr = 0.35;
+            brk = 0;
+        }
     }
 
     // ---- shared physics tail (index.html:977-1109), applies to every branch ----
