@@ -32,10 +32,17 @@
  *   pit4  -> pit=4, dtPending=true (drive-through penalty)
  *   out   -> out=true (DNF)
  *   done  -> done=true (finished, cool-down)
- * An entry of the form state.mode=value sets S.mode directly instead of
- * touching a car, e.g. --force=state.mode=victory to test the victory-lap
- * branch (needs S.mode==='victory' AND c.isPlayer -- idx 0 is always the
- * player, whose own state doesn't need forcing separately).
+ *   lap=N -> lap=N directly (for testing finish-line arbitration/GWC without
+ *            waiting out a whole race -- pair with --force=state.finishLaps=M)
+ * An entry of the form state.field=value sets an S field directly instead of
+ * touching a car:
+ *   state.mode=value       e.g. --force=state.mode=victory to test the
+ *                          victory-lap branch (needs S.mode==='victory' AND
+ *                          c.isPlayer -- idx 0 is always the player, whose
+ *                          own state doesn't need forcing separately).
+ *   state.finishLaps=value e.g. --force=state.finishLaps=1 to make the race
+ *                          end after just one lap, for testing the finish
+ *                          arbitration/GWC/victory-transition logic in tick().
  *
  * Requires playwright installed globally, chromium at /opt/pw-browsers (or
  * set CHROMIUM_PATH) -- same requirements as tools/playtest.js.
@@ -97,6 +104,8 @@ const server = http.createServer((req, res) => {
           if (entry.startsWith('state.')) {
             const [field, value] = entry.slice('state.'.length).split('=');
             if (field === 'mode') S.mode = value;
+            else if (field === 'flag') S.flag = value;
+            else if (field === 'finishLaps') S.finishLaps = +value;
             else throw new Error(`--force: unknown state field '${field}'`);
             continue;
           }
@@ -111,6 +120,7 @@ const server = http.createServer((req, res) => {
           else if (scenario === 'pit4') { c.pit = 4; c.dtPending = true; }
           else if (scenario === 'out') { c.out = true; }
           else if (scenario === 'done') { c.done = true; }
+          else if (scenario.startsWith('lap=')) { c.lap = +scenario.slice(4); }
           else throw new Error(`--force: unknown scenario '${scenario}'`);
         }
       };

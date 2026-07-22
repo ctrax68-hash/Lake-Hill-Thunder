@@ -20,3 +20,8 @@ inline constexpr double GREEN_LOCK_DUR = 28;
 // See the JS source's own comment there for the full rationale (why ~22s,
 // why this fixed AI cars merging into one lane at restarts).
 inline constexpr double LANE_EASE_DUR = 22;
+
+// Green-white-checkered retry cap (index.html:528). See the JS source's own
+// comment there: raised from an original lower value to 8 so the safety
+// valve essentially never binds in practice.
+inline constexpr int GWC_MAX_ATTEMPTS = 8;

@@ -40,6 +40,12 @@ struct RaceState {
     bool tilt = false;  // tilt-steer input mode toggle
     double tiltG = 0;   // tilt-steer signal, [-22, 22]-ish (see stepCar's player branch)
 
+    // S.victoryT (index.html:4583): elapsed time in victory-lap mode. Not
+    // part of S's initial literal in JS either -- set the instant mode
+    // becomes 'victory', same dynamically-added-field pattern as Car's
+    // dmgCd/blown/spinRollCd.
+    double victoryT = 0;
+
     // Set by gridStart() (index.html:591), not part of S's initial literal.
     double paceV = 0;
     double greenT = 0;

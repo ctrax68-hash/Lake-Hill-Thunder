@@ -46,16 +46,25 @@ Car* activeLead(const std::vector<Car*>& order);
 void cautionController(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& track,
                         const std::vector<Car*>& order);
 
-// tick()'s pace-phase-, green-flag-racing-, and caution-relevant
-// orchestration (index.html:4180-4462): advance sim time, step the pace
-// car, update aero, step every car, resolve collisions, compute race
-// position order, handle the pace->race mode transition, the green-flag
-// clocks, and the caution controller. NOT ported here (deliberately, not
-// yet needed): storing previous poses for render interpolation
-// (render-only), qual-lap completion, AI pit-strategy (sets c.pitReq,
-// which nothing reads yet since the pit-entry-arming block isn't ported),
-// blowout/DNF rolls (organic spin/DNF triggers -- tested instead via
-// dump_js_trace.js's --force flag, see PORT_PROGRESS.md), and
-// green-white-checkered/qualifying (Phase 1g, still to come).
+// tick()'s full per-frame orchestration (index.html:4180-4595): advance sim
+// time, step the pace car, update aero, step every car, resolve collisions,
+// compute race position order, handle the pace->race mode transition, the
+// green-flag clocks, the qualifying flying-lap completion check, AI
+// pit-strategy (c.pitReq), blowout/DNF rolls, the caution controller, the
+// green-white-checkered state machine, the unconditional finish-line
+// arbitration, and the player-finish -> victory/done mode transitions.
+// `finishOrder` mirrors S.finishOrder (index.html:509) -- appended to in
+// crossing order as cars finish; caller owns its lifetime (cleared at the
+// start of a race, same as gridStart() clearing `cars`).
+// NOT ported here (deliberately, still not needed): storing previous poses
+// for render interpolation (render-only), and every HUD/audio-only side
+// effect (S.msgTxt/msgT, spotterSay(), S.fastLap/halfMsg/whiteMsg,
+// S.greenT's crowd-noise/banner reads -- the greenT clock itself IS
+// decremented here since it's cheap and the field already exists, just
+// nothing reads it back yet). `finishQualifying()`'s grid-building (needs
+// rngR the same way makeCar() needs rng, plus the menu-flow setTimeout) is
+// also not ported -- that's a Phase 2+ menu-wiring concern, not physics;
+// this file only ports the mode='qual' -> 'menuwait' physics-state
+// transition itself.
 void tick(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& track,
-          Mulberry32& rngR, const PlayerInput& input);
+          Mulberry32& rngR, const PlayerInput& input, std::vector<Car*>& finishOrder);

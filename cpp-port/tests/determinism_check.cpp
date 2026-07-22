@@ -100,6 +100,10 @@ void applyForce(RaceState& state, std::vector<Car>& cars, const std::string& spe
             std::string value = rest.substr(eq + 1);
             if (field == "mode") {
                 state.mode = value;
+            } else if (field == "flag") {
+                state.flag = value;
+            } else if (field == "finishLaps") {
+                state.finishLaps = std::atoi(value.c_str());
             } else {
                 throw std::runtime_error("--force: unknown state field '" + field + "'");
             }
@@ -135,6 +139,10 @@ void applyForce(RaceState& state, std::vector<Car>& cars, const std::string& spe
             c->out = true;
         } else if (scenario == "done") {
             c->done = true;
+        } else if (scenario.rfind("lap=", 0) == 0) {
+            // Directly sets c.lap, for testing the finish-line arbitration/
+            // GWC logic without waiting out a whole race (see PORT_PROGRESS.md).
+            c->lap = std::atoi(scenario.substr(4).c_str());
         } else {
             throw std::runtime_error("--force: unknown scenario '" + scenario + "'");
         }
@@ -168,6 +176,7 @@ int main(int argc, char** argv) {
     state.tilt = true; // matches dump_js_trace.js's `S.tilt = true;`
 
     PlayerInput input;
+    std::vector<Car*> finishOrder;
 
     std::vector<TickSnapshot> ours;
     ours.reserve(numTicks);
@@ -181,8 +190,13 @@ int main(int argc, char** argv) {
             }
         }
         driverBrain(*player, track, state, input);
-        ::tick(state, cars, pace, track, rngR, input);
+        ::tick(state, cars, pace, track, rngR, input, finishOrder);
         ours.push_back(buildSnapshot(i, state, pace, cars));
+        if (std::getenv("DEBUG_STATE")) {
+            std::fprintf(stderr, "%d mode=%s flag=%s gwcState=%s gwcAttempts=%d finishLaps=%d gwcMarkLap=%d\n",
+                         i, state.mode.c_str(), state.flag.c_str(), state.gwcState.c_str(),
+                         state.gwcAttempts, state.finishLaps, state.gwcMarkLap);
+        }
         if (const char* dbgIdx = std::getenv("DEBUG_CAR_IDX")) {
             int wantIdx = std::atoi(dbgIdx);
             for (auto& c : cars) {

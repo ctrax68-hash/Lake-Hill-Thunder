@@ -26,12 +26,21 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
     if (c.dmgCd > 0) c.dmgCd -= DT;
     if (c.spinRollCd > 0) c.spinRollCd -= DT;
 
-    // Pit-entry arming block (index.html:692-701) intentionally NOT ported
-    // yet: it only matters once pitReq/dtPending can actually be set, which
-    // happens in tick()'s pit-strategy AI -- gated on S.mode==='race', so it
-    // cannot fire during the pace phase this file currently covers. Its
-    // condition is provably always-false right now; revisit when porting
-    // the pit-road state machine.
+    // index.html:692-701: arm pit entry as the car reaches the frontstretch.
+    // Now live -- tick()'s AI pit-strategy block sets c.pitReq/dtPending.
+    if ((c.pitReq || c.dtPending) && c.pit == 0 && !c.done && !c.out && c.spinT <= 0 &&
+        (state.flag != "yellow" || state.pitsOpen)) {
+        const Seg& seg0 = track.segs()[0];
+        double dIn = c.s - seg0.s0;
+        if (dIn > track.total() / 2) dIn -= track.total();
+        if (dIn > -25 && dIn < seg0.len * 0.04) {
+            if (c.dtPending && !c.pitReq) {
+                if (state.flag == "green") c.pit = 4;
+            } else {
+                c.pit = 1;
+            }
+        }
+    }
 
     if (state.mode == "victory" && c.isPlayer) {
         // index.html:702-707: winner's burnout -- tight donuts on the

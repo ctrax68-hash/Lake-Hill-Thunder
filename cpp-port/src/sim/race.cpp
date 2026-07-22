@@ -197,7 +197,7 @@ void cautionController(RaceState& state, std::vector<Car>& cars, PaceCar& pace, 
                 for (auto& o : cars) {
                     if (!o.out && !o.done) act.push_back(&o);
                 }
-                std::sort(act.begin(), act.end(), [&](Car* a, Car* b) {
+                std::stable_sort(act.begin(), act.end(), [&](Car* a, Car* b) {
                     double da = wrapMod(pace.s - a->s, track.total());
                     double db = wrapMod(pace.s - b->s, track.total());
                     return da < db;
@@ -241,7 +241,7 @@ void cautionController(RaceState& state, std::vector<Car>& cars, PaceCar& pace, 
         }
         {
             std::vector<Car*> sorted = activeY;
-            std::sort(sorted.begin(), sorted.end(),
+            std::stable_sort(sorted.begin(), sorted.end(),
                       [](Car* a, Car* b) { return a->cautionSlot < b->cautionSlot; });
             for (size_t i = 0; i < sorted.size(); ++i) sorted[i]->cautionSlot = static_cast<int>(i);
         }
@@ -317,10 +317,10 @@ void cautionController(RaceState& state, std::vector<Car>& cars, PaceCar& pace, 
     }
 }
 
-// tick() (index.html:4180-4462) -- see race.h's comment for exactly what's
+// tick() (index.html:4180-4595) -- see race.h's comment for exactly what's
 // deliberately not ported yet.
 void tick(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& track,
-          Mulberry32& rngR, const PlayerInput& input) {
+          Mulberry32& rngR, const PlayerInput& input, std::vector<Car*>& finishOrder) {
     state.t += DT;
 
     if (state.mode == "pace") {
@@ -336,7 +336,7 @@ void tick(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& 
     std::vector<Car*> order;
     order.reserve(cars.size());
     for (auto& c : cars) order.push_back(&c);
-    std::sort(order.begin(), order.end(), [](Car* a, Car* b) {
+    std::stable_sort(order.begin(), order.end(), [](Car* a, Car* b) {
         double pa = a->done ? 1e6 - a->finishT : a->prog;
         double pb = b->done ? 1e6 - b->finishT : b->prog;
         return pb < pa; // descending
@@ -356,5 +356,113 @@ void tick(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& 
     if (state.greenLockT > 0 && state.flag == "green") state.greenLockT -= DT;
     if (state.flag == "green") state.sinceGreenT += DT;
 
+    // index.html:4205-4208: qualifying flying-lap complete. Only the
+    // mode='qual'->'menuwait' physics transition is ported here -- the
+    // setTimeout(()=>finishQualifying(...), 400) that follows is menu-flow
+    // (builds a synthesized grid and calls startRace()), not physics.
+    Car* player = nullptr;
+    for (auto& c : cars) {
+        if (c.isPlayer) {
+            player = &c;
+            break;
+        }
+    }
+    if (state.mode == "qual" && player && player->lap >= 1) {
+        state.mode = "menuwait";
+    }
+
+    // index.html:4209-4218: AI pit strategy.
+    if (state.mode == "race") {
+        for (auto& c : cars) {
+            if (c.isPlayer || c.done || c.out || c.pit > 0 || c.spinT > 0) continue;
+            c.pitReq = (state.flag == "yellow" && state.pitsOpen && (c.wear > 0.25 || c.fuel < 0.5)) ||
+                       c.wear > 0.7 || c.fuel < 0.18 || (c.dmg > 0.45 && c.dmg < 1);
+        }
+    }
+
+    // index.html:4219-4250: blowouts and terminal-damage DNFs.
+    if (state.mode == "race" || state.mode == "victory") {
+        for (auto& c : cars) {
+            if (c.done || c.out || c.pit > 0) continue;
+            if (c.wear > 0.92 && !c.blown && c.v > 25 && rngR.next() < 0.0004) {
+                c.blown = true;
+                if (state.flag == "green" && state.greenLockT <= 0) {
+                    c.spinT = 1.8 + rngR.next() * 1.2;
+                    c.spinDir = rngR.next() < 0.5 ? -1 : 1;
+                    c.spinCd = 10;
+                }
+            }
+            if (c.dmg >= 1 && !c.out) c.out = true;
+        }
+    }
+
     cautionController(state, cars, pace, track, order);
+
+    // index.html:4463-4545: green-white-checkered state machine, then the
+    // unconditional finish-line arbitration.
+    if (state.mode == "race") {
+        Car* gwcLead = activeLead(order);
+        if (gwcLead && !gwcLead->done && !gwcLead->out) {
+            if (state.gwcState == "none") {
+                if (state.flag == "yellow" && gwcLead->lap >= state.finishLaps) {
+                    if (state.gwcAttempts < GWC_MAX_ATTEMPTS) {
+                        state.finishLaps += 1;
+                        state.gwcState = "watch";
+                        state.gwcAttempts++;
+                    } else {
+                        state.finishLaps = gwcLead->lap;
+                    }
+                }
+            } else if (state.gwcState == "watch") {
+                if (state.flag == "yellow" && gwcLead->lap >= state.finishLaps) {
+                    state.finishLaps = gwcLead->lap + 1;
+                }
+                if (state.flag == "green") {
+                    state.gwcMarkLap = gwcLead->lap;
+                    state.finishLaps = gwcLead->lap + 3;
+                    state.gwcState = "clean1";
+                }
+            } else if (state.gwcState == "clean1") {
+                if (state.flag == "yellow") {
+                    state.gwcState = "none";
+                } else if (gwcLead->lap >= state.gwcMarkLap + 2) {
+                    state.finishLaps = gwcLead->lap + 1;
+                    state.gwcState = "white";
+                }
+            } else if (state.gwcState == "white") {
+                if (state.flag == "yellow") state.gwcState = "none";
+            }
+        }
+
+        for (auto& c : cars) {
+            if (!c.done && !c.out && c.lap >= state.finishLaps) {
+                c.done = true;
+                c.finishT = state.t;
+                finishOrder.push_back(&c);
+            }
+        }
+    }
+
+    // index.html:4547: greenT is HUD/audio-only (crowd noise, banner flash)
+    // but the field is real and already exists, so keep it in sync.
+    if (state.greenT > 0) state.greenT -= DT;
+
+    // index.html:4581-4594: player finish -> victory/done, player DNF ->
+    // done, and the victory-lap timeout back to done. setTimeout(showResults,
+    // ...) calls are menu-flow, not ported.
+    if (player && player->done && state.mode == "race") {
+        if (!finishOrder.empty() && finishOrder[0] == player) {
+            state.mode = "victory";
+            state.victoryT = 0;
+        } else {
+            state.mode = "done";
+        }
+    }
+    if (player && player->out && state.mode == "race" && player->v < 1) {
+        state.mode = "done";
+    }
+    if (state.mode == "victory") {
+        state.victoryT += DT;
+        if (state.victoryT > 6) state.mode = "done";
+    }
 }

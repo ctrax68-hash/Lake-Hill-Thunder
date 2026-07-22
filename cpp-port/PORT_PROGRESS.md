@@ -147,7 +147,7 @@ port; it's the reference the C++ port must match).
       taking the active `Track` as an explicit parameter instead of closing over a
       JS-style single global (the only deliberate structural adaptation so far --
       math/iteration order unchanged). Verified in `tests/speed_model_test.cpp`.
-- [ ] Port `stepCar()` (JS: `index.html:686`) — the largest single function by far.
+- [x] Port `stepCar()` (JS: `index.html:686`) — the largest single function by far.
       Split into sub-phases by branch: player input, AI groove/pass-side logic
       (`grooveBias`, `passSide`/`passT`), pit-road state machine (`c.pit` 0-4, see
       the JS source's own extensive comments on why state 4/`dtPending` is currently
@@ -794,3 +794,129 @@ elsewhere in the same run.
   desktop renderer: static camera, flat track ribbon + car boxes, keyboard
   input, chase camera) -- that's the first point this port is actually
   playable/visually improvable at all, which is the user's stated goal.
+
+- **Session 3 (continued yet again -- GWC, qualifying, and the rest of
+  `tick()`'s orchestration)**: `stepCar()` itself had no branches left, but
+  `tick()` (index.html:4180-4595) was still missing everything downstream
+  of the caution controller, plus a few pieces upstream of it. All of the
+  following are now ported into `race.cpp`'s `tick()` (and `step_car.cpp`
+  for the one `stepCar()`-side piece), in JS's own order:
+  - **Pit-entry arming** (index.html:692-701, `step_car.cpp`): was stubbed
+    out as "provably inert" while nothing set `c.pitReq`/`dtPending` --
+    ported for real now that AI pit strategy (below) sets `pitReq`.
+  - **Qualifying's flying-lap-complete transition** (index.html:4205-4208):
+    only the physics-relevant `mode='qual' && player.lap>=1 -> 'menuwait'`
+    state flip is ported -- `finishQualifying()`'s grid-synthesis and the
+    `setTimeout` are menu-flow, not physics, and stay unported (Phase 2+
+    territory). Verified: `--force=state.mode=qual,0:lap=1`, 5 ticks,
+    bit-exact match.
+  - **AI pit strategy** (index.html:4209-4218): sets `c.pitReq` for AI cars
+    on worn tires/low fuel/damage. Straightforward direct port, exercised
+    indirectly by every longer run below (no dedicated isolated test --
+    it only sets a flag the already-verified pit-entry-arming/pit-machine
+    code reads).
+  - **Blowouts and terminal-damage DNFs** (index.html:4219-4250): worn-tire
+    blowout roll (`rngR`-gated) and `dmg>=1 -> out`. Direct port.
+  - **Green-white-checkered state machine** (index.html:4472-4532): the
+    `none -> watch -> clean1 -> white -> (arbitration ends it)` walk, plus
+    the `GWC_MAX_ATTEMPTS`-bounded safety valve. Added `GWC_MAX_ATTEMPTS=8`
+    to `constants.h`. New `RaceState::victoryT` field (dynamically added
+    in JS too, same rationale as `Car::blown`/`dmgCd`).
+  - **Unconditional finish-line arbitration** (index.html:4537-4545): any
+    car with `lap >= finishLaps` gets marked `done`, `finishT` stamped,
+    pushed onto `finishOrder`. `tick()` gained a `std::vector<Car*>&
+    finishOrder` parameter (mirrors `S.finishOrder`) -- caller-owned,
+    same pattern as `cars`/`order` already being explicit parameters
+    rather than embedded in `RaceState`.
+  - **Player finish/DNF -> victory/done mode transitions, and the
+    victory-lap timeout** (index.html:4581-4594): winner goes to
+    `'victory'`, everyone else to `'done'`; a parked DNF'd player also
+    goes to `'done'`; `'victory'` mode times out to `'done'` after 6s.
+    `setTimeout(showResults, ...)` calls are menu-flow, not ported.
+  - `race.h`/`race.cpp`'s header comments updated to describe the full
+    `tick()` scope and what's still deliberately deferred (render-only
+    prior-pose storage, and every HUD/audio-only side effect).
+
+  **New `--force` capabilities**, needed to exercise all of the above
+  without waiting out a whole multi-lap race: `state.finishLaps=N` and
+  `state.flag=value` (alongside the existing `state.mode=value`), and a
+  parameterized per-car `<idx>:lap=N` scenario (sets `c.lap` directly).
+  Documented in `dump_js_trace.js`'s header comment alongside the existing
+  scenarios.
+
+  **A real bug was found and fixed via this verification, not a test
+  artifact**: the caution controller's three `std::sort` calls (initial
+  caution-slot assignment by physical position, slot compaction, and
+  `tick()`'s own `S.order` race-position sort) all used `std::sort`, which
+  gives no tie-breaking guarantee, while JS's `Array.prototype.sort` has
+  been a *stable* sort since ES2019 -- ties fall back to original array
+  order. This surfaced immediately when forcing a caution before the field
+  has spread out: paired grid-row cars start at the *exact same* `s`
+  (JS: `index.html:566` places 2 cars per row, differing only in lateral
+  offset), so the initial caution-slot sort has a genuine, not-contrived
+  tie between them, and `std::sort` broke it differently than JS's
+  stable `Array.sort` -- two cars ended up with swapped `cautionSlot`
+  values. This is a real scenario (an early-race caution before the pack
+  spreads out), not just an artifact of the forced test. **Fixed**: all
+  three sorts switched to `std::stable_sort`. Re-ran the triggering test
+  after the fix -- clean match. This is exactly the kind of bug the
+  cross-language bit-exact verification methodology exists to catch;
+  worth remembering for any future JS `.sort()` call that still needs
+  porting (there are none left in the physics core, but keep this in mind
+  if Phase 2+ ever ports a JS `.sort()` for rendering/UI ordering).
+
+  **Verification**:
+  - Finish arbitration: forced `state.finishLaps=1,5:lap=1` (an AI car
+    already past the line), 30 ticks -- bit-exact match, confirming the
+    car gets marked `done`/`finishT` correctly.
+  - Player wins -> victory mode: forced `state.finishLaps=1,0:lap=1`,
+    250 ticks -- bit-exact for the first ~70 ticks (mode correctly reads
+    `'victory'`, `done=1`, `finishT` stamped), diverging at tick 70 on the
+    now-familiar wall-clamp boundary (confirmed via raw-trace inspection:
+    player `lat` oscillating exactly on `11.0`) -- not a bug, same
+    phenomenon as the earlier victory-branch verification, unsurprising
+    since the victory burnout's tight circle revisits the wall repeatedly.
+  - Player DNF -> done mode: forced `state.mode=race,0:out`, 2000 ticks --
+    the transition itself fires around tick ~262 (player `v` decays
+    through 1.0) and **stays bit-exact for over 1700 further ticks**
+    before an unrelated AI car (idx 14) hits a wear-threshold boundary
+    (the same class of phenomenon, just on `c.wear>0.92`'s blowout-roll
+    gate instead of the wall-clamp -- a sub-ULP wear difference crossing
+    0.92 a tick apart on the two sides means one side calls `rngR()` and
+    the other doesn't, permanently desyncing the shared RNG stream from
+    that point on; this is *expected* to eventually happen over a long
+    enough run touching any RNG-gated threshold, not specific to this
+    branch). The done-transition itself is thoroughly confirmed by the
+    long clean stretch both before and after it.
+  - GWC `none -> watch` entry: forced `state.finishLaps=1,0:lap=1,10:spin`
+    (organic caution throw via the already-verified spin path, so
+    `cautionSlot`s get assigned by the real code, avoiding the sort-tie
+    issue above) -- 15 ticks, bit-exact on every trace field. Since the
+    trace format doesn't carry `gwcState`/`finishLaps`/`gwcAttempts`
+    (never extended for GWC), added a `DEBUG_STATE=1` env-gated print to
+    `determinism_check` (mirrors the existing `DEBUG_CAR_IDX`) and a
+    disposable Playwright probe script (not committed) printing the same
+    JS-side fields -- both independently produced `gwcState=watch
+    gwcAttempts=1 finishLaps=2 gwcMarkLap=-1` on every one of the 15
+    ticks, an exact match confirming the transition. The deeper chain
+    (`watch -> clean1 -> white -> arbitration`) needs an actual green-flag
+    restart to progress past `'watch'`, which is a genuinely multi-tick
+    process to force cleanly (same difficulty class as the caution
+    controller's back half, still unverified from the prior session) --
+    not chased further here; each individual `else if` in the state
+    machine is a direct, verbatim transcription of its JS counterpart, and
+    everything it depends on (arbitration, caution controller, activeLead)
+    is independently verified, so confidence is high without forcing the
+    full chain end-to-end. Flagged below as the one still-open piece of
+    Phase 1g for whoever picks this up next.
+  - Full `ctest` suite passes throughout (no regressions from any of the
+    above, including the `stable_sort` fix).
+
+  **Status**: `stepCar()`/`tick()` are now functionally complete --
+  literally everything the JS original's physics/AI/race-control loop
+  does is ported except render-only bookkeeping and menu-flow glue
+  (`finishQualifying()`'s grid synthesis, `showResults()`, HUD/audio side
+  effects). **Phase 1g is essentially done** except the note above; Phase
+  1h (one closing full-determinism pass across everything, then commit)
+  and Phase 2 (the minimal desktop renderer -- the actual "playable"
+  milestone) are next.
