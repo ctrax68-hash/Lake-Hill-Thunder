@@ -126,13 +126,16 @@ void applyForce(std::vector<Car>& cars, const std::string& spec) {
 
 int main(int argc, char** argv) {
     if (argc < 4) {
-        std::fprintf(stderr, "usage: %s <js_trace_file> <track_index> <num_ticks> [force_spec]\n", argv[0]);
+        std::fprintf(stderr,
+                      "usage: %s <js_trace_file> <track_index> <num_ticks> [force_spec] [force_tick]\n",
+                      argv[0]);
         return 2;
     }
     const std::string jsTracePath = argv[1];
     const int trackIdx = std::atoi(argv[2]);
     const int numTicks = std::atoi(argv[3]);
     const std::string forceSpec = argc > 4 ? argv[4] : "";
+    const int forceTick = argc > 5 ? std::atoi(argv[5]) : 0;
 
     Track track(TRACKS[trackIdx]);
     Mulberry32 rng(12345);
@@ -144,13 +147,13 @@ int main(int argc, char** argv) {
     gridStart(track, rng, state, pace, cars, nullptr);
     state.mode = "pace";
     state.tilt = true; // matches dump_js_trace.js's `S.tilt = true;`
-    if (!forceSpec.empty()) applyForce(cars, forceSpec);
 
     PlayerInput input;
 
     std::vector<TickSnapshot> ours;
     ours.reserve(numTicks);
     for (int i = 0; i < numTicks; ++i) {
+        if (!forceSpec.empty() && i == forceTick) applyForce(cars, forceSpec);
         const Car* player = nullptr;
         for (auto& c : cars) {
             if (c.isPlayer) {
@@ -165,7 +168,7 @@ int main(int argc, char** argv) {
             int wantIdx = std::atoi(dbgIdx);
             for (auto& c : cars) {
                 if (c.idx == wantIdx) {
-                    std::fprintf(stderr, "%d %.17g %.17g %.17g %.17g %.17g\n", i, c.x, c.y, c.hdg, c.v, c.lat);
+                    std::fprintf(stderr, "%d %.17g %.17g %.17g %.17g %.17g %.17g\n", i, c.x, c.y, c.hdg, c.v, c.lat, c.spinT);
                 }
             }
         }

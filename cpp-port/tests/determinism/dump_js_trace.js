@@ -18,10 +18,13 @@
  *     --track=0 --ticks=400 --out=cpp-port/tests/fixtures/trace_track0_green.txt
  *
  * Optional --force=idx:scenario[,idx:scenario...] seeds specific cars'
- * state right after the grid forms (still unmodified index.html -- this
- * just pokes S.cars from the test script, exactly like a real incident
- * would set that state), for exercising branches that rarely occur
- * organically in a short trace: spin/pit/etc. Scenario values:
+ * state (still unmodified index.html -- this just pokes S.cars from the
+ * test script, exactly like a real incident would set that state), for
+ * exercising branches that rarely occur organically in a short trace:
+ * spin/pit/etc. Applied right after the grid forms by default; use
+ * --force-tick=N to apply it mid-run instead (e.g. to force a spin well
+ * into green-flag racing, since spinT decays in 80 ticks and S.mode only
+ * becomes 'race' after the pace phase ends). Scenario values:
  *   spin  -> spinT=1.6, spinDir=1, spinCd=10 (matches collide()'s own wreck-roll seed)
  *   pit1  -> pit=1 (approach)
  *   pit2  -> pit=2, pitT=2 (in service)
@@ -41,6 +44,7 @@ const TRACK_ARG = (process.argv.find(a => a.startsWith('--track=')) || '--track=
 const TICKS_ARG = (process.argv.find(a => a.startsWith('--ticks=')) || '--ticks=400').split('=')[1] | 0;
 const OUT_ARG = (process.argv.find(a => a.startsWith('--out=')) || '--out=').split('=')[1];
 const FORCE_ARG = (process.argv.find(a => a.startsWith('--force=')) || '--force=').split('=')[1];
+const FORCE_TICK_ARG = (process.argv.find(a => a.startsWith('--force-tick=')) || '--force-tick=0').split('=')[1] | 0;
 const EXE = process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.png': 'image/png', '.json': 'application/json' };
@@ -80,18 +84,20 @@ const server = http.createServer((req, res) => {
 
   if (FORCE_ARG) {
     await page.evaluate((forceSpec) => {
-      for (const entry of forceSpec.split(',')) {
-        const [idxStr, scenario] = entry.split(':');
-        const idx = +idxStr;
-        const c = S.cars.find(c => c.idx === idx);
-        if (!c) throw new Error(`--force: no car with idx ${idx}`);
-        if (scenario === 'spin') { c.spinT = 1.6; c.spinDir = 1; c.spinCd = 10; }
-        else if (scenario === 'pit1') { c.pit = 1; }
-        else if (scenario === 'pit2') { c.pit = 2; c.pitT = 2; }
-        else if (scenario === 'pit3') { c.pit = 3; }
-        else if (scenario === 'pit4') { c.pit = 4; c.dtPending = true; }
-        else throw new Error(`--force: unknown scenario '${scenario}'`);
-      }
+      window.__applyForce = function () {
+        for (const entry of forceSpec.split(',')) {
+          const [idxStr, scenario] = entry.split(':');
+          const idx = +idxStr;
+          const c = S.cars.find(c => c.idx === idx);
+          if (!c) throw new Error(`--force: no car with idx ${idx}`);
+          if (scenario === 'spin') { c.spinT = 1.6; c.spinDir = 1; c.spinCd = 10; }
+          else if (scenario === 'pit1') { c.pit = 1; }
+          else if (scenario === 'pit2') { c.pit = 2; c.pitT = 2; }
+          else if (scenario === 'pit3') { c.pit = 3; }
+          else if (scenario === 'pit4') { c.pit = 4; c.dtPending = true; }
+          else throw new Error(`--force: unknown scenario '${scenario}'`);
+        }
+      };
     }, FORCE_ARG);
   }
 
@@ -132,10 +138,11 @@ const server = http.createServer((req, res) => {
     };
   });
 
-  const trace = await page.evaluate((nTicks) => {
+  const trace = await page.evaluate(({ nTicks, forceTick, hasForce }) => {
     const lines = [];
     const fmt = (v) => (typeof v === 'number' ? (Number.isFinite(v) ? v.toFixed(9) : '0') : (v ? 1 : 0));
     for (let i = 0; i < nTicks; i++) {
+      if (hasForce && i === forceTick) window.__applyForce();
       window.__brain();
       tick();
       lines.push(['TICK', i, S.t.toFixed(9), S.mode, S.flag,
@@ -155,7 +162,7 @@ const server = http.createServer((req, res) => {
       }
     }
     return lines.join('\n') + '\n';
-  }, TICKS_ARG);
+  }, { nTicks: TICKS_ARG, forceTick: FORCE_TICK_ARG, hasForce: !!FORCE_ARG });
 
   if (OUT_ARG) {
     fs.writeFileSync(path.join(ROOT, OUT_ARG), trace);

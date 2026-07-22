@@ -3,6 +3,7 @@
 #include "constants.h"
 #include "step_car.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace {
@@ -156,8 +157,168 @@ void collide(std::vector<Car>& cars, const RaceState& state, const Track& track,
     }
 }
 
-// tick() (index.html:4180-4204), pace-phase-relevant subset only -- see
-// race.h's comment for exactly what's deliberately not ported yet.
+// activeLead() (index.html:1138-1141)
+Car* activeLead(const std::vector<Car*>& order) {
+    for (auto* o : order) {
+        if (!o->done && !o->out) return o;
+    }
+    return order[0];
+}
+
+namespace {
+double wrapHalf(double d, double total) {
+    while (d < -total / 2) d += total;
+    while (d > total / 2) d -= total;
+    return d;
+}
+} // namespace
+
+// cautionController() (index.html:4251-4461)
+void cautionController(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& track,
+                        const std::vector<Car*>& order) {
+    if (state.mode != "race") return;
+
+    if (state.flag == "green") {
+        // index.html:4254-4263: finish the pace car's dive to the apron.
+        if (pace.state == "peel") stepPace(pace, state, track);
+
+        for (auto& c : cars) {
+            if (c.spinT > 0 && !c.done) {
+                state.flag = "yellow";
+                state.yellowT = 0;
+                Car* lead = activeLead(order);
+                state.cautionUntilLap = lead->lap + 2;
+                pace.state = "lead";
+                pace.lat = 0;
+                pace.v = 38;
+                pace.s = std::fmod(lead->s + 90, track.total());
+
+                std::vector<Car*> act;
+                for (auto& o : cars) {
+                    if (!o.out && !o.done) act.push_back(&o);
+                }
+                std::sort(act.begin(), act.end(), [&](Car* a, Car* b) {
+                    double da = wrapMod(pace.s - a->s, track.total());
+                    double db = wrapMod(pace.s - b->s, track.total());
+                    return da < db;
+                });
+                for (size_t i = 0; i < act.size(); ++i) act[i]->cautionSlot = static_cast<int>(i);
+                state.cautionMaxSlot = static_cast<int>(act.size()) - 1;
+                state.oneToGo = false;
+                state.pitsOpen = false;
+                break;
+            }
+        }
+    } else if (state.flag == "yellow") {
+        state.yellowT += DT;
+        stepPace(pace, state, track);
+
+        // index.html:4296-4314: adaptive pace speed.
+        {
+            Car* front = nullptr;
+            double best = 1e9;
+            for (auto& o : cars) {
+                if (o.out || o.done || o.pit != 0 || o.spinT > 0) continue;
+                if (o.cautionSlot >= 0 && o.cautionSlot < best) {
+                    best = o.cautionSlot;
+                    front = &o;
+                }
+            }
+            if (front) {
+                double gap = wrapHalf(pace.s - 16 - front->cautionSlot * 9 - front->s, track.total());
+                pace.v = 38 - std::max(0.0, std::min(16.0, (gap - 24) * 0.15));
+            } else {
+                pace.v = 38;
+            }
+        }
+
+        Car* lead = activeLead(order);
+
+        // index.html:4341-4343: slot compaction.
+        std::vector<Car*> activeY;
+        for (auto* o : order) {
+            if (!o->out && !o->done && o->pit == 0) activeY.push_back(o);
+        }
+        {
+            std::vector<Car*> sorted = activeY;
+            std::sort(sorted.begin(), sorted.end(),
+                      [](Car* a, Car* b) { return a->cautionSlot < b->cautionSlot; });
+            for (size_t i = 0; i < sorted.size(); ++i) sorted[i]->cautionSlot = static_cast<int>(i);
+        }
+        state.cautionMaxSlot = static_cast<int>(activeY.size()) - 1;
+
+        // index.html:4355-4392: time-compressed straggler warp.
+        if (state.yellowT > 40 && !state.oneToGo) {
+            for (auto* o : activeY) {
+                if (o->isPlayer || o->spinT > 0) continue;
+                double se = wrapHalf(pace.s - 16 - o->cautionSlot * 9 - o->s, track.total());
+                if (se > 30) {
+                    double sNew = wrapMod(o->s + se, track.total());
+                    bool clear = true;
+                    for (auto* other : activeY) {
+                        if (other == o) continue;
+                        double dso = std::abs(other->s - sNew);
+                        if (dso > track.total() / 2) dso = track.total() - dso;
+                        if (dso < 12) {
+                            clear = false;
+                            break;
+                        }
+                    }
+                    if (clear) {
+                        PointResult p = track.pointAt(sNew);
+                        o->s = sNew;
+                        o->lat = 0;
+                        o->x = p.x;
+                        o->y = p.y;
+                        o->hdg = o->vdir = p.hdg;
+                        o->v = 38;
+                    }
+                }
+            }
+        }
+
+        // index.html:4393-4404: bunched check.
+        int stragglers = 0;
+        for (auto* o : activeY) {
+            double se = wrapHalf(pace.s - 16 - o->cautionSlot * 9 - o->s, track.total());
+            if (std::abs(se) > 25) ++stragglers;
+        }
+        const bool bunched = stragglers <= 3;
+
+        // index.html:4405-4411: pit road opens once collected.
+        if (!state.pitsOpen && !state.oneToGo && bunched) {
+            state.pitsOpen = true;
+        }
+
+        if (!state.oneToGo) {
+            // index.html:4412-4444: one-to-go transition.
+            if ((lead->lap >= state.cautionUntilLap || state.yellowT > 120) && state.yellowT > 8 &&
+                (bunched || state.yellowT > 75)) {
+                state.oneToGo = true;
+                state.pitsOpen = false;
+            }
+        } else {
+            // index.html:4445-4460: pace car pulls in, green as leader nears the line.
+            if (pace.state == "lead") {
+                double dEntry = wrapHalf(track.segs()[0].s0 - 25 - pace.s, track.total());
+                if (std::abs(dEntry) < 4) pace.state = "peel";
+            }
+            double dl = std::fmod(track.sFinish() - lead->s + track.total(), track.total());
+            if (pace.state != "lead" && (dl < 60 || dl > track.total() - 10)) {
+                state.flag = "green";
+                state.greenT = 2.2;
+                state.greenLockT = GREEN_LOCK_DUR;
+                state.sinceGreenT = 0;
+                state.oneToGo = false;
+                state.pitsOpen = true;
+                pace.state = "peel";
+            }
+        }
+    }
+}
+
+// tick() (index.html:4180-4462) -- see race.h's comment for exactly what's
+// deliberately not ported yet.
 void tick(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& track,
           Mulberry32& rngR, const PlayerInput& input) {
     state.t += DT;
@@ -170,6 +331,16 @@ void tick(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& 
     updateAero(cars, track);
     for (auto& c : cars) stepCar(c, state, track, cars, pace, input);
     collide(cars, state, track, rngR);
+
+    // S.order (index.html:4192): race-position order, descending.
+    std::vector<Car*> order;
+    order.reserve(cars.size());
+    for (auto& c : cars) order.push_back(&c);
+    std::sort(order.begin(), order.end(), [](Car* a, Car* b) {
+        double pa = a->done ? 1e6 - a->finishT : a->prog;
+        double pb = b->done ? 1e6 - b->finishT : b->prog;
+        return pb < pa; // descending
+    });
 
     if (state.mode == "pace") {
         for (auto& c : cars) {
@@ -184,4 +355,6 @@ void tick(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& 
     }
     if (state.greenLockT > 0 && state.flag == "green") state.greenLockT -= DT;
     if (state.flag == "green") state.sinceGreenT += DT;
+
+    cautionController(state, cars, pace, track, order);
 }

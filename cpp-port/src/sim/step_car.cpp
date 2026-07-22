@@ -114,8 +114,43 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
             brk = 0;
         }
     } else if (state.mode == "race" && state.flag == "yellow") {
-        // index.html:774-836
-        throw std::logic_error("stepCar: yellow-caution branch not yet ported");
+        // index.html:774-836: single file behind the pace car in assigned
+        // slots.
+        double vT;
+        if (pace.state == "lead") {
+            double ds = (pace.s - 16 - c.cautionSlot * 9) - c.s;
+            if (ds < -track.total() / 2) ds += track.total();
+            if (ds > track.total() / 2) ds -= track.total();
+            const double catchCap = std::min(95.0, 44 + std::max(0.0, ds - 20) * 0.15);
+            vT = std::min(catchCap, pace.v + ds * 0.4);
+            vT = ds < 0 ? std::max(30.0, vT) : std::max(0.0, vT);
+        } else {
+            vT = 38;
+        }
+        for (auto& o : allCars) {
+            if (&o == &c || o.pit > 0 || o.done || o.out) continue;
+            double da = o.s - c.s;
+            if (da < -track.total() / 2) da += track.total();
+            if (da > track.total() / 2) da -= track.total();
+            if (da > 0.5 && da < 80) vT = std::max(0.0, std::min(vT, o.v + std::max(0.0, da - 8) * 0.35));
+        }
+        const double lane = 0;
+        const double LAy = std::max(12.0, c.v * 0.62);
+        PointResult pTy = track.pointAt(c.s + LAy);
+        const double txy = pTy.x - std::sin(pTy.hdg) * lane, tyy = pTy.y + std::cos(pTy.hdg) * lane;
+        double dHy = wrapPi(std::atan2(tyy - c.y, txy - c.x) - c.hdg);
+        const double cFFy = track.pointAt(c.s + std::max(6.0, c.v * 0.3)).curv;
+        steerIn = std::max(-1.0, std::min(1.0, (c.v * cFFy) / std::max(0.05, c.v * 0.24) + dHy * 1.3));
+        if (c.v < vT - 0.3) {
+            thr = std::min(1.0, 0.45 + (vT - c.v) * 0.04);
+            brk = 0;
+        } else if (c.v > vT + 0.5) {
+            thr = 0;
+            brk = std::min(1.0, 0.6 + (c.v - vT) * 0.03);
+        } else {
+            thr = 0.2;
+            brk = 0;
+        }
     } else if (state.mode == "pace") {
         // index.html:837-858: formation -- hold grid lane, match pace speed,
         // keep gap to the car ahead.

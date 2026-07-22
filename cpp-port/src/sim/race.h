@@ -28,14 +28,34 @@ void updateAero(std::vector<Car>& cars, const Track& track);
 // branch-by-branch splitting stepCar() does).
 void collide(std::vector<Car>& cars, const RaceState& state, const Track& track, Mulberry32& rngR);
 
-// tick()'s pace-phase- and green-flag-racing-relevant orchestration
-// (index.html:4180-4204): advance sim time, step the pace car, update aero,
-// step every car, resolve collisions, handle the pace->race mode transition,
-// and the green-flag clocks. NOT ported here (deliberately, not yet
-// needed): storing previous poses for render interpolation (render-only),
-// S.order (HUD/leaderboard only, not read by any physics ported so far),
-// qual-lap completion, AI pit-strategy/blowout/DNF rolls, and the caution
-// controller (see PORT_PROGRESS.md's Phase 1f/1g notes for exactly what
-// each of those needs and why they're still safe to defer).
+// activeLead() (index.html:1138-1141): first still-racing (not done/out) car
+// in race-position order; falls back to the leader-by-position if every car
+// is done/out. `order` must be race-position-sorted (see below) and
+// non-empty.
+Car* activeLead(const std::vector<Car*>& order);
+
+// tick()'s caution controller (index.html:4251-4461): detects a wreck on
+// track during green and throws the yellow flag (assigning caution slots by
+// physical position), then manages the yellow-flag phase -- adaptive pace
+// speed, slot compaction, time-compressed straggler warping, the
+// bunched/one-to-go transition, and the green-flag restart trigger. HUD/
+// audio/render-only side effects (S.msgTxt/msgT, CAR_MAT_AMBER, cam.pos,
+// spotterSay) are NOT ported -- see PORT_PROGRESS.md's Phase 1g notes.
+// `order` must be race-position-sorted (see tick()'s own use of this same
+// data, matching JS's S.order) and non-empty.
+void cautionController(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& track,
+                        const std::vector<Car*>& order);
+
+// tick()'s pace-phase-, green-flag-racing-, and caution-relevant
+// orchestration (index.html:4180-4462): advance sim time, step the pace
+// car, update aero, step every car, resolve collisions, compute race
+// position order, handle the pace->race mode transition, the green-flag
+// clocks, and the caution controller. NOT ported here (deliberately, not
+// yet needed): storing previous poses for render interpolation
+// (render-only), qual-lap completion, AI pit-strategy (sets c.pitReq,
+// which nothing reads yet since the pit-entry-arming block isn't ported),
+// blowout/DNF rolls (organic spin/DNF triggers -- tested instead via
+// dump_js_trace.js's --force flag, see PORT_PROGRESS.md), and
+// green-white-checkered/qualifying (Phase 1g, still to come).
 void tick(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& track,
           Mulberry32& rngR, const PlayerInput& input);

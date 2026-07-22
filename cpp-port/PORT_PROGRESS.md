@@ -194,6 +194,49 @@ port; it's the reference the C++ port must match).
       `std::logic_error` if reached, and still can't be, since nothing
       verified so far triggers them.
 
+      **Progress (same session, continued once more): the yellow-caution
+      branch (index.html:774-836) and `tick()`'s full caution controller
+      (index.html:4251-4461) are ALSO done now.** New `race.cpp` functions:
+      `activeLead()` (index.html:1138-1141) and `cautionController()`
+      (the green-branch wreck-detect-and-throw-yellow logic, plus the
+      whole yellow-phase machine: adaptive pace speed, cautionSlot
+      compaction, the 40s-mark time-compressed straggler warp, the
+      bunched/stragglers check, the one-to-go transition, and the pace-car
+      pit-entry + green-restart trigger). `tick()` itself now also computes
+      `S.order`'s C++ equivalent (a race-position-sorted `vector<Car*>`,
+      needed by both `activeLead()` and the caution controller) and calls
+      `cautionController()` at the right point in the sequence. HUD/audio/
+      render-only side effects in the JS source (`S.msgTxt`/`msgT`,
+      `CAR_MAT_AMBER`, `cam.pos`, `spotterSay()`) are not ported, same
+      rationale as everywhere else this session. Remaining unported
+      branches: victory, out/done. AI pit-strategy (sets `c.pitReq`, which
+      nothing reads yet) and blowout/DNF rolls (organic spin/DNF triggers)
+      are also still deferred -- tested instead via `--force`, same as spin/
+      pit were.
+
+      **Verification needed a new capability**: forcing a spin at tick 0
+      (as spin/pit testing already did) doesn't reach `S.mode==='race'` in
+      time -- `spinT` decays in 80 ticks, long before the ~1395-tick pace
+      phase ends -- so the caution controller (gated on `S.mode==='race'`)
+      would never see it. `dump_js_trace.js` and `determinism_check` both
+      gained an optional `--force-tick=N` so the seed applies mid-run
+      instead of at grid formation. **Result**: forcing a spin at tick 1420
+      (just after the green flag) reproduced the exact real sequence --
+      yellow thrown, cautionSlot assigned by physical position, single-file
+      formation -- and matched JS byte-for-bit for the immediate aftermath
+      and, in a second run (different car/tick), for **757 ticks of ongoing
+      yellow-flag pacing** (adaptive pace speed, slot compaction all
+      verified correct) before hitting a THIRD occurrence of the
+      wall-clamp floating-point boundary phenomenon from this session's
+      Open Questions entry -- see below, this recurrence sharpened the
+      understanding of when to expect it. **Not yet verified with a clean
+      run**: the 40s forward-warp, the bunched/one-to-go transition, and
+      the green-restart trigger -- both attempts hit the wall-boundary
+      fork before reaching them (the first at ~85 ticks into yellow, the
+      second at ~757). See "Open questions" for why this is genuinely hard
+      to avoid over a long caution, and the recommended approach for
+      whoever verifies this next.
+
       **Verifying spin/pit needed a new technique**: these essentially
       never occur organically within a few hundred ticks (no natural
       incident that early), so `dump_js_trace.js` gained an optional
@@ -447,6 +490,39 @@ threshold this closely for long enough. When a divergence is found:
    not just final x/y/v), the way this session did, rather than guessing
    from final position/velocity alone.
 
+**Update (same session, caution-controller verification): this recurs more
+than "rare edge case" implies.** Verifying the newly-ported caution
+controller hit the *exact same* `off`-vs-`WALL_CLAMP_LAT` fork twice more,
+in two different forced-spin scenarios (different car, different tick) --
+both times because a car ended up riding at `lat` essentially exactly
+`11.0` (the wall boundary for this track) for an extended stretch: once
+right after a spin scrubbed off near the wall, once during ordinary
+single-file caution pacing. **Refined understanding**: this isn't a rare
+coincidence -- any sustained period of a car sitting at or very near
+`WALL_CLAMP_LAT` (which naturally happens during formation/caution driving,
+post-spin settling, or anything else that parks a car near the outer wall
+for a while) will EVENTUALLY hit this fork, typically within a few hundred
+to ~1500 ticks of that condition persisting. **Consequence for
+verification strategy**: getting a fully clean, bit-exact run through an
+*entire* multi-thousand-tick caution cycle (yellow thrown all the way
+through the green restart) may not be practically achievable this way --
+two attempts got to 85 and 757 ticks into the yellow flag respectively
+before hitting this fork, and a third/fourth attempt would likely fare
+similarly. This does NOT mean the un-reached logic (the 40s forward-warp,
+bunched/one-to-go transition, restart trigger) is unverified-and-suspect --
+it means bit-exact-whole-simulation matching is the wrong tool for
+verifying code that only runs late in a long scenario. **Recommended
+approach for whoever verifies the remainder**: don't chase a longer clean
+run. Instead, verify the specific untested logic by direct inspection of
+its own decision variables (`bunched`, `stragglers`, `S.oneToGo`,
+`PACE.state`, the forward-warp's `se`/`clear` computations) captured via
+instrumented JS output compared against the same variables computed by the
+C++ port, the same technique already used successfully for the AI-race
+branch's blocker/passSide logic earlier this session -- this verifies the
+*logic* is correct independent of whether some unrelated car's exact
+position has drifted by 2e-13 due to an unrelated wall-boundary fork
+elsewhere in the same run.
+
 ## Definition of done (unchanged from the original spec)
 
 - Runs on both Android and iOS
@@ -620,3 +696,34 @@ threshold this closely for long enough. When a divergence is found:
   controller, then verify the resulting single-file caution formation,
   proximity interlock, and (eventually) the restart sequence. After that:
   victory/GWC/qual branches last, matching the original checklist order.
+
+- **Session 3 (continued once more)**: Ported the yellow-caution branch
+  (index.html:774-836) and the complete caution controller (index.html:
+  4251-4461: green-branch wreck-detect-and-throw, cautionSlot assignment
+  by physical position, adaptive pace speed, slot compaction, the 40s
+  forward-warp, bunched/one-to-go transition, pace-car pit-entry, green
+  restart trigger). New `activeLead()` and `cautionController()` in
+  `race.cpp`; `tick()` now also computes the C++ equivalent of `S.order`.
+  Added `--force-tick=N` to both `dump_js_trace.js` and `determinism_check`
+  so a forced incident can be seeded mid-run instead of only at grid
+  formation (needed since `spinT` decays in 80 ticks, well before
+  `S.mode` ever reaches `'race'` if forced at tick 0).
+  **Verified**: yellow-flag throw + immediate single-file formation
+  matched JS exactly; a second run matched for 757 ticks of ongoing
+  adaptive-pace/slot-compaction logic. Both eventually hit the same
+  wall-clamp floating-point boundary phenomenon documented earlier this
+  session -- now confirmed a THIRD time, and understood to recur whenever
+  a car sits near `WALL_CLAMP_LAT` for a while (common during caution
+  pacing), not a rare fluke. See the updated "Open questions" entry for
+  why chasing an even-longer clean run isn't the right next step, and the
+  recommended decision-variable-inspection technique for verifying the
+  not-yet-reached forward-warp/one-to-go/restart logic instead.
+  **Next run**: verify the caution controller's back half using that
+  technique (instrument JS to log `bunched`/`stragglers`/`S.oneToGo`/
+  `PACE.state` each tick, compare against the same C++ values -- don't
+  rely on whole-simulation bit-exact matching to get there). Then: the
+  victory and out/done branches (both fairly small), followed by
+  green-white-checkered and qualifying (larger, saved for last per the
+  original checklist order). At that point Phase 1f/1g's stepCar()/tick()
+  porting is essentially complete and Phase 1h (full determinism
+  verification + commit) becomes the closing task.
