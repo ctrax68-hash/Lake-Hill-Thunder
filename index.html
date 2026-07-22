@@ -111,6 +111,20 @@
   .mbtn:active { background:var(--c-blue); transform:scale(0.97); }
   #startBtn { background:var(--c-black); border-color:var(--c-yellow); color:var(--c-yellow); font-size:19px; }
   #startBtn:active { background:var(--c-yellow); color:var(--c-black); }
+  /* master volume slider -- same panel language as .mbtn (dark fill, blue
+     border) but a row instead of a button, so it reads as part of the same
+     menu-card family rather than a foreign control */
+  .volRow { display:flex; align-items:center; gap:var(--sp-3); min-width:230px;
+      padding:9px 16px; background:var(--c-black); border:var(--bw-med) solid var(--c-blue); }
+  .volRow span { font-family:var(--font-head); font-size:13px; font-weight:bold;
+      color:var(--c-white); letter-spacing:1px; white-space:nowrap; }
+  #volSlider { flex:1; -webkit-appearance:none; appearance:none; height:4px;
+      background:var(--c-blue); outline:none; }
+  #volSlider::-webkit-slider-thumb { -webkit-appearance:none; appearance:none;
+      width:16px; height:16px; border-radius:0; background:var(--c-yellow);
+      border:1px solid var(--c-black); cursor:pointer; }
+  #volSlider::-moz-range-thumb { width:16px; height:16px; border-radius:0;
+      background:var(--c-yellow); border:1px solid var(--c-black); cursor:pointer; }
   .hint { color:var(--c-graycool); font-family:var(--font-head); font-size:11px; text-align:center;
       line-height:1.7; max-width:340px; }
   #results { display:none; }
@@ -161,6 +175,7 @@
     <button id="lapTog" class="mbtn">LAPS: 5</button>
     <button id="qualTog" class="mbtn">QUALIFYING: OFF</button>
     <button id="sndTog" class="mbtn">SOUND: ON</button>
+    <div class="volRow"><span>VOLUME</span><input type="range" id="volSlider" min="0" max="100" value="100"></div>
     <button id="tiltTog" class="mbtn">TILT STEER: OFF</button>
     <div class="hint">Landscape only &bull; &#9664; &#9654; steer &bull; GAS / BRAKE right hand<br>
     Rolling start behind the pace car &bull; green at the line &bull; 20-car field.</div>
@@ -487,7 +502,7 @@ const S = {
   mode:'menu', cars:[], player:null,
   t:0, countT:0, laps:5,
   order:[], finishOrder:[],
-  sound:true, tilt:false, tiltG:0,
+  sound:true, volume:1, tilt:false, tiltG:0,
   shakeT:0,
   qual:false, gridOrder:null, qualPos:0,
   flag:'green', yellowT:0, cautionUntilLap:-1, greenLockT:0, sinceGreenT:0,
@@ -1230,12 +1245,32 @@ window.addEventListener('deviceorientation', e=>{
 
 /* ---------- audio ---------- */
 let AC=null, oscA=null, oscB=null, oscC=null, gain=null, skid=0, skidNode=null, skidGain=null;
-let engNzG=null, packOsc=null, packGain=null, packPan=null, crowdGain=null, NZBUF=null;
+let engNzG=null, crowdGain=null, NZBUF=null;
+// real mixer: 4 category buses (engine/opponents/crowd/effects) into one
+// master gain, so there's an actual per-category signal path instead of
+// every source wiring straight to AC.destination. S.volume (0-1, set by the
+// menu slider) times S.sound (the existing mute toggle) drives busMaster --
+// S.sound stays the master on/off exactly as before, volume is new on top.
+let busMaster=null, busEngine=null, busOpponents=null, busCrowd=null, busFx=null;
+// multi-voice opponent drone: promoted from a single shared "nearest
+// opponent" voice to PACK_VOICES independently-tracked ones, so a tight
+// multi-car battle reads as more than one retuning engine. Each voice is
+// reused (retuned/repanned in place every tick) rather than created and
+// torn down per car -- same idiom the old single-voice drone already used,
+// just instantiated PACK_VOICES times, and hard-capped (not one-per-nearby-
+// car) so this can't runaway-allocate AudioNodes in a crowded pack.
+const PACK_VOICES = 3;
+let packVoices = [];
 function audioInit(){
   if(AC || !S.sound) return;
   try{
     AC = new (window.AudioContext||window.webkitAudioContext)();
-    gain = AC.createGain(); gain.gain.value = 0; gain.connect(AC.destination);
+    busMaster = AC.createGain(); busMaster.gain.value = 0; busMaster.connect(AC.destination);
+    busEngine = AC.createGain(); busEngine.gain.value = 1; busEngine.connect(busMaster);
+    busOpponents = AC.createGain(); busOpponents.gain.value = 1; busOpponents.connect(busMaster);
+    busCrowd = AC.createGain(); busCrowd.gain.value = 1; busCrowd.connect(busMaster);
+    busFx = AC.createGain(); busFx.gain.value = 1; busFx.connect(busMaster);
+    gain = AC.createGain(); gain.gain.value = 0; gain.connect(busEngine);
     // engine: twin detuned saws + sub square + intake-noise layer, lowpassed
     oscA = AC.createOscillator(); oscA.type='sawtooth';
     oscB = AC.createOscillator(); oscB.type='square';
@@ -1252,33 +1287,40 @@ function audioInit(){
     engNzG = AC.createGain(); engNzG.gain.value=0;
     engNz.connect(bpE); bpE.connect(engNzG); engNzG.connect(gain);
     engNz.start();
-    // skid
+    // skid (routed as an effect, not engine, since it's a contact/traction
+    // cue rather than the engine itself)
     skidNode = AC.createBufferSource(); skidNode.buffer=NZBUF; skidNode.loop=true;
     const hp = AC.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=1800;
     skidGain = AC.createGain(); skidGain.gain.value=0;
-    skidNode.connect(hp); hp.connect(skidGain); skidGain.connect(AC.destination);
+    skidNode.connect(hp); hp.connect(skidGain); skidGain.connect(busFx);
     skidNode.start();
-    // nearest-opponent engine drone, panned to their side
-    packOsc = AC.createOscillator(); packOsc.type='sawtooth';
-    const lpP = AC.createBiquadFilter(); lpP.type='lowpass'; lpP.frequency.value=650;
-    packGain = AC.createGain(); packGain.gain.value=0;
-    packOsc.connect(lpP);
-    if(AC.createStereoPanner){ packPan = AC.createStereoPanner(); lpP.connect(packPan); packPan.connect(packGain); }
-    else lpP.connect(packGain);
-    packGain.connect(AC.destination);
-    packOsc.start();
-    // drafting wind whoosh
+    // opponent voices: PACK_VOICES independent osc/filter/pan/gain chains,
+    // each assigned every tick to one of the N nearest cars (see audioTick())
+    packVoices = [];
+    for(let i=0;i<PACK_VOICES;i++){
+      const osc = AC.createOscillator(); osc.type='sawtooth';
+      const lp = AC.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=650;
+      const g = AC.createGain(); g.gain.value=0;
+      osc.connect(lp);
+      let pan = null;
+      if(AC.createStereoPanner){ pan = AC.createStereoPanner(); lp.connect(pan); pan.connect(g); }
+      else lp.connect(g);
+      g.connect(busOpponents);
+      osc.start();
+      packVoices.push({osc, gain:g, pan, car:null});
+    }
+    // drafting wind whoosh (effect)
     const draftSrc = AC.createBufferSource(); draftSrc.buffer=NZBUF; draftSrc.loop=true;
     const bpD = AC.createBiquadFilter(); bpD.type='bandpass'; bpD.frequency.value=1200; bpD.Q.value=0.5;
     draftGain = AC.createGain(); draftGain.gain.value=0;
-    draftSrc.connect(bpD); bpD.connect(draftGain); draftGain.connect(AC.destination);
+    draftSrc.connect(bpD); bpD.connect(draftGain); draftGain.connect(busFx);
     draftSrc.start();
     // crowd bed: band-passed noise, swells on flags
     const crowdSrc = AC.createBufferSource(); crowdSrc.buffer=NZBUF; crowdSrc.loop=true;
     crowdSrc.playbackRate.value = 0.35;
     const bpC = AC.createBiquadFilter(); bpC.type='bandpass'; bpC.frequency.value=850; bpC.Q.value=0.4;
     crowdGain = AC.createGain(); crowdGain.gain.value=0;
-    crowdSrc.connect(bpC); bpC.connect(crowdGain); crowdGain.connect(AC.destination);
+    crowdSrc.connect(bpC); bpC.connect(crowdGain); crowdGain.connect(busCrowd);
     crowdSrc.start();
   }catch(e){ AC=null; }
 }
@@ -1291,7 +1333,7 @@ function playThump(sev){
     const g = AC.createGain();
     g.gain.setValueAtTime(Math.min(0.28, 0.10+sev*0.18), AC.currentTime);
     g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime+0.22);
-    src.connect(lp); lp.connect(g); g.connect(AC.destination);
+    src.connect(lp); lp.connect(g); g.connect(busFx);
     src.start(); src.stop(AC.currentTime+0.25);
   }catch(e){}
 }
@@ -1303,7 +1345,7 @@ function playBang(){
     const g = AC.createGain();
     g.gain.setValueAtTime(0.3, AC.currentTime);
     g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime+0.35);
-    src.connect(bp); bp.connect(g); g.connect(AC.destination);
+    src.connect(bp); bp.connect(g); g.connect(busFx);
     src.start(); src.stop(AC.currentTime+0.4);
   }catch(e){}
 }
@@ -1315,7 +1357,7 @@ function spotterBlip(){
     const g = AC.createGain();
     g.gain.setValueAtTime(0.06, AC.currentTime);
     g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime+0.09);
-    src.connect(bp); bp.connect(g); g.connect(AC.destination);
+    src.connect(bp); bp.connect(g); g.connect(busFx);
     src.start(); src.stop(AC.currentTime+0.1);
   }catch(e){}
 }
@@ -1344,32 +1386,48 @@ function audioTick(){
   oscB.frequency.setTargetAtTime(f*0.5, AC.currentTime, 0.03);
   oscC.frequency.setTargetAtTime(f*1.013, AC.currentTime, 0.03);
   const live = (S.mode==='race'||S.mode==='pace'||S.mode==='qual'||S.mode==='victory') && S.sound;
+  // master mixer: S.sound stays the top-level mute exactly as before,
+  // S.volume (0-1, set by the menu slider, default 1) is new on top of it.
+  busMaster.gain.setTargetAtTime(S.sound ? (S.volume==null?1:S.volume) : 0, AC.currentTime, 0.05);
   const tgt = live ? (0.05 + 0.10*(S.player.thr*0.7+rpm*0.3)) : 0;
   gain.gain.setTargetAtTime(tgt, AC.currentTime, 0.08);
   engNzG.gain.setTargetAtTime(live ? 0.25*S.player.thr : 0, AC.currentTime, 0.1);
   skid = Math.max(0, skid - 0.08);
   skidGain.gain.setTargetAtTime(S.sound ? skid*0.06 : 0, AC.currentTime, 0.05);
-  // nearest opponent audible when close, panned to their side
-  let near=null, nd=1e9;
-  for(const o of S.cars){ if(o===S.player) continue;
+  // N nearest opponents, each voice retuned/panned in place every tick --
+  // reads as a real multi-car battle instead of one drone hopping between
+  // cars. Hard-capped at PACK_VOICES regardless of how many cars are
+  // actually within range, so this can never allocate beyond the fixed
+  // voice pool already built once in audioInit().
+  let nearest = [];
+  if(live) for(const o of S.cars){ if(o===S.player) continue;
     const d = Math.hypot(o.x-S.player.x, o.y-S.player.y);
-    if(d<nd){ nd=d; near=o; } }
-  if(near && nd < 42 && live){
-    const rpm2 = gearRpm(near.v).rpm;
-    packOsc.frequency.setTargetAtTime(52 + rpm2*160, AC.currentTime, 0.05);
-    packGain.gain.setTargetAtTime((1-nd/42)*0.05, AC.currentTime, 0.08);
-    if(packPan){
-      // pan by which side they're on relative to our heading
-      const dx = near.x-S.player.x, dy = near.y-S.player.y;
-      const side = -Math.sin(S.player.hdg)*dx + Math.cos(S.player.hdg)*dy;
-      packPan.pan.setTargetAtTime(Math.max(-1, Math.min(1, side/6)), AC.currentTime, 0.1);
+    if(d < 42) nearest.push({o, d});
+  }
+  nearest.sort((a,b)=>a.d-b.d);
+  for(let i=0;i<PACK_VOICES;i++){
+    const voice = packVoices[i], slot = nearest[i];
+    if(slot){
+      const rpm2 = gearRpm(slot.o.v).rpm;
+      voice.osc.frequency.setTargetAtTime(52 + rpm2*160, AC.currentTime, 0.05);
+      voice.gain.gain.setTargetAtTime((1-slot.d/42)*0.05, AC.currentTime, 0.08);
+      if(voice.pan){
+        // pan by which side they're on relative to our heading
+        const dx = slot.o.x-S.player.x, dy = slot.o.y-S.player.y;
+        const side = -Math.sin(S.player.hdg)*dx + Math.cos(S.player.hdg)*dy;
+        voice.pan.pan.setTargetAtTime(Math.max(-1, Math.min(1, side/6)), AC.currentTime, 0.1);
+      }
+    } else {
+      voice.gain.gain.setTargetAtTime(0, AC.currentTime, 0.15);
     }
-  } else packGain.gain.setTargetAtTime(0, AC.currentTime, 0.15);
-  // crowd swells with the big moments
+  }
+  // crowd swells with the big moments, plus a close-battle rise reusing the
+  // nearest-opponent distance already computed above (no new distance math)
   let crowd = 0.004;
   if(S.greenT>0) crowd = 0.030;
   else if(S.flag==='yellow') crowd = 0.014;
   else if(S.mode==='victory') crowd = 0.034;
+  if(nearest[0] && nearest[0].d < 12) crowd = Math.max(crowd, 0.020);
   crowdGain.gain.setTargetAtTime(S.sound && S.mode!=='menu' ? crowd : 0, AC.currentTime, 0.4);
   // drafting wind: louder the tighter the tow
   if(draftGain) draftGain.gain.setTargetAtTime(
@@ -4553,6 +4611,9 @@ document.getElementById('againBtn').addEventListener('click', ()=>{
 });
 document.getElementById('sndTog').addEventListener('click', e=>{
   S.sound=!S.sound; e.target.textContent='SOUND: '+(S.sound?'ON':'OFF');
+});
+document.getElementById('volSlider').addEventListener('input', e=>{
+  S.volume = (+e.target.value)/100;
 });
 document.getElementById('tiltTog').addEventListener('click', e=>{
   S.tilt=!S.tilt; e.target.textContent='TILT STEER: '+(S.tilt?'ON':'OFF');
