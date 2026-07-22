@@ -433,7 +433,7 @@ function makeCar(isPlayer, idx){
     spinT:0, spinDir:1, spinCd:0,
     pit:0, pitT:0, pitReq:false,
     fuel:1, dmg:0, out:false,
-    cautionSlot:-1
+    cautionSlot:-1, gridSlot:-1, gridLane:0
   };
 }
 
@@ -460,6 +460,17 @@ const S = {
 // essentially never binds in practice, matching the original intent, without
 // further suppressing organic racing incidents beyond the tuning already done.
 const GWC_MAX_ATTEMPTS = 8;
+// how long after ANY green flag (the initial start or a caution restart)
+// the field stays in "pack mode": collide()'s spin-roll and the tire-blowout
+// spin are both suppressed (see their own S.greenLockT<=0 gates), and
+// stepCar()'s AI branch eases each car's lane target from a tight starting
+// formation toward its personal groove instead of snapping straight to it.
+// ~22s approximates "about a lap" without needing per-track lap-time data
+// (organic lap times across the 4 tracks run roughly 17-45s) -- long enough
+// that the field is genuinely spread out and drafting/passing normally by
+// the time real incidents can occur again, short enough that it doesn't
+// read as the whole field driving in slow motion formation forever.
+const GREEN_LOCK_DUR = 22;
 
 /* ---------- rolling start: pace car + formation on the backstretch ---------- */
 const PACE = { s:0, lat:0, v:0, hdg:0, x:0, y:0, state:'lead',
@@ -484,6 +495,7 @@ function gridStart(){
     c.v = 31;                                          // ~70 mph rolling
     c.gridLane = off;
     c.gridAhead = i>=2 ? i-2 : -1;                     // car directly ahead in column
+    c.gridSlot = i;                                    // stagger key for the green-flag pack hold below
     c.prog = -1 + (i*0.001);
     c.px=c.x; c.py=c.y; c.phdg=c.hdg; c.ps=c.s; c.plat=c.lat;
   });
@@ -508,7 +520,19 @@ function stepPace(){
     PACE.s += PACE.v*DT; if(PACE.s >= TRACK.total) PACE.s -= TRACK.total;
     PACE.lat = Math.max(-11, PACE.lat - 5.5*DT);
     PACE.v  = Math.max(0, PACE.v - 6*DT);
-    if(PACE.v <= 0.1 || PACE.s > TRACK.sFinish - 25) PACE.state = 'parked';
+    // completion used to ALSO trigger on raw track position (PACE.s >
+    // sFinish-25), meant as a safety net for the initial rolling-start dive
+    // (which begins way back at turn 4, so by the time it's anywhere near
+    // the line it's had plenty of distance to finish diving anyway). At a
+    // mid-race caution restart, though, 'peel' starts from wherever the
+    // pace car already was when the leader neared the restart zone -- often
+    // already within that same 25 units of the line -- so the position
+    // check could fire within a tick or two of 'peel' even starting, before
+    // PACE.lat/v had moved at all. That's the exact bug: the pace car froze
+    // at lat~=0, still doing ~38, sitting on the racing surface instead of
+    // ever actually diving to the apron. Completion now only cares whether
+    // it's actually reached the apron (off the racing surface) or stopped.
+    if(PACE.v <= 0.1 || PACE.lat <= -10.5) PACE.state = 'parked';
   }
   const p = TRACK.pointAt(PACE.s);
   const nx=-Math.sin(p.hdg), ny=Math.cos(p.hdg);
@@ -754,47 +778,57 @@ function stepCar(c){
     steerIn += c.dmg*0.02;                         // bent bodywork pulls gently toward the wall
   } else {
     const vT = targetSpeed(c);
-    // restart lane hold: for a short window right after a caution restart,
-    // keep the just-ended single-file queue order instead of letting every
-    // car's target lane snap straight to its groove and enter the
-    // blocker/pass logic in the same tick -- previously the WHOLE field
-    // (9-unit gaps, near-zero lateral spread) simultaneously qualified as
-    // "blocked" and independently swerved into a fresh pass lane on the
-    // exact tick green dropped, reading as an instant scramble/merge.
-    // Gated on c.cautionSlot>=0 so this never touches the original
-    // double-file gridStart() (those cars' cautionSlot stays at its -1
-    // default until an actual caution happens). Reuses S.greenLockT --
-    // already set to 20 the instant S.flag flips to 'green' on a restart
-    // and decremented only while green -- as the elapsed-time source
-    // instead of a second timer, and staggers each car's release by its
-    // own cautionSlot (0=leader..N=tail) so the field peels off front-to-
-    // back over ~2.5s rather than everyone swerving on one tick.
+    // green-flag pack hold: for a while right after ANY green flag -- the
+    // initial start as much as a caution restart -- keep the field in its
+    // just-formed tight formation (double-file grid, or the single-file
+    // caution queue) instead of letting every car's target lane snap
+    // straight to its personal groove and enter the blocker/pass logic in
+    // the same tick. Previously this only applied to caution restarts
+    // (gated on c.cautionSlot>=0, which stays -1 until an actual caution
+    // happens) -- the ORIGINAL green flag had no hold at all, so all 20
+    // cars would immediately fan out from the narrow starting grid to
+    // their (up to 10-unit-apart) personal grooves at once, on lap 1, with
+    // full passing logic active from the first tick. That instant fan-out
+    // is what was actually producing a caution almost every single race
+    // before lap 1 even finished. Unified across both cases: hold lane is
+    // the just-formed formation (c.gridLane for the original start, 0 for
+    // a caution restart's single-file queue), staggered by each car's
+    // position in that formation (c.gridSlot or c.cautionSlot), then eased
+    // toward the personal groove over GREEN_LOCK_DUR (~a lap) instead of
+    // snapping -- long enough that the field is genuinely spread out and
+    // drafting normally, like the user asked for, before real passing
+    // (and the incident chances that come with it) resumes. Reuses
+    // S.greenLockT -- set to GREEN_LOCK_DUR the instant S.flag flips to
+    // 'green' at either site and decremented only while green -- as the
+    // elapsed-time source instead of a second timer.
     let restartHeld = false, laneEase = 1;
-    if(S.flag==='green' && S.greenLockT>0 && c.cautionSlot>=0){
-      const sinceGreen = 20 - S.greenLockT;
-      const releaseAt = 0.4 + c.cautionSlot*0.12;
+    const holdLane = c.cautionSlot>=0 ? 0 : c.gridLane;
+    const holdSlot = c.cautionSlot>=0 ? c.cautionSlot : Math.max(0, c.gridSlot);
+    if(S.flag==='green' && S.greenLockT>0){
+      const sinceGreen = GREEN_LOCK_DUR - S.greenLockT;
+      const releaseAt = 0.4 + holdSlot*0.12;
       const heldT = sinceGreen - releaseAt;
       // hard hold until this car's own staggered release point, exactly as
-      // before; past that, EASE the lane target from 0 up to the full
-      // groove over 4s instead of an instant snap. A binary snap (0 ->
-      // grooveBias in one tick) made every just-released car visibly leap
-      // straight out to its full high/middle/low lane the moment its hold
-      // lifted -- reading as an abrupt, unrealistically wide fan-out right
-      // off the restart instead of cars gradually finding their lines.
-      // Passing stays suppressed for the same 4s (restartHeld covers both
-      // phases below) since a mid-fan-out car is still close in lat to
-      // whoever's near it -- letting the blocker/pass logic fire mid-ease
-      // was producing spurious swerves back toward a shared lane, which is
-      // what read as cars "merging into one lane" right as they hit turn 1.
-      restartHeld = heldT < 4.0;
-      laneEase = Math.max(0, Math.min(1, heldT/4.0));
+      // before; past that, EASE the lane target from the hold formation up
+      // to the full groove instead of an instant snap. A binary snap made
+      // every just-released car visibly leap straight out to its full
+      // high/middle/low lane the moment its hold lifted -- reading as an
+      // abrupt, unrealistically wide fan-out right off the restart instead
+      // of cars gradually finding their lines. Passing stays suppressed for
+      // the same window (restartHeld covers both phases below) since a
+      // mid-fan-out car is still close in lat to whoever's near it --
+      // letting the blocker/pass logic fire mid-ease was producing spurious
+      // swerves back toward a shared lane, which is what read as cars
+      // "merging into one lane" right as they hit turn 1.
+      restartHeld = heldT < GREEN_LOCK_DUR;
+      laneEase = Math.max(0, Math.min(1, heldT/GREEN_LOCK_DUR));
     }
     // groove-based lane target (both corners and straights) instead of the
     // old blanket -2.2-in-corners/laneBias-on-straights split -- see
     // grooveBias's definition in makeCar() for why: every car wanting the
     // identical corner line was the root cause of constant merging, not
     // just a restart-specific issue.
-    let lane = c.grooveBias * laneEase;
+    let lane = holdLane + (c.grooveBias - holdLane) * laneEase;
     let blocker = null, bd = 1e9;
     for(const o of S.cars){ if(o===c) continue;
       let ds = o.s - c.s; if(ds<-TRACK.total/2) ds+=TRACK.total; if(ds>TRACK.total/2) ds-=TRACK.total;
@@ -997,24 +1031,25 @@ function collide(){
           // widened pass lane above: even if a stray extra sub-3.6 contact
           // still slips through during one 2.5s pass attempt, at most one
           // spin roll can happen per attempt instead of one per incident.
-          if(cv2 > 11 && S.mode==='race' && S.flag==='green' && S.greenLockT<=0
+          if(cv2 > 13 && S.mode==='race' && S.flag==='green' && S.greenLockT<=0
              && victim2.spinT<=0 && victim2.spinCd<=0 && (victim2.spinRollCd||0)<=0){
             victim2.spinRollCd = 2.6;
-            // gate raised from cv2>9 to cv2>11, and base probability halved
-            // again from (cv2-9)*0.02+0.01: real pack/draft racing (see the
-            // widened draft threshold above) means cars are now in sub-3.6
-            // contact range far more often just from running close together
-            // in a pack, not from any real racing incident -- at the old
-            // gate/rate that read as constant, unrealistically frequent
-            // wrecking. Requiring a genuinely harder closing-speed
-            // differential before a spin can even be rolled, at half the
-            // previous odds, keeps wrecks a real but occasional consequence
-            // of a hard racing incident instead of routine pack contact.
+            // gate raised again, cv2>11 to cv2>13, and base probability
+            // halved again from (cv2-11)*0.01+0.005: despite two prior
+            // rounds of tuning this direction, organic play reports still
+            // said wrecks were far too frequent (a caution almost every
+            // single race before lap 1 even finished). The green-flag pack
+            // hold above (S.greenLockT, ~a lap after ANY green) already
+            // blocks this roll entirely for a while now, so the incidents
+            // still getting through are ones happening well after that
+            // window during normal racing -- cutting the base rate further
+            // targets exactly those, rather than the opening-lap scramble
+            // (already handled separately by the pack hold).
             //
             // trackWreckScale (see collide()'s own comment above): normalizes
             // for track length so a longer lap doesn't mean proportionally
             // more chances for an incident to interrupt it.
-            if(rngR() < ((cv2-11)*0.01 + 0.005)*trackWreckScale){
+            if(rngR() < ((cv2-13)*0.005 + 0.0025)*trackWreckScale){
               victim2.spinT = 1.6 + rngR()*1.2;
               victim2.spinDir = ny > 0 ? 1 : -1;
               victim2.spinCd = 10;
@@ -3711,7 +3746,7 @@ function tick(){
   S.order = S.cars.slice().sort((a,b)=> (b.done?1e6-b.finishT:b.prog) - (a.done?1e6-a.finishT:a.prog));
   if(S.mode==='pace'){
     for(const c of S.cars) if(c.lap >= 0){          // leader took the green
-      S.mode='race'; S.greenT = 2.2; S.greenLockT = 12;
+      S.mode='race'; S.greenT = 2.2; S.greenLockT = GREEN_LOCK_DUR;
       break;
     }
   }
@@ -3765,6 +3800,16 @@ function tick(){
   // ---- caution controller ----
   if(S.mode==='race'){
     if(S.flag==='green'){
+      // finish the pace car's dive to the apron: stepPace() otherwise only
+      // runs in the S.flag==='yellow' branch below, but PACE.state flips to
+      // 'peel' (and green is thrown) the instant the leader nears the
+      // restart zone -- often well before the car has actually finished
+      // decelerating and sliding out to the pit-lane apron. Cutting the
+      // update off right there froze the pace car mid-dive, still sitting
+      // on or near the racing surface for the rest of the race instead of
+      // actually exiting. Keep stepping it every green-flag tick until it
+      // genuinely reaches 'parked' (off the track surface, stopped).
+      if(PACE.state==='peel') stepPace();
       for(const c of S.cars){
         if(c.spinT > 0 && !c.done){                 // wreck on track → yellow
           S.flag='yellow'; S.yellowT = 0;
@@ -3957,7 +4002,7 @@ function tick(){
         }
         let dl = (TRACK.sFinish - lead.s + TRACK.total) % TRACK.total;
         if(PACE.state!=='lead' && (dl < 60 || dl > TRACK.total-10)){
-          S.flag='green'; S.greenT = 2.2; S.greenLockT = 20;
+          S.flag='green'; S.greenT = 2.2; S.greenLockT = GREEN_LOCK_DUR;
           S.oneToGo = false; S.pitsOpen = true;
           PACE.state='peel';
         }
@@ -4220,5 +4265,5 @@ requestAnimationFrame(frame);
 // (S/input are `const` object literals, only their properties mutate), so a
 // plain copy is safe for those.
 Object.defineProperty(window, 'TRACK', { get: () => TRACK, configurable: true });
-Object.assign(window, { S, tick, selectTrack, input, frame });
+Object.assign(window, { S, tick, selectTrack, input, frame, PACE });
 </script></body></html>
