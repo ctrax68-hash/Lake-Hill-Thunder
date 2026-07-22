@@ -114,7 +114,7 @@ port; it's the reference the C++ port must match).
 - `cpp-port/.gitignore` added (`build/`) so the CMake build directory doesn't get
   committed.
 
-### Phase 1 — Physics/AI core (headless, no graphics) — IN PROGRESS (Session 2)
+### Phase 1 — Physics/AI core (headless, no graphics) — DONE (Session 2-3)
 - [x] Port `mulberry32` (JS: `index.html:229`) bit-for-bit; unit test against logged
       JS output for seeds `12345` (gameplay `rng`), `999` (`rngR`, runtime events —
       qual spread, spins), `777` (`rng2`, scenery-only, safe to diverge from without
@@ -1133,3 +1133,65 @@ elsewhere in the same run.
   Phase 3 (mobile touch/tilt input, Android NDK install). Real interactive
   keyboard-feel confirmation whenever a session with an actual display is
   available.
+
+- **Session 3 (continued once more -- Phase 1h, the closing
+  full-determinism pass)**: **Phase 1 is now DONE**, not just "essentially
+  complete." This wasn't new porting -- every `stepCar()`/`tick()` branch
+  has been ported since Phase 1g -- it was a capstone check: does the
+  *complete*, fully-assembled sim as it stands today (with GWC, finish
+  arbitration, victory/done transitions, AI pit strategy, and blowout
+  rolls all now live -- none of that existed yet during the original
+  ~900-tick clean-run figure quoted earlier this session) still match real
+  JS ground truth over a long, **unforced** run, not just the isolated
+  `--force`-seeded snippets used to verify each piece individually.
+
+  **Ran a fresh, completely unforced trace** (`dump_js_trace.js --track=0
+  --ticks=3000`, no `--force` at all -- real grid start, real ~1395-tick
+  pace phase, real green flag, whatever organically happens from there).
+  `determinism_check` against it (no `--force` args either): **clean,
+  bit-for-bit match for 2298 ticks** -- the entire pace phase plus roughly
+  900 ticks of real green-flag racing, independently reconfirming the
+  original figure with the newer AI-pit-strategy/blowout code paths now
+  live in every tick (they didn't fire in this particular ~18-sim-second
+  window -- their wear/fuel trigger thresholds take longer than that to
+  reach, so this run doesn't exercise them, but that's an honest gap to
+  note, not a hole in this specific pass; those branches were already
+  separately verified in isolation via `--force` scenarios earlier this
+  session).
+
+  **Divergence at tick 2298 (car 3: x/y/hdg/v) diagnosed, not assumed**:
+  pulled the raw trace lines for car 3 across ticks 2290-2299 and checked
+  its `lat` field directly -- `10.124, 10.444, 10.758, 11.066, 11.0, 11.0,
+  11.206, 11.0, 11.0, 11.0`, oscillating right on `11.0` (`WALL_CLAMP_LAT`
+  for this track), the exact signature of the cross-runtime
+  floating-point boundary phenomenon documented in this file's Open
+  Questions -- **confirmed a sixth time**, not a new bug. `wear` at that
+  point was `0.86`, well under the `0.92` blowout-roll threshold, ruling
+  out the wear-threshold variant of this same phenomenon (also seen
+  earlier this session) as the cause here specifically.
+
+  **Full `ctest` suite passes (6/6)**. No fix needed -- there was nothing
+  to fix; the divergence is the known, permanent limit of bit-exact
+  cross-language floating point, not a translation error.
+
+  **Phase 1 status, for anyone picking this up cold**: the entire physics/
+  AI/race-control core (`mulberry32`, track builder, `CAR`/`ROSTER`/
+  `makeCar()`, the speed/grip model, `stepCar()`'s full branch dispatch,
+  `tick()`'s full orchestration including GWC and finish arbitration) is
+  ported and verified against real JS ground truth, branch by branch and
+  now as a whole. The only genuine limitation is the well-understood,
+  permanent cross-runtime floating-point boundary effect at exact
+  comparison thresholds (`WALL_CLAMP_LAT`, tire-wear blowout gates, and by
+  the same logic any other exact-equality branch a sub-ULP difference can
+  straddle) -- this is not something further porting effort can fix, it's
+  inherent to matching V8 and glibc bit-for-bit, and every occurrence
+  found so far (six now) has been individually confirmed to be exactly
+  this, never a real translation bug. **Phase 1 is closed.**
+
+  **Next**: Phase 3 (mobile input: SDL2 touch regions matching
+  `bL`/`bR`/`bB`/`bG`/`bP`, `SDL_Sensor` tilt-steer matching `S.tiltG`,
+  portrait-lock prompt, Android NDK install -- deferred from Phase 0 per
+  the original sequencing decision). Real interactive keyboard-feel
+  confirmation for Phase 2 remains open whenever a session with an actual
+  display/keyboard is available, and the real chase-camera 3D parity
+  (banking lean, alternate camera modes) waits on Phase 5's real geometry.
