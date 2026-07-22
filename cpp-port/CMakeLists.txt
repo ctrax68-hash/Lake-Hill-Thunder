@@ -56,3 +56,6 @@ enable_testing()
 
 add_executable(rng_test tests/rng_test.cpp)
 add_test(NAME rng_test COMMAND rng_test)
+
+add_executable(track_test tests/track_test.cpp src/sim/track.cpp)
+add_test(NAME track_test COMMAND track_test)
