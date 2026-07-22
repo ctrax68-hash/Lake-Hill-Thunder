@@ -59,3 +59,9 @@ add_test(NAME rng_test COMMAND rng_test)
 
 add_executable(track_test tests/track_test.cpp src/sim/track.cpp)
 add_test(NAME track_test COMMAND track_test)
+
+add_executable(car_test tests/car_test.cpp src/sim/track.cpp src/sim/car.cpp)
+add_test(NAME car_test COMMAND car_test)
+
+add_executable(speed_model_test tests/speed_model_test.cpp src/sim/track.cpp src/sim/car.cpp)
+add_test(NAME speed_model_test COMMAND speed_model_test)
