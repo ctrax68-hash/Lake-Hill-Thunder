@@ -45,6 +45,16 @@ public:
     // Draws the track ribbon + one box per car, then submits the frame.
     void renderFrame(const std::vector<Car>& cars);
 
+    // Phase 3c (PORT_PROGRESS.md): stand-in for the CSS `#rotate` prompt
+    // (index.html:140-147,203) shown whenever the viewport is portrait --
+    // this port has no text/icon rendering yet (that's Phase 4's job), so
+    // this just clears to black and submits an otherwise-empty frame
+    // instead of drawing the track/cars, which is the same practical
+    // effect from a player's perspective (the game is fully hidden) even
+    // though it lacks the actual "ROTATE YOUR PHONE" message and spinning
+    // phone icon graphic.
+    void renderBlockedFrame();
+
     // Debug-only: requests bgfx capture the next presented frame to
     // `path` (BMP via bgfx's own writer -- see renderer.cpp's ScreenshotCb).
     // Not part of the shipped app; used by this session's own verification

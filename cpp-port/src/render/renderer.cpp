@@ -188,6 +188,16 @@ void Renderer::requestScreenshot(const char* path) {
     bgfx::requestScreenShot(BGFX_INVALID_HANDLE, path);
 }
 
+void Renderer::renderBlockedFrame() {
+    const bgfx::ViewId kView = 0;
+    bgfx::setViewRect(kView, 0, 0, (uint16_t)width_, (uint16_t)height_);
+    // index.html:144's #rotate background is var(--c-black) -- opaque
+    // black, no depth buffer needed since nothing else draws this frame.
+    bgfx::setViewClear(kView, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x000000ff, 1.0f, 0);
+    bgfx::touch(kView);
+    bgfx::frame();
+}
+
 void Renderer::renderFrame(const std::vector<Car>& cars) {
     const bgfx::ViewId kView = 0;
     // Sequential: draw calls execute in submission order, not bgfx's default

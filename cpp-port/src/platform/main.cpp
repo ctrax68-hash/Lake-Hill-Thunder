@@ -5,7 +5,8 @@
 // C to toggle a placeholder chase-camera view). Keyboard, touch/mouse
 // (src/ui/touch_controls.h), and tilt (src/platform/tilt_input.h, toggled
 // with T) all drive the player car; AI cars run the real stepCar() AI
-// branch.
+// branch. Portrait windows show a blocked/black frame instead
+// (src/ui/orientation.h), standing in for the CSS rotate prompt.
 
 #include <SDL.h>
 #include <SDL_syswm.h>
@@ -15,6 +16,7 @@
 #include "../sim/race.h"
 #include "../sim/rng.h"
 #include "../sim/tracks_data.h"
+#include "../ui/orientation.h"
 #include "../ui/touch_controls.h"
 #include "tilt_input.h"
 
@@ -33,6 +35,13 @@ int main(int argc, char** argv)
 
     int width = 1280;
     int height = 720;
+    // Debug-only: lets a headless run start already-portrait to exercise
+    // Phase 3c's rotate-block path (see PORT_PROGRESS.md) without needing
+    // a live window resize -- same rationale as LHT_FORCE_RACE/
+    // LHT_START_CHASE, not a JS behavior being ported (JS just reacts to
+    // whatever aspect ratio the real device/browser window already is).
+    if (const char* w = std::getenv("LHT_WINDOW_W")) width = std::atoi(w);
+    if (const char* h = std::getenv("LHT_WINDOW_H")) height = std::atoi(h);
 
     SDL_Window* window = SDL_CreateWindow(
         "Lake Hill Thunder (C++ port -- Phase 2)",
@@ -122,6 +131,16 @@ int main(int argc, char** argv)
     TouchRegions touchRegions = computeTouchRegions(width, height);
     bool touchLeft = false, touchRight = false, touchGas = false, touchBrake = false;
 
+    // Phase 3c (PORT_PROGRESS.md): stand-in for the CSS `@media (orientation:
+    // portrait)` rotate prompt (index.html:140-147,203). The sim keeps
+    // ticking regardless of orientation, same as JS -- the CSS overlay
+    // never pauses the game loop, it just visually and (via its z-index
+    // covering the whole viewport) physically blocks touches to the
+    // controls underneath. Keyboard is deliberately left unaffected below,
+    // matching JS: window-level keydown listeners aren't blocked by any
+    // DOM element sitting on top of the canvas.
+    bool portrait = isPortrait(width, height);
+
     // Mirrors bP's JS click handler (index.html:4665-4669) exactly: an
     // independent toggle on the player's own pitReq, guarded the same way,
     // not threaded through PlayerInput/stepCar() at all -- the player has no
@@ -180,12 +199,15 @@ int main(int argc, char** argv)
                 height = ev.window.data2;
                 renderer.resize(width, height);
                 touchRegions = computeTouchRegions(width, height);
+                portrait = isPortrait(width, height);
             }
             // Mouse (desktop stand-in) and real touch, hit-tested against the
             // same regions -- bL/bR/bG/bB are press-and-hold (index.html's
             // pointerdown/up), bP is a single toggle on press (index.html's
             // click), matching bindBtn()'s and bP's own listener exactly.
-            if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_LEFT) {
+            // Ignored entirely while portrait, matching the `#rotate`
+            // overlay physically covering the on-screen buttons in JS.
+            if (!portrait && ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_LEFT) {
                 const int x = ev.button.x, y = ev.button.y;
                 if (pointInRect(x, y, touchRegions.bL)) touchLeft = true;
                 if (pointInRect(x, y, touchRegions.bR)) touchRight = true;
@@ -196,7 +218,7 @@ int main(int argc, char** argv)
             if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_LEFT) {
                 touchLeft = touchRight = touchGas = touchBrake = false;
             }
-            if (ev.type == SDL_FINGERDOWN) {
+            if (!portrait && ev.type == SDL_FINGERDOWN) {
                 const int x = (int)(ev.tfinger.x * width), y = (int)(ev.tfinger.y * height);
                 if (pointInRect(x, y, touchRegions.bL)) touchLeft = true;
                 if (pointInRect(x, y, touchRegions.bR)) touchRight = true;
@@ -228,7 +250,11 @@ int main(int argc, char** argv)
             simAcc -= DT;
         }
 
-        renderer.renderFrame(cars);
+        if (portrait) {
+            renderer.renderBlockedFrame();
+        } else {
+            renderer.renderFrame(cars);
+        }
         ++frame;
 
         if (screenshotPath && frame == screenshotAtFrame) {

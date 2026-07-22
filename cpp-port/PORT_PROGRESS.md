@@ -412,7 +412,7 @@ port; it's the reference the C++ port must match).
       (`index.html:3293-3437`) -- this is a flat top-down view with smoothed
       follow, not a 3rd-person chase cam.
 
-### Phase 3 — Mobile input — IN PROGRESS (Session 3)
+### Phase 3 — Mobile input — IN PROGRESS (Session 3, items 1-3 done, item 4 remains)
 - [x] SDL2 touch regions matching the JS original's button layout (`bL`/`bR` steer,
       `bB` brake, `bG` gas, `bP` pit). **Done**: `src/ui/touch_controls.{h,cpp}` --
       `computeTouchRegions()` mirrors the JS CSS layout's relative positions/sizes
@@ -474,7 +474,41 @@ port; it's the reference the C++ port must match).
       from correct if a real device steers opposite to the physical tilt direction.
       **Genuinely unverified end-to-end** -- confirm on a real Android/iOS device once the
       NDK (item 4 below) is installed and this can actually run on one.
-- [ ] Portrait-lock rotate prompt (landscape-only)
+- [x] Portrait-lock rotate prompt (landscape-only). **Done, partially**:
+      `src/ui/orientation.h`'s `isPortrait(w, h)` mirrors
+      `index.html:147`'s `@media (orientation: portrait)` query exactly
+      (`height >= width`). `Renderer::renderBlockedFrame()`
+      (`src/render/renderer.{h,cpp}`) clears to opaque black and submits
+      an otherwise-empty frame -- functionally the same end result as
+      JS's `#rotate` overlay from a player's perspective (the game is
+      fully hidden), but without the actual "ROTATE YOUR PHONE" text and
+      spinning phone icon, since this port has no text/icon rendering
+      yet (Phase 4's "UI overlay" job) -- **explicitly a scoped
+      simplification, not the full visual**, revisit once Phase 4 lands.
+      `main.cpp` computes `portrait` on init and on resize, calls
+      `renderBlockedFrame()` instead of `renderFrame()` while portrait,
+      and ignores mouse/finger touch-region events while portrait
+      (mirroring the CSS overlay's z-index physically covering the
+      on-screen buttons underneath, `index.html:203`) -- but *not*
+      keyboard input, which JS also never blocks (window-level `keydown`
+      listeners aren't affected by any DOM element sitting on top of the
+      canvas). Deliberately does **not** pause `tick()` while portrait,
+      matching JS: the CSS media query has no effect on the running
+      `requestAnimationFrame` loop, it's purely a visual/input-touch
+      block layered on top.
+      Debug-only `LHT_WINDOW_W`/`LHT_WINDOW_H` env vars let a headless run
+      start already-portrait (same rationale as `LHT_FORCE_RACE`/
+      `LHT_START_CHASE` -- JS just reacts to whatever aspect ratio the
+      real device/browser window already is; there's no equivalent
+      "force" concept to port, this is purely a test-scripting hook).
+      **Verified**: full `ctest` suite unaffected, 7/7 (no test-covered
+      code touched). `lht_port` rebuilds clean. Captured and pixel-checked
+      two screenshots under `xvfb-run`: a 480x800 (portrait) run --
+      `PIL`'s `getextrema()` confirms every pixel is exactly `(0,0,0)`,
+      confirming the blocked frame really is all black, not just
+      "mostly" -- and a 1280x720 (landscape) run at the same commit,
+      confirming the change didn't regress normal rendering (non-black
+      pixels present as expected from the track/cars).
 - [ ] **Install Android NDK here** (deferred from Phase 0 per the sequencing decision)
 
 ### Phase 4 — UI overlay — NOT STARTED
@@ -1438,3 +1472,94 @@ elsewhere in the same run.
   NDK install), or real hardware verification of both Phase 3a's
   touch/click input and this session's tilt-steer sign convention
   whenever a suitable device/session is available.
+
+- **Session 3 (continued once more -- Phase 3c, portrait-lock rotate
+  prompt)**: Scoped to Phase 3 checklist item 3 only, leaving item 4
+  (Android NDK install) as the sole remaining piece of Phase 3 -- and
+  explicitly a different kind of task (toolchain/environment setup, no
+  gameplay code) that deserves its own dedicated run rather than being
+  folded in here, same reasoning as every prior session's note on it.
+
+  **Read the JS reference first**: the `#rotate` prompt
+  (`index.html:140-147,203`) is pure CSS -- a full-screen black overlay
+  with a spinning phone icon and "ROTATE YOUR PHONE" text, shown/hidden
+  entirely by `@media (orientation: portrait) { #rotate { display:flex;
+  } }`, no JS logic drives its visibility at all. `enterLandscapeFullscreen()`
+  (`index.html:4598-4603`) makes a best-effort `screen.orientation.lock`
+  attempt on the real start button, explicitly noted in its own comment
+  as "not fatal — CSS rotate prompt covers it" if the lock isn't
+  supported/granted. Two implications for a faithful port: (1) the CSS
+  media query never pauses JS's `requestAnimationFrame` loop -- the
+  overlay is a purely visual + (via its z-index sitting on top of
+  everything) input-blocking layer, not a game-state gate -- and (2)
+  since the overlay div physically covers the on-screen button divs
+  underneath it, touches never reach them while portrait, but window-level
+  `keydown` listeners are completely unaffected by any DOM element's
+  z-index, so keyboard input still works in portrait in the JS original.
+  Both of these subtleties are preserved in the C++ port rather than
+  simplified away.
+
+  **New `src/ui/orientation.h`**: a single `isPortrait(w, h)` inline
+  function, `height >= width`, matching the CSS orientation media
+  feature's own spec definition (ties count as portrait) exactly --
+  deliberately just a plain geometry predicate with no SDL dependency at
+  all, same header-only-utility spirit as keeping `touch_controls.h`'s
+  actual math SDL-independent.
+
+  **New `Renderer::renderBlockedFrame()`** (`src/render/renderer.{h,cpp}`):
+  clears the view to opaque black (`0x000000ff`, matching `#rotate`'s
+  `background:var(--c-black)`) and submits an otherwise-empty frame --
+  no track ribbon, no car boxes. This is an honestly-scoped stand-in, not
+  a full port of the CSS overlay's actual content: this renderer has no
+  text or icon drawing capability yet (Phase 4's "UI overlay" job is
+  where that lands), so "everything the player would see is replaced by
+  black" is the closest faithful approximation available right now --
+  functionally identical from the player's perspective (the game is
+  fully hidden either way) even though the spinning-phone-icon +
+  "ROTATE YOUR PHONE" message itself isn't there. Documented plainly as a
+  simplification to revisit, not silently passed off as the complete
+  thing.
+
+  **`main.cpp` wiring**: `portrait` is computed once at startup and
+  recomputed on every `SDL_WINDOWEVENT_RESIZED`. The main loop now
+  branches between `renderer.renderBlockedFrame()` and the existing
+  `renderer.renderFrame(cars)` based on it. `tick()` keeps running every
+  frame regardless of `portrait` -- deliberately not pausing the sim, per
+  the JS reference notes above. The `SDL_MOUSEBUTTONDOWN`/`SDL_FINGERDOWN`
+  handlers added in Phase 3a are now gated on `!portrait`, so touch/mouse
+  input to `bL`/`bR`/`bG`/`bB`/`bP` is ignored while portrait (mirroring
+  the overlay physically covering those regions), while the keyboard
+  polling path (and the debug-only `P`/`T` keydowns) is left completely
+  untouched, matching JS's own asymmetry between touch and keyboard here.
+  Added debug-only `LHT_WINDOW_W`/`LHT_WINDOW_H` env vars (read before
+  `SDL_CreateWindow`) so a headless run can start already in a portrait
+  aspect ratio without needing a live window resize -- there's no JS
+  equivalent to port here since a real device/browser just already is
+  whatever aspect ratio it is; this is purely a test-scripting
+  convenience, same category as `LHT_FORCE_RACE`/`LHT_START_CHASE`.
+
+  **Verification**: full `ctest` suite unaffected, still 7/7 (this
+  session touched no test-covered sim code). `lht_port` rebuilds clean.
+  Ran two headless `xvfb-run` captures at the same commit and diffed them
+  pixel-wise via `PIL`: a 480x800 (portrait) run's screenshot has
+  `getextrema()` returning `(0,0)` on all three RGB channels -- every
+  single pixel is exactly black, not just visually black-ish -- and a
+  1280x720 (landscape) run's screenshot shows a normal non-black extrema
+  range (track/cars visibly still rendering), confirming the portrait
+  branch didn't regress the existing landscape rendering path. This is a
+  real behavioral check, not just "it compiled" -- it directly confirms
+  the blocked-frame path actually produces the intended all-black output
+  and that it's correctly gated on orientation.
+
+  **Status**: Phase 3 items 1-3 are all done as far as this environment
+  allows. Item 4 (Android NDK install) is the only piece left in Phase 3,
+  and remains explicitly deferred to its own dedicated run per every
+  prior session's note on why it doesn't belong folded into gameplay-code
+  sessions like this one.
+
+  **Next**: Phase 3 item 4 (Android NDK install), or Phase 4 (UI overlay
+  -- menu/HUD/results screens, which is also where the rotate prompt's
+  actual text+icon and the tilt-mode menu checkbox both belong once real
+  text rendering exists). Real hardware verification remains open for
+  Phase 3a's touch/click input and Phase 3b's tilt-steer sign convention
+  alike, whenever a suitable device/session is available.
