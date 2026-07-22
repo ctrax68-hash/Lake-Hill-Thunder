@@ -16,6 +16,37 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug)
 endif()
 
+# ---- Phase 7: WebAssembly build fix, applies before any add_subdirectory ----
+# bx's own CMakeLists.txt (third_party/bgfx.cmake/cmake/bx/bx.cmake) adds
+# -msse4.2 whenever CMAKE_SYSTEM_PROCESSOR (or CMAKE_CXX_COMPILER_ARCHITECTURE_ID)
+# looks like x86/x86_64 -- true here too, since Emscripten's own toolchain file
+# doesn't override those away from the host's architecture, and overriding
+# CMAKE_SYSTEM_PROCESSOR ourselves (tried first, both as a plain variable and
+# a FORCEd CACHE entry) did not stop bx.cmake's `if(...MATCHES...)` from still
+# adding the flag -- CMAKE_CXX_COMPILER_ARCHITECTURE_ID appears to be
+# re-derived internally in a way a simple set() before add_subdirectory()
+# doesn't reach. -msse4.2 defines __SSE2__/__SSE4_2__, which routes
+# bx/include/bx/simd_t.h's SIMD selection down the "translate x86 SSE
+# intrinsics to WASM" path, and emcc's own error message says any x86 SSE
+# flag under Emscripten also requires -msimd128 -- so add that globally.
+#
+# Also drop the whole build's optimization to -O1 under Emscripten: -msimd128
+# combined with Release's default -O3 crashes the LLVM WebAssembly
+# instruction selector outright (confirmed via the crash's own stack trace,
+# SelectionDAGISel::SelectCodeCommon / "WebAssembly Instruction Selection",
+# not a resource limit) -- first seen compiling bx::hsvToRgb
+# (bx/src/math.cpp), then again in a *different* file
+# (bimg/src/image_cubemap_filter.cpp) after the bx-specific fix below, which
+# confirms this is a general LLVM bug tied to optimization level, not
+# something specific to one translation unit worth chasing file-by-file. A
+# later -O flag wins over an earlier one for GCC/Clang, so this overrides
+# every target's -O3 down to -O1 for this first working build --
+# correctness over vectorized performance, revisit if/when this LLVM bug is
+# fixed upstream or a newer Emscripten release avoids it.
+if(EMSCRIPTEN)
+  add_compile_options(-msimd128 -O1)
+endif()
+
 # ---- SDL2 ----
 # Keep SDL2's own test/example targets off -- we only want the library, not
 # extra build time for stuff this project never uses.
@@ -30,9 +61,16 @@ set(BGFX_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 # Phase 2 needs bgfx::shaderc (built only when BGFX_BUILD_TOOLS is ON) to
 # compile src/render/shaders/*.sc at build time -- the other tool sets
 # (bin2c/geometry/texture) aren't needed, so turn just BGFX_BUILD_TOOLS_SHADER
-# on and leave the rest off.
+# on and leave the rest off. Skipped entirely under Emscripten: building
+# shaderc there produces a wasm/Node target that can't fopen() our shader
+# sources at build time anyway (see the Phase 7 shader-reuse comment further
+# down), so there's no point spending the compile time on it.
 set(BGFX_BUILD_TOOLS ON CACHE BOOL "" FORCE)
-set(BGFX_BUILD_TOOLS_SHADER ON CACHE BOOL "" FORCE)
+if(EMSCRIPTEN)
+  set(BGFX_BUILD_TOOLS_SHADER OFF CACHE BOOL "" FORCE)
+else()
+  set(BGFX_BUILD_TOOLS_SHADER ON CACHE BOOL "" FORCE)
+endif()
 set(BGFX_BUILD_TOOLS_BIN2C OFF CACHE BOOL "" FORCE)
 set(BGFX_BUILD_TOOLS_GEOMETRY OFF CACHE BOOL "" FORCE)
 set(BGFX_BUILD_TOOLS_TEXTURE OFF CACHE BOOL "" FORCE)
@@ -43,6 +81,38 @@ set(BGFX_INSTALL OFF CACHE BOOL "" FORCE)
 # X11-only too, so there's nothing for a Wayland backend to attach to here.
 set(BGFX_WITH_WAYLAND OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/bgfx.cmake)
+
+# ---- Phase 7: WebAssembly build fix, part 2 ----
+# bx.cmake adds -msse4.2 to `bx` as PUBLIC (see the comment near the top of
+# this file for why the CMAKE_SYSTEM_PROCESSOR override attempt didn't
+# prevent it -- neither that variable nor CMAKE_CXX_COMPILER_ARCHITECTURE_ID
+# show up anywhere in this build's CMakeCache.txt/CMakeCXXCompiler.cmake at
+# all, so whatever bx.cmake's check is actually keying off isn't interceptable
+# with a simple set() before add_subdirectory()). PUBLIC means it's not just
+# bx's own problem: it propagates via INTERFACE_COMPILE_OPTIONS to every
+# target that links bx, including bimg -- and bimg's vendored etcpak
+# (3rdparty/etcpak/Dither.cpp) has its own `#ifdef __SSE2__`-gated x86
+# intrinsic includes (ia32intrin.h/ammintrin.h/fma4intrin.h) that assume a
+# genuine x86 target and fail to compile at all under Emscripten's clang once
+# -msse4.2 makes __SSE2__ defined there too. So: strip -msse4.2 from both of
+# bx's own compile-option properties directly, rather than only compiling bx
+# itself correctly and leaving every consumer broken.
+if(EMSCRIPTEN)
+  foreach(_prop COMPILE_OPTIONS INTERFACE_COMPILE_OPTIONS)
+    get_target_property(_bx_opts bx ${_prop})
+    if(_bx_opts)
+      list(FILTER _bx_opts EXCLUDE REGEX "msse4\\.2")
+      set_target_properties(bx PROPERTIES ${_prop} "${_bx_opts}")
+    endif()
+  endforeach()
+  # Without -msse4.2, bx/include/bx/simd_t.h's SIMD selection falls through
+  # to its `#elif defined(__wasm_simd128__)` branch instead (real WASM SIMD
+  # via <wasm_simd128.h>, defined by the global -msimd128 above) -- a
+  # cleaner code-gen path than translating x86 intrinsics. The global -O1
+  # override above (not a per-target one here) is what actually prevents the
+  # LLVM instruction-selector crash itself, since the same crash recurred in
+  # an unrelated bimg file even after this -msse4.2 strip.
+endif()
 
 set(SIM_SOURCES
   src/sim/track.cpp
@@ -69,25 +139,55 @@ set(LHT_SHADER_INCLUDE_DIRS
   ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bgfx.cmake/bgfx/src
   ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bgfx.cmake/bgfx/examples/common
 )
-bgfx_compile_shaders(
-  TYPE VERTEX
-  SHADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/vs_flat.sc
-  VARYING_DEF ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/varying.def.sc
-  OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders
-  INCLUDE_DIRS ${LHT_SHADER_INCLUDE_DIRS}
-  AS_HEADERS
-  OUT_FILES_VAR LHT_VS_FLAT_OUTPUTS
-)
-bgfx_compile_shaders(
-  TYPE FRAGMENT
-  SHADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/fs_flat.sc
-  VARYING_DEF ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/varying.def.sc
-  OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders
-  INCLUDE_DIRS ${LHT_SHADER_INCLUDE_DIRS}
-  AS_HEADERS
-  OUT_FILES_VAR LHT_FS_FLAT_OUTPUTS
-)
-add_custom_target(lht_shaders DEPENDS ${LHT_VS_FLAT_OUTPUTS} ${LHT_FS_FLAT_OUTPUTS})
+if(EMSCRIPTEN)
+  # bgfx.cmake's BGFX_BUILD_TOOLS_SHADER builds `shaderc` itself under
+  # whatever toolchain is active -- under emcmake that means shaderc.js, a
+  # wasm/Node target, not a native host tool. CMake does invoke it correctly
+  # via node (emcmake's own CMAKE_CROSSCOMPILING_EMULATOR), but the resulting
+  # program only has the sandboxed filesystem access Emscripten's *default*
+  # (browser-oriented) build target gets, not real host-filesystem access --
+  # it can't fopen() our .sc source files by absolute path at all, so
+  # `bgfx_compile_shaders()` fails outright ("Unable to open file ...").
+  # Building a genuinely native shaderc as a side-build under emcmake (e.g.
+  # via ExternalProject_Add with a separate, non-Emscripten toolchain) is a
+  # real fix but more than this first working build needs -- reuse the
+  # native build's already-generated header output instead, since bgfx's
+  # compiled shader bytecode (spirv/glsl/essl) is a GPU-target-specific
+  # artifact, not a host-CPU-specific one: nothing about the essl bytecode
+  # this port actually uses depends on whether shaderc itself was compiled to
+  # run on x86 Linux or wasm32.
+  set(LHT_NATIVE_GENERATED_SHADERS ${CMAKE_CURRENT_SOURCE_DIR}/build/generated_shaders)
+  if(NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_flat.sc.bin.h)
+    message(FATAL_ERROR
+      "Phase 7 web build reuses the native build's already-compiled shader "
+      "headers (see this file's own comment) instead of cross-compiling "
+      "shaderc -- run `cmake --build build` (the native target) at least "
+      "once first so ${LHT_NATIVE_GENERATED_SHADERS} exists.")
+  endif()
+  set(LHT_GENERATED_SHADERS_DIR ${LHT_NATIVE_GENERATED_SHADERS})
+  add_custom_target(lht_shaders) # nothing to build, just a no-op dependency target
+else()
+  bgfx_compile_shaders(
+    TYPE VERTEX
+    SHADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/vs_flat.sc
+    VARYING_DEF ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/varying.def.sc
+    OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders
+    INCLUDE_DIRS ${LHT_SHADER_INCLUDE_DIRS}
+    AS_HEADERS
+    OUT_FILES_VAR LHT_VS_FLAT_OUTPUTS
+  )
+  bgfx_compile_shaders(
+    TYPE FRAGMENT
+    SHADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/fs_flat.sc
+    VARYING_DEF ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/varying.def.sc
+    OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders
+    INCLUDE_DIRS ${LHT_SHADER_INCLUDE_DIRS}
+    AS_HEADERS
+    OUT_FILES_VAR LHT_FS_FLAT_OUTPUTS
+  )
+  add_custom_target(lht_shaders DEPENDS ${LHT_VS_FLAT_OUTPUTS} ${LHT_FS_FLAT_OUTPUTS})
+  set(LHT_GENERATED_SHADERS_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders)
+endif()
 
 # ---- Main binary ----
 # Phase 0: opens a window, initializes bgfx. Phase 1: the sim (src/sim) is a
@@ -107,13 +207,46 @@ target_link_libraries(lht_port PRIVATE SDL2::SDL2 SDL2::SDL2main bgfx)
 target_include_directories(lht_port PRIVATE
   third_party/bgfx.cmake/bgfx/include
   third_party/bgfx.cmake/bx/include
-  ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders
+  ${LHT_GENERATED_SHADERS_DIR}
 )
+
+# ---- Phase 7: WebAssembly/browser build (PORT_PROGRESS.md) ----
+# Additive on top of the native build above -- both SDL2's and bgfx.cmake's
+# own CMakeLists.txt already branch on CMAKE_SYSTEM_NAME STREQUAL Emscripten
+# internally (SDL2's video/audio/joystick/emscripten backends; bgfx.cmake's
+# own -sMAX_WEBGL_VERSION=2 link option), so this project's file only needs
+# to add what's specific to lht_port itself: memory growth (the sim/render
+# heap footprint isn't knowable at compile time the way a fixed WASM memory
+# size would require), FULL_ES3 (WebGL2, matching the already-embedded essl
+# shader profile -- see shaders_embedded.h, no shader/profile changes needed
+# here), and the custom minimal shell (web/shell.html) instead of
+# Emscripten's own default one (which bundles unrelated progress-bar/status
+# UI chrome).
+if(EMSCRIPTEN)
+  # emcc only honors --shell-file (and produces the wrapping HTML page at
+  # all) when the *output filename itself* ends in .html -- otherwise it
+  # silently ignores the flag and just emits lht_port.js/.wasm (confirmed:
+  # that's exactly what happened before adding this SUFFIX override).
+  set_target_properties(lht_port PROPERTIES SUFFIX ".html")
+  target_link_options(lht_port PRIVATE
+    "-sALLOW_MEMORY_GROWTH=1"
+    "-sFULL_ES3=1"
+    "--shell-file=${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html"
+  )
+endif()
 
 # ---- Phase 1 sim tests (headless, no SDL2/bgfx dependency) ----
 # These verify src/sim's port of the JS physics/AI core against captured JS
 # ground truth. Deliberately not linked against SDL2/bgfx: the physics core
 # must be provably correct standalone before any rendering touches it.
+# Skipped entirely under Emscripten: emcc's ".js"+".wasm" output isn't a
+# native executable CTest can invoke directly (no ELF/execute bit), and
+# wiring a CMAKE_CROSSCOMPILING_EMULATOR (e.g. node) to make that work is a
+# separate side-quest this phase doesn't need -- the native build/'s ctest
+# (7/7) remains the sole verification of the sim core; this web build is
+# additive on top of an already-verified physics core, not a re-verification
+# of it.
+if(NOT EMSCRIPTEN)
 enable_testing()
 
 add_executable(rng_test tests/rng_test.cpp)
@@ -155,3 +288,4 @@ add_executable(determinism_check
   tests/determinism/trace.cpp
   ${SIM_SOURCES}
 )
+endif() # NOT EMSCRIPTEN

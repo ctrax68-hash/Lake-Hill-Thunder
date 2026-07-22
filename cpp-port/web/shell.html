@@ -1,0 +1,37 @@
+<!doctype html>
+<!--
+  Phase 7 (PORT_PROGRESS.md): minimal Emscripten shell for lht_port's
+  WebAssembly build. Deliberately bare -- Emscripten's own default
+  --shell-file bundles a progress bar / status text box that's irrelevant
+  here, and better left out until a later session's PWA polish pass.
+
+  No manifest.json / service worker / apple-touch-icon / theme-color meta
+  tags here either -- this session's scope is "does the WASM build actually
+  run in a browser," not the installable-PWA wrapper, which is explicitly
+  deferred (see PORT_PROGRESS.md's Phase 7 notes).
+
+  The <canvas id="canvas"> id is a hard requirement, not a style choice:
+  bgfx's HTML5/Emscripten GL backend (bgfx/src/glcontext_html5.cpp) reads
+  PlatformData::nwh back out as the literal C-string "#canvas" (set in
+  main.cpp's __EMSCRIPTEN__ branch) and looks up the DOM element by that
+  exact CSS selector.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Lake Hill Thunder (WebAssembly build)</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; outline: none; }
+</style>
+</head>
+<body>
+<canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+<script>
+  var Module = {
+    canvas: document.getElementById('canvas')
+  };
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>

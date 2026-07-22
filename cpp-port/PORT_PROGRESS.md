@@ -558,13 +558,187 @@ port; it's the reference the C++ port must match).
 - [ ] Hand-rolled bloom (downsample→blur→combine, replacing `UnrealBloomPass`) +
       tonemap (replacing `OutputPass`)
 
-### Phase 6 — Polish & platform packaging — NOT STARTED
+### Phase 6 — Polish & platform packaging — NOT STARTED, DEPRIORITIZED
+The user explicitly clarified (Session 3, same session Phase 7 below started): no App Store,
+no native Android/iOS distribution wanted at all -- they want to play from Safari, ideally
+installed as a home-screen PWA. This phase (native Android/iOS builds) is **not deleted**, just
+no longer the near-term goal -- Phase 7 (WebAssembly/browser build) is the actual path to what
+the user wants, and is now the priority track instead of this one.
 - [ ] Audio port (JS has a real Web Audio graph: multi-voice opponent engines, a
       4-bus mixer, crowd/spotter/impact one-shots — check `index.html`'s audio
       section for current scope, it has grown since the original master prompt was written)
 - [ ] Android build (Gradle/NDK) and iOS build (Xcode project) — iOS always needs a
       real Mac session, per the environment facts above
 - [ ] Device performance pass on real mid-tier hardware (20-car field + postprocessing)
+
+### Phase 7 — WebAssembly/browser build — DONE, first pass (Session 3)
+- [x] Get `lht_port` compiling to WebAssembly via Emscripten and running inside a real
+      browser tab, verified headlessly. **Explicitly out of scope for this pass** (left
+      for future sessions): the installable-PWA wrapper (manifest.json, service worker,
+      apple-touch-icon/theme-color meta tags, actual icon assets) and any real Safari/iOS
+      verification (impossible in this container -- no macOS at all).
+
+  **Toolchain**: Emscripten SDK installed at `~/emsdk` (v6.0.3, the current recommended
+  release, confirmed via `emsdk list`) -- outside the git repo, same "host toolchain, never
+  committed" treatment as the already-precedented Android NDK decision. `source
+  ~/emsdk/emsdk_env.sh` must be re-run in any new shell (shell state doesn't persist
+  between separate tool invocations in this environment).
+
+  **`src/platform/main.cpp` restructure**: the X11 `SDL_SysWMinfo` block (the only
+  native-specific code anywhere in this port's own `src/`, confirmed by grepping the whole
+  tree for x11/SysWM/native-handle references) is now gated `#ifndef __EMSCRIPTEN__`; the
+  `#else` branch sets `nwh = (void*)"#canvas"` directly -- confirmed from bgfx's own
+  shipped HTML5 backend source (`bgfx/src/glcontext_html5.cpp:85`, `bgfx/examples/common/
+  entry/entry_html5.cpp:414-424`) that this is a CSS selector string, not a numeric handle,
+  and there's no display handle concept in a browser at all (`ndt = nullptr`).
+  `Renderer::init()` itself needed no changes -- it already just forwards whatever handles
+  it's given.
+
+  The whole per-frame loop was restructured into a `LoopState` struct + a
+  `mainLoopTick(void*)` callback (mirroring bgfx's own vendored HTML5 example harness,
+  `bgfx/examples/common/entry/entry.cpp:551-554`, which uses
+  `emscripten_set_main_loop(&updateApp, -1, 1)` rather than `-sASYNCIFY` -- the right call
+  given bgfx's renderer leans heavily on function-pointer/vtable dispatch, exactly the
+  risky category for ASYNCIFY's automatic call-graph instrumentation, on top of its known
+  binary-size/perf cost). This wasn't optional cleanup: `emscripten_set_main_loop_arg(...,
+  simulate_infinite_loop=1)` unwinds `main()`'s own stack immediately after registering the
+  callback, so anything the loop touches -- including `window`/`renderer`/`track`, not just
+  the frame-local booleans -- had to move out of `main()`'s plain stack locals into a
+  `static LoopState S` (a function-local static has a stable address for the rest of the
+  program's life from the moment it's first constructed, which every target relies on:
+  `Renderer::setTrack()` stores a raw `const Track*` internally, and that pointer would
+  otherwise dangle the instant this unwind happens). The native `#else` path keeps its
+  original blocking `while` loop, just calling the same `mainLoopTick()` function each
+  iteration -- one shared code path for both targets, not two parallel loop
+  implementations. Also: `SDL_INIT_SENSOR` is now only requested on the native build
+  (confirmed this session that SDL2 has no Emscripten sensor backend at all -- not even a
+  dummy one, unlike its confirmed video/audio/joystick backends -- so requesting a
+  subsystem with nothing behind it felt like tempting a foreseeable failure rather than
+  something to assume is harmless), and the debug-only `maxFrames` default is now
+  `INT_MAX`-ish under Emscripten specifically, since a real deployed web build has no
+  `LHT_MAX_FRAMES` env var to read at all (browsers don't expose a shell environment to
+  `std::getenv()`) -- the native build's own tested default (600) is untouched.
+
+  **`CMakeLists.txt`**: an `if(EMSCRIPTEN)` block adds `-sALLOW_MEMORY_GROWTH=1
+  -sFULL_ES3=1 --shell-file=web/shell.html` to `lht_port`'s link options, and (a real,
+  non-obvious gotcha caught by re-inspecting the actual build output, not assumed)
+  `SUFFIX ".html"` on the target -- emcc silently ignores `--shell-file` and just emits
+  `.js`/`.wasm` unless the *output filename itself* ends in `.html`; the first successful
+  build produced `lht_port.js` with no page at all until this was added. The whole
+  test-executable section (`enable_testing()` onward) is skipped under
+  `if(NOT EMSCRIPTEN)` -- `.js`/`.wasm` isn't a native executable CTest can invoke, and
+  the native `build/`'s own `ctest` (still 7/7, confirmed via a full clean reconfigure +
+  rebuild both before and after all these changes) remains the sole verification of the
+  sim core; this web build is additive on top of an already-verified physics core, not a
+  re-verification of it. `build-web/` added to `.gitignore`.
+
+  **Three real build-breaking issues found and fixed, each confirmed via the actual crash/
+  error output rather than guessed at**:
+  1. `bx.cmake` (vendored) adds `-msse4.2` to the `bx` target whenever
+     `CMAKE_SYSTEM_PROCESSOR`/`CMAKE_CXX_COMPILER_ARCHITECTURE_ID` look x86-like, true here
+     too since Emscripten's toolchain doesn't override either away from the host's
+     architecture. Tried overriding `CMAKE_SYSTEM_PROCESSOR` before `add_subdirectory()`
+     (both as a plain variable and a FORCEd CACHE entry, confirmed via the resulting
+     `CMakeCache.txt`) -- did not stop the flag from being added, so abandoned that
+     approach rather than keep guessing at CMake variable-scope internals neither this
+     project nor bx.cmake's own condition documents clearly. `-msse4.2` defines
+     `__SSE2__`/`__SSE4_2__`, and emcc's own error message says any x86 SSE flag under
+     Emscripten also requires `-msimd128` -- added that globally, which let compilation
+     proceed, but crashed the LLVM WebAssembly instruction selector outright compiling
+     `bx::hsvToRgb` (confirmed a genuine backend bug from the crash's own stack trace,
+     `SelectionDAGISel::SelectCodeCommon`/"WebAssembly Instruction Selection", not a
+     resource limit).
+  2. Since `-msse4.2` is `PUBLIC` on `bx`, it doesn't just affect `bx`'s own compilation --
+     it propagates via `INTERFACE_COMPILE_OPTIONS` to every target that links `bx`,
+     including `bimg`. `bimg`'s vendored `etcpak` (`3rdparty/etcpak/Dither.cpp`) has its own
+     `#ifdef __SSE2__`-gated x86 intrinsic includes (`ia32intrin.h`/`ammintrin.h`/
+     `fma4intrin.h`) that assume a genuine x86 target and failed to compile outright once
+     `__SSE2__` got defined there too. Fixed by directly stripping `-msse4.2` from both of
+     `bx`'s own compile-option target properties (`COMPILE_OPTIONS` and
+     `INTERFACE_COMPILE_OPTIONS`) after `add_subdirectory()`, via `list(FILTER ... EXCLUDE
+     REGEX)` -- without it, `bx/include/bx/simd_t.h`'s SIMD selection falls through to its
+     `#elif defined(__wasm_simd128__)` branch (real WASM SIMD via `<wasm_simd128.h>`,
+     defined by the global `-msimd128`) instead of the x86-translation path.
+  3. The LLVM instruction-selector crash from issue 1 recurred anyway, in a *different*
+     file (`bimg/src/image_cubemap_filter.cpp`) with the identical stack trace -- proving
+     it's a general LLVM bug tied to `-msimd128` at `-O3` (Release's default), not
+     something specific to one translation unit worth chasing file-by-file. Fixed by
+     dropping the whole Emscripten build to `-O1` globally (a later `-O` flag wins over an
+     earlier one for GCC/Clang) rather than patching target after target -- correctness
+     over vectorized performance for this first working build, revisit if a newer
+     Emscripten/LLVM release fixes the underlying bug.
+  4. `BGFX_BUILD_TOOLS_SHADER` builds `shaderc` itself under whatever toolchain is active --
+     under `emcmake` that's `shaderc.js`, a wasm/Node target. CMake does invoke it
+     correctly via `node` (emcmake's own `CMAKE_CROSSCOMPILING_EMULATOR`), but the
+     resulting program only has Emscripten's default browser-sandboxed filesystem access,
+     not real host-filesystem access -- it can't `fopen()` our `.sc` shader sources by
+     absolute path at all, so `bgfx_compile_shaders()` failed with "Unable to open file".
+     Building a genuinely native `shaderc` as a side-build under `emcmake` (e.g. via
+     `ExternalProject_Add` with a separate native toolchain) is a real fix but more than
+     this first pass needs: reused the *already-generated* shader headers from the native
+     `build/generated_shaders/` directory instead, since bgfx's compiled shader bytecode
+     (spirv/glsl/essl) is a GPU-target-specific artifact, not a host-CPU-specific one --
+     nothing about the essl bytecode this port uses depends on whether shaderc itself ran
+     on x86 Linux or wasm32. `BGFX_BUILD_TOOLS_SHADER` is now `OFF` under Emscripten
+     entirely (no point spending the compile time building a tool that's never invoked),
+     and a configure-time `FATAL_ERROR` check makes the native-build-must-run-first
+     dependency explicit rather than a silent, confusing failure later.
+
+  **New `web/shell.html`**: a minimal custom Emscripten shell (not the default one, which
+  bundles unrelated progress-bar/status-text UI chrome) -- bare `<canvas id="canvas">`
+  (the id is a hard requirement, matching the `"#canvas"` selector hardcoded into bgfx's
+  HTML5 backend), a `Module = { canvas: ... }` script, dark viewport-filling CSS. No
+  manifest/service-worker/icons/apple-meta-tags here at all -- explicitly deferred.
+
+  **New `tests/wasm_verify.js`**: a one-off Playwright script (not wired into `ctest`, same
+  category as `tests/determinism/dump_js_trace.js` -- needs Node/Playwright and a live
+  server, not something the headless test runners here are set up for) that navigates to
+  the served `lht_port.html`, collects console/page errors for the whole session, takes two
+  screenshots a few seconds apart, and reports both. Uses the pre-installed Chromium at
+  `/opt/pw-browsers/chromium` directly (`playwright install` is blocked in this
+  environment's own setup notes).
+
+  **Verification, all genuinely checked, not assumed**: served `build-web/` via `python3 -m
+  http.server`, ran `wasm_verify.js` against it. **Zero page errors.** One console error --
+  a `favicon.ico` 404, confirmed benign by cross-checking the HTTP server's own access log
+  (nothing else 404'd; `lht_port.html`/`.js`/`.wasm` all served `200`). Visually inspected
+  both screenshots directly: the track, the full car field, and the Phase 4a HUD text
+  (`LAP 1/5`, `POS 20/20`, a green `GREEN` banner, `SPD 37`) all render correctly inside a
+  real Chromium tab. Pixel-checked via `PIL`: neither screenshot is a flat single color
+  (`getextrema()` shows a real 0-255ish range on all channels), and diffing the two
+  screenshots pixel-by-pixel found 1259 differing pixels out of 921600 -- the car field
+  visibly advanced (positions shifted, `SPD` dropped from 37 to 35) between the two
+  captures, proving the frame loop is genuinely running via `requestAnimationFrame`, not
+  stuck on one static frame. Re-ran the native `build/`'s full `ctest` suite twice (once
+  mid-session, once after a completely fresh `cmake -B build` reconfigure at the end) --
+  still 7/7 both times, confirming none of this session's `CMakeLists.txt`/`main.cpp`
+  changes touched the already-verified native desktop path or physics core.
+
+  **Explicitly, honestly NOT verified** (impossible in this container, no macOS at all):
+  real Safari behavior on either desktop or iOS. Safari has real, well-known WebGL2/
+  WebAssembly/Web Audio quirks (autoplay-unlock requirements, orientation-lock support
+  gaps already noted in this file's own Phase 3c notes, historically stricter WebGL2
+  context creation) that this Chromium-only verification says nothing about. This is the
+  single largest remaining open item before "play from Safari" is actually confirmed, not
+  just plausible -- whoever next has a real Mac/iPhone should try the served `build-web/`
+  output directly, ideally after Phase 7's next session adds the PWA installability
+  wrapper so there's something worth installing to test.
+
+  **Status**: the core technical bet of this session -- "can this C++/SDL2/bgfx codebase
+  actually run in a browser at all" -- paid off, with three real, non-obvious build issues
+  found and fixed along the way (not just a clean first try). What exists now is a
+  browser-loadable build proven to render and tick correctly in headless Chromium; it is
+  not yet an installable PWA (no manifest/service-worker/icons) and not yet verified on
+  any real Apple device.
+
+  **Next**: PWA wrapper (`manifest.json`, service worker, `apple-touch-icon`/
+  `theme-color`/`apple-mobile-web-app-*` meta tags, actual icon assets) is what actually
+  delivers "installable from Safari home screen" -- the natural next session now that the
+  underlying WASM build is proven working. Real Safari/iOS verification remains open
+  until someone with an actual Apple device can test it. Also worth reconsidering later:
+  a genuinely native `shaderc` side-build (removing the native-build-must-run-first
+  coupling), and whether the global `-O1` downgrade can be narrowed once/if the upstream
+  LLVM WASM-SIMD-at-`-O3` bug is fixed.
 
 ## Open questions
 
@@ -1680,3 +1854,79 @@ elsewhere in the same run.
   prompt's real text+icon and the tilt-mode toggle UI once tackled), or
   Phase 3 item 4 (Android NDK install), whichever the next session
   prioritizes.
+
+- **Session 3 (continued once more -- Phase 7, a real pivot: WebAssembly/
+  browser build)**: The user redirected this project's actual goal
+  mid-session: no App Store, no native Android/iOS distribution -- just
+  play from Safari, ideally installed as a home-screen PWA. That's a
+  fundamentally different target than everything Phases 0-6 had been
+  building toward (a native mobile binary), so before writing any code
+  this session first investigated whether the C++ port was even still
+  the right vehicle for that goal, or whether the already-working JS/
+  Three.js game (which already has GitHub Pages hosting, mature touch/
+  tilt controls with iOS permission handling, and basic PWA capability
+  meta tags) was the faster path. The user chose to keep the C++ port
+  and get it running in a browser via WebAssembly/Emscripten instead --
+  see this session's Phase 7 checklist entry above for the full
+  technical writeup (toolchain install, the `main.cpp` `LoopState`/
+  `mainLoopTick()` restructure, the X11-to-canvas branch, and four real
+  build-breaking issues found and fixed in bx/bimg/shaderc's interaction
+  with the Emscripten toolchain -- not a clean first try, each confirmed
+  from actual crash/error output rather than guessed at).
+
+  **What made this session unusual**: the container running this session
+  restarted mid-build at least once, killing in-flight background
+  `emmake` processes -- handled by checking actual on-disk state (the
+  emsdk install, the code changes, the plan file) before assuming
+  anything was lost, then resuming from exactly where the interruption
+  landed rather than restarting the whole investigation. Plan mode was
+  also toggled back on unexpectedly mid-execution more than once; each
+  time, the response was to append a concise "session progress so far"
+  note to the live plan file (what's done, what's mid-flight, the exact
+  next step) before calling `ExitPlanMode` again, so no context was lost
+  across the interruptions and execution picked back up exactly where it
+  left off rather than re-deriving the same diagnosis twice.
+
+  **Result**: `lht_port` now builds to `build-web/lht_port.html/.js/.wasm`
+  and was verified, genuinely and headlessly (via a new one-off
+  `tests/wasm_verify.js` Playwright script, not just "the build
+  succeeded"), to load with zero page errors and one confirmed-benign
+  console error (a stray favicon 404), render the track/car field/HUD
+  correctly, and visibly advance between two screenshots taken a few
+  seconds apart -- proof the `emscripten_set_main_loop` frame loop is
+  really ticking, not stuck on a static first frame. The native `build/`'s
+  full `ctest` suite was re-run twice (mid-session and again after a
+  completely fresh reconfigure at the end) and stayed 7/7 both times --
+  this pivot added a new build target, it didn't touch or regress the
+  already-verified native desktop build or physics core.
+
+  **Honestly flagged, not glossed over**: nothing this session did
+  validates real Safari behavior on desktop or iOS -- this container has
+  no macOS at all, so only headless Chromium verification was possible.
+  Safari has real, documented WebGL2/WebAssembly/Web Audio quirks
+  (autoplay-unlock, orientation-lock support gaps already noted in this
+  file's own Phase 3c entry, historically stricter WebGL2 context rules)
+  that remain completely untested. This is the single biggest open
+  question standing between "builds and runs in a browser" and "actually
+  playable from an iPhone's Safari," and is explicitly called out as the
+  top priority for whoever next has a real Apple device available.
+
+  **Status**: Phase 7's first-pass goal -- prove the existing C++/SDL2/
+  bgfx codebase can run inside a browser tab at all -- is done and
+  genuinely verified within this environment's limits. Phase 6 (native
+  Android/iOS packaging) is deprioritized per the user's explicit
+  redirect, not deleted, in case native distribution becomes relevant
+  again later.
+
+  **Next**: the PWA installability wrapper (`manifest.json`, a service
+  worker, `apple-touch-icon`/`theme-color`/`apple-mobile-web-app-*` meta
+  tags, actual icon assets) is what actually turns this into "installable
+  from Safari's home screen" -- the natural next session now that the
+  underlying WASM build is proven working, not before. Real Safari/iOS
+  verification remains open until someone with an actual Apple device can
+  test the served `build-web/` output directly. Longer-term, worth
+  reconsidering: a genuinely native `shaderc` side-build (to remove the
+  current native-build-must-run-first coupling for the shader headers),
+  and whether the global `-O1` optimization downgrade can be narrowed or
+  removed once/if the upstream LLVM WASM-SIMD-at-`-O3` instruction-
+  selector bug is fixed in a future Emscripten/LLVM release.
