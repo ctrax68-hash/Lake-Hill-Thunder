@@ -511,13 +511,43 @@ port; it's the reference the C++ port must match).
       pixels present as expected from the track/cars).
 - [ ] **Install Android NDK here** (deferred from Phase 0 per the sequencing decision)
 
-### Phase 4 — UI overlay — NOT STARTED
+### Phase 4 — UI overlay — IN PROGRESS (Session 3)
 - [ ] Menu screen (track/laps/qualifying/sound/tilt toggles, volume slider, start button)
-- [ ] HUD (lap counter, position, timing — note the JS side has grown a lot more HUD
+- [~] HUD (lap counter, position, timing — note the JS side has grown a lot more HUD
       surface recently: gear+RPM readout, live leaderboard gaps, minimap with a
       player wedge + trouble-pulse rings, segmented TIRE/FUEL/CAR bars — check
       `index.html`'s current state for the full HUD surface before assuming the
-      original master-prompt's brief "lap counter, position, timing" is complete)
+      original master-prompt's brief "lap counter, position, timing" is complete).
+      **Phase 4a done, partially**: `src/render/hud.{h,cpp}` implements exactly the
+      original brief's three items -- lap counter (`LAP n/N`, matching
+      `index.html:3985-3987`'s exact `S.finishLaps`-as-denominator formula, not the
+      buggy `S.laps` one), player race position (recomputed live from `Car::prog`/
+      `done`/`finishT` using the same descending sort key `race.cpp:339-343` already
+      uses for `S.order`, purely for display -- doesn't touch `tick()`), and flag
+      state (`GREEN`/`CAUTION`, background-highlighted) -- plus one bonus field not in
+      the original brief, current speed (`SPD`), since it was essentially free once
+      the plumbing existed. Uses bgfx's own built-in debug-text overlay
+      (`bgfx::dbgTextPrintf()`, a fixed 8x16-cell monospace VGA-palette text mode)
+      rather than building a custom font atlas, since this port had zero text-drawing
+      capability before this and bgfx already ships one.
+      **Explicitly NOT ported** (deferred to future Phase 4 sub-tasks, all noted in
+      `hud.h`'s own header comment): the per-driver leaderboard panel (names, car-color
+      chips, live broadcast-style gaps), the last/best lap time strip, the minimap
+      (player wedge + trouble-pulse rings), the segmented tire/fuel/car bars, and the
+      gear/RPM readout -- this is deliberately just the three-item literal brief, not
+      the JS side's much bigger current HUD surface.
+      **Verified**: full `ctest` suite unaffected, 7/7. `lht_port` rebuilds clean.
+      Captured a headless `xvfb-run` screenshot, corrected for the capture's `yflip`
+      metadata (a mistake caught mid-verification -- an early flip-less crop showed
+      nothing but background color, which momentarily looked like the text wasn't
+      rendering at all, until re-applying the same `FLIP_TOP_BOTTOM` correction
+      already established for chase-camera screenshots in Phase 2 solved it), then
+      visually inspected the corrected image directly: `LAP 1 / 5`, `POS 20 / 20`, a
+      green-highlighted `GREEN` banner, and `SPD  30` all render legibly in the
+      top-left corner, with the track/car field still rendering normally alongside it.
+      Also reconfirmed the Phase 3c portrait-block path still shows zero HUD text
+      (pure black, `(0,0,0)` extrema) since `renderBlockedFrame()` clears the debug
+      text buffer too.
 - [ ] Results screen
 
 ### Phase 5 — Full render fidelity — NOT STARTED
@@ -1563,3 +1593,90 @@ elsewhere in the same run.
   text rendering exists). Real hardware verification remains open for
   Phase 3a's touch/click input and Phase 3b's tilt-steer sign convention
   alike, whenever a suitable device/session is available.
+
+- **Session 3 (continued once more -- Phase 4a, first HUD text slice)**:
+  User moved the project on to Phase 4 ("UI overlay"). That phase has
+  three quite different checklist items (menu screen, HUD, results
+  screen), and this port has had zero text-rendering capability up to
+  this point -- so rather than tackle any one item whole, this run's
+  actual scope was the smallest useful, testable slice: get *some* real
+  text on screen at all, using it to deliver exactly the HUD checklist
+  item's own literal brief (lap counter, position, timing) rather than
+  the JS side's much bigger current HUD surface.
+
+  **Technique decision**: rather than build a custom bitmap/TTF font
+  atlas from scratch (a real, non-trivial subproject -- glyph data,
+  texture packing, a text-quad shader), this session used bgfx's own
+  built-in debug-text overlay (`bgfx::setDebug(BGFX_DEBUG_TEXT)` +
+  `bgfx::dbgTextPrintf()`), a fixed 8x16-cell monospace VGA-palette text
+  mode that ships with bgfx itself and is commonly used in bgfx-based
+  projects for exactly this kind of HUD/overlay text. This is a
+  deliberate, honestly-scoped simplification: it cannot reproduce JS's
+  actual typography (real font files, arbitrary pixel positioning,
+  per-pixel RGB color, rounded panels) -- only a fixed-grid monospace
+  block font from a 16-color ANSI-style palette -- but it unblocks
+  showing *any* text at all immediately, without a sub-project of its
+  own. Revisit with a real font atlas if/when JS-matching typography
+  fidelity actually matters (most plausibly bundled with the menu
+  screen's DOM-chrome-equivalent work, a separate future Phase 4
+  sub-task).
+
+  **New `src/render/hud.{h,cpp}`**: `drawHud(state, cars)` -- skips
+  drawing during `menu`/`menuwait` (`index.html:3931`), finds the player
+  car, computes race position by recomputing the exact same descending
+  sort key `race.cpp:339-343` already uses to build `S.order`/
+  `finishOrder` (`done ? 1e6-finishT : prog`) -- purely for display, a
+  read of already-computed `Car` fields, not a new sim decision, so this
+  doesn't touch `race.cpp`/`tick()` at all -- and prints four lines:
+  `LAP n / N` (using `index.html:3985-3987`'s exact `S.finishLaps`-not-
+  `S.laps` denominator, the same field that fixed a real HUD-freeze bug
+  on the JS side during a green-white-checkered extension), `POS p / F`,
+  a background-highlighted `GREEN`/`CAUTION` flag banner, and `SPD` (this
+  last one wasn't in the original three-item brief, but came essentially
+  free once the lap/position plumbing existed, so it's included as a
+  small bonus rather than held back).
+
+  **Renderer wiring**: `bgfx::setDebug(BGFX_DEBUG_TEXT)` added to
+  `Renderer::init()`. `renderFrame()`'s signature gained a
+  `const RaceState&` parameter (named `raceState` to avoid shadowing the
+  function's own pre-existing local `uint64_t state` bgfx render-state
+  variable -- caught this collision before it became a real bug, not
+  after) and now calls `bgfx::dbgTextClear()` + `drawHud()` right before
+  `bgfx::frame()`. `renderBlockedFrame()` (Phase 3c's portrait block)
+  also gained a `dbgTextClear()` call, since JS's `#rotate` overlay's
+  z-index covers the HUD too (`index.html:203`) -- without this, a stale
+  previous frame's HUD text would have kept showing through the
+  supposedly-all-black blocked frame. `main.cpp`'s single `renderFrame()`
+  call site updated to pass `state` alongside `cars`.
+
+  **Verification, including a real mid-session correction**: full
+  `ctest` suite unaffected, 7/7 (no test-covered sim code touched).
+  `lht_port` rebuilds clean. Captured a headless `xvfb-run` screenshot
+  and initially cropped/viewed it *without* applying the capture's
+  `yflip` correction (documented back in Phase 2's screenshot notes) --
+  the crop showed nothing but flat background color, which for a moment
+  looked like the debug text simply wasn't rendering at all. Re-applying
+  the same `Image.transpose(FLIP_TOP_BOTTOM)` step already established
+  as necessary for this capture mechanism immediately fixed it: the
+  corrected crop clearly shows `LAP 1 / 5`, `POS 20 / 20`, a
+  green-highlighted `GREEN` banner, and `SPD  30`, all legible, with the
+  full frame confirming the track/car field still renders normally
+  alongside the new text. Also re-captured a portrait-orientation
+  screenshot and reconfirmed it's still exactly `(0,0,0)` on every pixel
+  -- the new `dbgTextClear()` call in `renderBlockedFrame()` is doing its
+  job, no leftover HUD text bleeds through the rotate-block frame.
+
+  **Status**: Phase 4's HUD checklist item has a first, real, functional
+  (not just compiling) slice -- exactly the original brief's three
+  fields plus one bonus, definitively NOT the JS side's full current HUD
+  surface (leaderboard, gaps, minimap, bars, gear/RPM), which remain
+  explicitly open. Phase 4's other two items (menu screen, results
+  screen) are untouched -- still `NOT STARTED` in spirit even though the
+  phase header now reads `IN PROGRESS`.
+
+  **Next**: further Phase 4 HUD sub-tasks (leaderboard panel, minimap,
+  segmented bars, gear/RPM -- likely each its own scoped run given the
+  size), or the menu/results screens (which will also want the rotate
+  prompt's real text+icon and the tilt-mode toggle UI once tackled), or
+  Phase 3 item 4 (Android NDK install), whichever the next session
+  prioritizes.

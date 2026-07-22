@@ -8,6 +8,7 @@
 // postprocessing yet -- that's Phase 5.
 
 #include "../sim/car.h"
+#include "../sim/race_state.h"
 #include "../sim/track.h"
 
 #include <bgfx/bgfx.h>
@@ -42,8 +43,9 @@ public:
     // against Car::idx, same convention as everywhere else in this port).
     void setChaseTarget(int chaseCarIdx) { chaseCarIdx_ = chaseCarIdx; }
 
-    // Draws the track ribbon + one box per car, then submits the frame.
-    void renderFrame(const std::vector<Car>& cars);
+    // Draws the track ribbon + one box per car + HUD text, then submits
+    // the frame.
+    void renderFrame(const RaceState& raceState, const std::vector<Car>& cars);
 
     // Phase 3c (PORT_PROGRESS.md): stand-in for the CSS `#rotate` prompt
     // (index.html:140-147,203) shown whenever the viewport is portrait --

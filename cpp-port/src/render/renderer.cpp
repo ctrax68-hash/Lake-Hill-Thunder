@@ -1,4 +1,5 @@
 #include "renderer.h"
+#include "hud.h"
 #include "shaders_embedded.h"
 
 #include "../sim/car.h"
@@ -95,6 +96,11 @@ bool Renderer::init(void* nativeDisplayHandle, void* nativeWindowHandle, int wid
     if (!bgfx::init(initInfo)) {
         return false;
     }
+
+    // Phase 4a (PORT_PROGRESS.md): enables bgfx's built-in debug-text
+    // overlay, used by hud.cpp's drawHud() as a stand-in for a custom font
+    // atlas -- this port has no other text-rendering capability yet.
+    bgfx::setDebug(BGFX_DEBUG_TEXT);
 
     layout_.begin()
         .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
@@ -194,11 +200,14 @@ void Renderer::renderBlockedFrame() {
     // index.html:144's #rotate background is var(--c-black) -- opaque
     // black, no depth buffer needed since nothing else draws this frame.
     bgfx::setViewClear(kView, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x000000ff, 1.0f, 0);
+    // The #rotate overlay's z-index covers the HUD too (index.html:203) --
+    // clear rather than leave a stale frame's text buffer showing through.
+    bgfx::dbgTextClear();
     bgfx::touch(kView);
     bgfx::frame();
 }
 
-void Renderer::renderFrame(const std::vector<Car>& cars) {
+void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& cars) {
     const bgfx::ViewId kView = 0;
     // Sequential: draw calls execute in submission order, not bgfx's default
     // sort-by-key order -- this Phase 2 scene has no depth buffer (see the
@@ -337,6 +346,12 @@ void Renderer::renderFrame(const std::vector<Car>& cars) {
             bgfx::submit(kView, program_);
         }
     }
+
+    // Phase 4a (PORT_PROGRESS.md): first functional slice of drawHUD()
+    // (index.html:3927), drawn via bgfx's debug-text overlay -- see
+    // hud.cpp for exactly what's ported vs. deferred.
+    bgfx::dbgTextClear();
+    drawHud(raceState, cars);
 
     bgfx::frame();
 }

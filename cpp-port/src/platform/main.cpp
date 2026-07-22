@@ -253,7 +253,7 @@ int main(int argc, char** argv)
         if (portrait) {
             renderer.renderBlockedFrame();
         } else {
-            renderer.renderFrame(cars);
+            renderer.renderFrame(state, cars);
         }
         ++frame;
 
