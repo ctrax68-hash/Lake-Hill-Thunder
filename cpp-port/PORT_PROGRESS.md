@@ -114,19 +114,39 @@ port; it's the reference the C++ port must match).
 - `cpp-port/.gitignore` added (`build/`) so the CMake build directory doesn't get
   committed.
 
-### Phase 1 — Physics/AI core (headless, no graphics) — NOT STARTED
-- [ ] Port `mulberry32` (JS: `index.html:229`) bit-for-bit; unit test against logged
+### Phase 1 — Physics/AI core (headless, no graphics) — IN PROGRESS (Session 2)
+- [x] Port `mulberry32` (JS: `index.html:229`) bit-for-bit; unit test against logged
       JS output for seeds `12345` (gameplay `rng`), `999` (`rngR`, runtime events —
       qual spread, spins), `777` (`rng2`, scenery-only, safe to diverge from without
-      affecting gameplay), `4242` (`rngP`, particle effects only)
-- [ ] Port `buildTrack()`/`pointAt()`/`bankAt()`/`project()` (JS: `index.html:284`+)
+      affecting gameplay), `4242` (`rngP`, particle effects only). **Done**:
+      `src/sim/rng.h` (`Mulberry32`), verified in `tests/rng_test.cpp` against all
+      4 seeds. Only `12345`/`999` are actually needed for gameplay determinism;
+      `777`/`4242` were verified anyway since it cost nothing and rules them out
+      as a future source of confusion.
+- [x] Port `buildTrack()`/`pointAt()`/`bankAt()`/`project()` (JS: `index.html:284`+)
       and the `TRACKS` data table (4 tracks: Thunder Oval, Milltown Bullring, Cedar
       Valley, Big Sable Speedway) — each has its own `RL`/`RR`/`bankL`/`bankR`/`D`/
       `sBank`/`ramp` plus a `stadium` sub-object (visual dressing only, lower
-      priority than the physics fields)
-- [ ] Port `CAR` constants (JS: `index.html:398`), `CAR_PALETTE`, `ROSTER` (19 AI
-      drivers + player = 20-car field, `FIELD = ROSTER.length + 1`), `makeCar()`
-- [ ] Port `cornerCap()` (JS: `index.html:404`) and the rest of the speed/grip model
+      priority than the physics fields). **Done**: `src/sim/track.{h,cpp}` +
+      `src/sim/tracks_data.h` (physics fields only -- `theme`/`stadium` deliberately
+      NOT ported, that's Phase 5's job). Verified in `tests/track_test.cpp` against
+      JS ground truth for tracks 0 (asymmetric) and 3 (symmetric), covering segment
+      boundaries, mid-segment, and wrapped/negative `s` inputs.
+- [x] Port `CAR` constants (JS: `index.html:398`), `CAR_PALETTE`, `ROSTER` (19 AI
+      drivers + player = 20-car field, `FIELD = ROSTER.length + 1`), `makeCar()`.
+      **Done**: `src/sim/car.{h,cpp}`. `progHist`/`replayHist`/`histTick` (added to
+      the JS `Car` object much later, for HUD telemetry/replay-camera only, never
+      read by `stepCar()`'s physics/AI logic) are intentionally NOT ported --
+      revisit only if a future phase needs them for HUD/replay parity. Verified in
+      `tests/car_test.cpp`: all 20 cars' `skill`/`aggr`/`grooveBias` match JS
+      exactly for the default grid order, confirming the rng() call-order/count
+      (3 calls per AI car, 0 for the player) stays in sync with the shared
+      seed-12345 stream.
+- [x] Port `cornerCap()` (JS: `index.html:404`) and the rest of the speed/grip model.
+      **Done**: `cornerCap()`/`cornerSpeed()`/`targetSpeed()` all in `src/sim/car.cpp`,
+      taking the active `Track` as an explicit parameter instead of closing over a
+      JS-style single global (the only deliberate structural adaptation so far --
+      math/iteration order unchanged). Verified in `tests/speed_model_test.cpp`.
 - [ ] Port `stepCar()` (JS: `index.html:686`) — the largest single function by far.
       Split into sub-phases by branch: player input, AI groove/pass-side logic
       (`grooveBias`, `passSide`/`passT`), pit-road state machine (`c.pit` 0-4, see
@@ -218,3 +238,31 @@ logged yet — Phase 0 doesn't touch simulation logic.)*
   `rng`=12345 (gameplay, must match exactly), `rngR`=999 (runtime events, must
   match exactly), `rng2`=777 (scenery, safe to diverge), `rngP`=4242 (particles,
   safe to diverge).
+
+- **Session 2**: Phase 1a-1d complete (RNG, track builder, CAR/ROSTER/makeCar,
+  speed model) -- see the Phase 1 checklist above for exactly what was ported
+  and how each piece was verified. Every sub-task's ground truth was captured
+  by running the *actual* JS algorithm (copy-pasted verbatim, not
+  reimplemented from memory) under Node, never hand-derived -- this matters
+  because determinism bugs are exactly the kind of thing that "looks right"
+  but silently isn't. All 4 test binaries (`rng_test`, `track_test`,
+  `car_test`, `speed_model_test`) pass and are wired into `ctest`. Committed
+  as 3 separate checkpoints (1a alone, 1b alone, 1c+1d together since 1d was
+  small and directly extended 1c's file), each pushed immediately after its
+  tests passed, per the "commit at logical checkpoints" rule.
+  **Next run: Phase 1e/1f -- the determinism harness and `stepCar()` itself.**
+  This is the big one (JS: `index.html:686`, described in the JS source's own
+  comments as touching player input, AI groove/pass-side logic, the pit-road
+  state machine, caution/pace-car following, spin/wreck, and damage/blowout
+  all in one function) -- do NOT attempt it in a single pass. Build the
+  determinism harness first (instrument `index.html` headlessly, reusing
+  `tools/playtest.js`'s patterns from the main JS repo, to dump per-car
+  `{x,y,hdg,v,lap,s,lat}` every tick for a fixed seed/scenario), then port
+  `stepCar()` branch by branch, verifying each branch against that harness
+  before moving to the next, exactly as the Phase 1 checklist already says.
+  `gridStart()`/`stepPace()`/the `S` race-state object/the GWC state machine
+  (Phase 1g in the checklist) can go either before or after `stepCar()` --
+  `stepCar()` doesn't strictly need them to be unit-testable in isolation (it
+  can take a `Car&` and whatever state it reads as explicit parameters), but
+  a *full* race-scenario determinism run will eventually need all of it
+  wired together, so don't leave it unexamined until the very end.
