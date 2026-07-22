@@ -365,10 +365,30 @@ port; it's the reference the C++ port must match).
         never committed, see above), but if a stale one is ever found lying
         around, throw it away rather than trusting it.
 
-### Phase 2 — Minimal renderer (desktop-first) — NOT STARTED
-- [ ] Static camera, flat-shaded track ribbon + car boxes, no postprocessing
-- [ ] Keyboard input standing in for touch (gas/brake/steer)
-- [ ] Chase camera matching the JS original's behavior (JS: `updateCamera()`)
+### Phase 2 — Minimal renderer (desktop-first) — IN PROGRESS (Session 3)
+- [x] Static camera, flat-shaded track ribbon + car boxes, no postprocessing.
+      **Done**: `src/render/renderer.{h,cpp}` -- a static triangle-list ribbon
+      mesh built once from `Track::pointAt()`/`halfW()` (see `setTrack()`),
+      and a per-frame transient vertex buffer of 20 rotated/translated boxes
+      (one per `Car`, sized to `CAR.len`/`CAR.wid`, colored by `c.col`). One
+      flat vertex-color shader (`src/render/shaders/vs_flat.sc`/`fs_flat.sc`,
+      no lighting -- that's Phase 5) draws both. Camera is a static top-down
+      orthographic view framing the whole track's bounding box (computed once
+      in `setTrack()`), aspect-corrected to the window every frame.
+- [x] Keyboard input standing in for touch (gas/brake/steer). **Done**:
+      `src/platform/main.cpp` reads `SDL_GetKeyboardState()` (arrows or WASD)
+      into the same `PlayerInput` struct `stepCar()`'s player branch already
+      consumes -- no new physics-side code needed, this was pure input
+      plumbing. AI cars drive themselves via the real, verified AI branch.
+      **Not verified interactively** (no human at a keyboard in this
+      container) -- only that it builds and the read path is straightforward;
+      a real interactive session should confirm actual car response feels
+      right before calling this fully done.
+- [ ] Chase camera matching the JS original's behavior (JS: `updateCamera()`).
+      A placeholder chase mode exists (`Renderer::CameraMode::Chase`, toggled
+      with the C key) -- fixed-distance top-down framing on the chase target,
+      NOT the JS's real `updateCamera()` (smoothed follow, banking tilt,
+      multiple camera modes). Flagged honestly as a placeholder, not done.
 
 ### Phase 3 — Mobile input — NOT STARTED
 - [ ] SDL2 touch regions matching the JS original's button layout (`bL`/`bR` steer,
@@ -920,3 +940,92 @@ elsewhere in the same run.
   1h (one closing full-determinism pass across everything, then commit)
   and Phase 2 (the minimal desktop renderer -- the actual "playable"
   milestone) are next.
+
+- **Session 3 (continued once more -- Phase 2, the first playable
+  milestone)**: per the user's explicit request to move on to Phase 2 once
+  Phase 1f/1g's physics work was far enough along, built the minimal
+  desktop renderer described in the Phase 2 checklist above. New files:
+  `src/render/renderer.{h,cpp}`, `src/render/shaders_embedded.h`,
+  `src/render/shaders/{vs_flat.sc,fs_flat.sc,varying.def.sc}`.
+  `src/platform/main.cpp` rewritten from Phase 0's clear-screen-only stub
+  into the real app: opens the window, builds a `Track`, calls
+  `gridStart()`, then runs a fixed-timestep (`DT`=0.02) accumulator loop
+  driven by real wall-clock time, reading `SDL_GetKeyboardState()` into
+  `PlayerInput` and calling the real, Phase-1-verified `tick()` every step
+  -- AI cars drive themselves via the already-ported AI branch, no
+  test-only driver brain involved.
+
+  **CMake changes**: `BGFX_BUILD_TOOLS`/`BGFX_BUILD_TOOLS_SHADER` flipped
+  ON (were OFF in Phase 0 -- nothing needed `bgfx::shaderc` until now);
+  the other tool subsets (bin2c/geometry/texture) stay OFF. Two
+  `bgfx_compile_shaders(... AS_HEADERS ...)` calls compile `vs_flat.sc`/
+  `fs_flat.sc` for the `spirv`/`120`(glsl)/`100_es`(essl) profiles (bgfx's
+  own default set for a non-Windows/iOS desktop target) straight into C
+  header files under `${CMAKE_BINARY_DIR}/generated_shaders/`, aggregated
+  by `shaders_embedded.h`'s `BGFX_EMBEDDED_SHADER` table so the app has no
+  runtime shader-asset-path dependency at all -- one less thing to break
+  when this eventually needs to run from an Android APK/iOS bundle.
+  `lht_port` now also links `SIM_SOURCES` (moved earlier in the file so it's
+  defined before first use).
+
+  **Three real bugs found and fixed while getting this to build** (logged
+  so they're not rediscovered blind):
+  1. `bgfx_compile_shaders()`'s `SHADERS`/`VARYING_DEF`/`INCLUDE_DIRS` were
+     passed as paths relative to the source dir, but the custom command
+     shaderc actually runs under doesn't have that as its working directory
+     -- shaderc silently failed to find `bgfx_shader.sh`/`shaderlib.sh` and
+     the varying def, fell back to a broken parse, and produced *misleading*
+     errors (`'vec4_splat' : no matching overloaded function`, `unknown
+     variable 'u_modelViewProj'`) that look like a shader-language problem
+     but are actually a path problem. Fixed by making all three absolute
+     (`${CMAKE_CURRENT_SOURCE_DIR}/...`).
+  2. `bgfx/include/bgfx/embedded_shader.h`'s `BGFX_PLATFORM_SUPPORTS_DXBC`
+     and `_WGSL` guards both unconditionally include `BX_PLATFORM_LINUX`
+     (presumably for cross-compiling toward those targets from a Linux
+     host), so on this desktop Linux build the `BGFX_EMBEDDED_SHADER` macro
+     expected `vs_flat_dxbc`/`vs_flat_wgsl` (etc.) byte arrays to exist even
+     though only `spirv`/`glsl`/`essl` were ever compiled -- a real target
+     will only select OpenGL/OpenGLES/Vulkan here regardless. Fixed by
+     `#define`-ing those support macros (and `_DXIL`/`_METAL`/`_NVN`/`_PSSL`,
+     same non-issue) to `0` in `shaders_embedded.h` before including the
+     header, so the macro only expects the three variants actually built.
+  3. **Not a code bug, but a process mistake worth logging**: backgrounded
+     the (very long, from-scratch) `shaderc` build twice via
+     `nohup ... & disown` without checking whether a prior invocation was
+     still running first -- ended up with *three* concurrent, uncoordinated
+     `gmake` invocations against the same build directory (a real risk of
+     silently corrupting `.o` files from racing writes to the same paths,
+     not just wasted CPU). Killing by matching process name/pattern also
+     failed more than once (`pkill -f` with an unescaped `\|` doesn't mean
+     what it looks like, and killing only a tree's top process leaves
+     already-reparented grandchildren running). **Lesson**: always
+     `ps aux | grep` for an existing build before backgrounding another one
+     against the same build dir, and when killing a process tree, be
+     prepared to matching on the exact literal command building, not neatly
+     with alternation regex.
+
+  **Verification**: built clean (`cmake -B build && cmake --build build`,
+  the `shaderc`/spirv-tools/tint dependency chain is a genuinely large
+  one-time compile -- expect it to take a long time from scratch, but it's
+  cached after). Ran the real binary under
+  `xvfb-run -a --server-args="-screen 0 1280x720x24"` (same technique
+  Phase 0 established) with `LHT_SCREENSHOT=<path>` set, capturing a real
+  rendered frame via a new `bgfx::CallbackI::screenShot` implementation
+  (dumps raw BGRA8 + a tiny sidecar `.meta` file -- converted to PNG with a
+  throwaway Pillow one-liner for actually looking at it, see this session's
+  chat for the two screenshots). **Confirmed visually**: the track ribbon
+  renders as a closed oval matching the track shape, all 20 cars render as
+  correctly-colored boxes in grid formation, and a second screenshot ~1200
+  frames later shows the pack having advanced along the track (pace speed
+  climbing 33->39 in the periodic status line too) -- the real, verified
+  Phase 1 sim is genuinely driving a live render, not a static scene. Full
+  `ctest` suite still passes (no regressions from the CMake restructuring).
+  **Not verified**: actual keyboard responsiveness (no interactive human in
+  this container -- see the checklist note above), and the chase-camera
+  placeholder wasn't screenshot-checked (lower risk, simple code, matches
+  no JS behavior yet anyway so there's nothing to regress against).
+
+  **Next**: a real interactive session (or a synthetic-SDL-event test) to
+  confirm keyboard control actually feels right; then the real chase
+  camera (`updateCamera()`); then Phase 1h's closing full-determinism pass;
+  then Phase 3 (mobile touch/tilt input, Android NDK).
