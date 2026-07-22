@@ -33,12 +33,27 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
     // condition is provably always-false right now; revisit when porting
     // the pit-road state machine.
 
-    if (false) {
-        // S.mode==='victory' && c.isPlayer (index.html:702-707)
-        throw std::logic_error("stepCar: victory branch not yet ported");
+    if (state.mode == "victory" && c.isPlayer) {
+        // index.html:702-707: winner's burnout -- tight donuts on the
+        // frontstretch. `skid` bump (index.html:707) is a render-only
+        // screen-shake variable, not ported.
+        thr = 0.6;
+        brk = 0;
+        steerIn = 0;
+        c.hdg += 3.1 * DT;
+        c.v = std::max(7.0, c.v * 0.985);
     } else if (c.out || c.done) {
-        // index.html:708-730
-        throw std::logic_error("stepCar: out/done branch not yet ported");
+        // index.html:708-730: DNF, or already-finished (cool-down) -- limp
+        // to the infield apron and park.
+        const double lane = -9.5;
+        const double LAo = std::max(8.0, c.v * 0.62);
+        PointResult pTo = track.pointAt(c.s + LAo);
+        const double txo = pTo.x - std::sin(pTo.hdg) * lane, tyo = pTo.y + std::cos(pTo.hdg) * lane;
+        double dHo = wrapPi(std::atan2(tyo - c.y, txo - c.x) - c.hdg);
+        const double cFo = track.pointAt(c.s + std::max(6.0, c.v * 0.3)).curv;
+        steerIn = std::max(-1.0, std::min(1.0, (c.v * cFo) / std::max(0.05, c.v * 0.24) + dHo * 1.4));
+        thr = 0;
+        brk = c.lat < -7 ? 0.9 : 0.25;
     } else if (c.spinT > 0) {
         // index.html:731-736: wrecked -- no control, rotating slide until it
         // scrubs off. c.isPlayer's `skid` bump (index.html:736) is a

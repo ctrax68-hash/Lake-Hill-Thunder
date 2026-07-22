@@ -86,10 +86,25 @@ TickSnapshot buildSnapshot(int tickIdx, const RaceState& state, const PaceCar& p
 // Applies the same --force=idx:scenario[,idx:scenario...] seeding
 // dump_js_trace.js's --force flag does, so a forced JS trace and this C++
 // run start from identical seeded state. Scenario strings match exactly.
-void applyForce(std::vector<Car>& cars, const std::string& spec) {
+// An entry of the form state.field=value sets a RaceState field directly
+// instead of touching a car (currently: state.mode=value).
+void applyForce(RaceState& state, std::vector<Car>& cars, const std::string& spec) {
     std::istringstream ss(spec);
     std::string entry;
     while (std::getline(ss, entry, ',')) {
+        if (entry.rfind("state.", 0) == 0) {
+            auto rest = entry.substr(6);
+            auto eq = rest.find('=');
+            if (eq == std::string::npos) throw std::runtime_error("--force: bad state entry '" + entry + "'");
+            std::string field = rest.substr(0, eq);
+            std::string value = rest.substr(eq + 1);
+            if (field == "mode") {
+                state.mode = value;
+            } else {
+                throw std::runtime_error("--force: unknown state field '" + field + "'");
+            }
+            continue;
+        }
         auto colon = entry.find(':');
         if (colon == std::string::npos) throw std::runtime_error("--force: bad entry '" + entry + "'");
         int idx = std::atoi(entry.substr(0, colon).c_str());
@@ -116,6 +131,10 @@ void applyForce(std::vector<Car>& cars, const std::string& spec) {
         } else if (scenario == "pit4") {
             c->pit = 4;
             c->dtPending = true;
+        } else if (scenario == "out") {
+            c->out = true;
+        } else if (scenario == "done") {
+            c->done = true;
         } else {
             throw std::runtime_error("--force: unknown scenario '" + scenario + "'");
         }
@@ -153,7 +172,7 @@ int main(int argc, char** argv) {
     std::vector<TickSnapshot> ours;
     ours.reserve(numTicks);
     for (int i = 0; i < numTicks; ++i) {
-        if (!forceSpec.empty() && i == forceTick) applyForce(cars, forceSpec);
+        if (!forceSpec.empty() && i == forceTick) applyForce(state, cars, forceSpec);
         const Car* player = nullptr;
         for (auto& c : cars) {
             if (c.isPlayer) {

@@ -30,6 +30,12 @@
  *   pit2  -> pit=2, pitT=2 (in service)
  *   pit3  -> pit=3 (exit lane)
  *   pit4  -> pit=4, dtPending=true (drive-through penalty)
+ *   out   -> out=true (DNF)
+ *   done  -> done=true (finished, cool-down)
+ * An entry of the form state.mode=value sets S.mode directly instead of
+ * touching a car, e.g. --force=state.mode=victory to test the victory-lap
+ * branch (needs S.mode==='victory' AND c.isPlayer -- idx 0 is always the
+ * player, whose own state doesn't need forcing separately).
  *
  * Requires playwright installed globally, chromium at /opt/pw-browsers (or
  * set CHROMIUM_PATH) -- same requirements as tools/playtest.js.
@@ -43,7 +49,9 @@ const ROOT = path.join(__dirname, '..', '..', '..'); // repo root (index.html li
 const TRACK_ARG = (process.argv.find(a => a.startsWith('--track=')) || '--track=0').split('=')[1] | 0;
 const TICKS_ARG = (process.argv.find(a => a.startsWith('--ticks=')) || '--ticks=400').split('=')[1] | 0;
 const OUT_ARG = (process.argv.find(a => a.startsWith('--out=')) || '--out=').split('=')[1];
-const FORCE_ARG = (process.argv.find(a => a.startsWith('--force=')) || '--force=').split('=')[1];
+// Not .split('=')[1]: a state.field=value force entry contains its own '=',
+// which a naive split would truncate at (losing everything after "state.mode").
+const FORCE_ARG = (process.argv.find(a => a.startsWith('--force=')) || '--force=').slice('--force='.length);
 const FORCE_TICK_ARG = (process.argv.find(a => a.startsWith('--force-tick=')) || '--force-tick=0').split('=')[1] | 0;
 const EXE = process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
@@ -86,6 +94,12 @@ const server = http.createServer((req, res) => {
     await page.evaluate((forceSpec) => {
       window.__applyForce = function () {
         for (const entry of forceSpec.split(',')) {
+          if (entry.startsWith('state.')) {
+            const [field, value] = entry.slice('state.'.length).split('=');
+            if (field === 'mode') S.mode = value;
+            else throw new Error(`--force: unknown state field '${field}'`);
+            continue;
+          }
           const [idxStr, scenario] = entry.split(':');
           const idx = +idxStr;
           const c = S.cars.find(c => c.idx === idx);
@@ -95,6 +109,8 @@ const server = http.createServer((req, res) => {
           else if (scenario === 'pit2') { c.pit = 2; c.pitT = 2; }
           else if (scenario === 'pit3') { c.pit = 3; }
           else if (scenario === 'pit4') { c.pit = 4; c.dtPending = true; }
+          else if (scenario === 'out') { c.out = true; }
+          else if (scenario === 'done') { c.done = true; }
           else throw new Error(`--force: unknown scenario '${scenario}'`);
         }
       };

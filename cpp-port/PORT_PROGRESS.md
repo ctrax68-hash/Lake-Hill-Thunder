@@ -208,8 +208,9 @@ port; it's the reference the C++ port must match).
       `cautionController()` at the right point in the sequence. HUD/audio/
       render-only side effects in the JS source (`S.msgTxt`/`msgT`,
       `CAR_MAT_AMBER`, `cam.pos`, `spotterSay()`) are not ported, same
-      rationale as everywhere else this session. Remaining unported
-      branches: victory, out/done. AI pit-strategy (sets `c.pitReq`, which
+      rationale as everywhere else this session. ~~Remaining unported
+      branches: victory, out/done.~~ **Done -- see the Session 3 log entry
+      below on the victory-lap and out/done branches.** AI pit-strategy (sets `c.pitReq`, which
       nothing reads yet) and blowout/DNF rolls (organic spin/DNF triggers)
       are also still deferred -- tested instead via `--force`, same as spin/
       pit were.
@@ -727,3 +728,69 @@ elsewhere in the same run.
   original checklist order). At that point Phase 1f/1g's stepCar()/tick()
   porting is essentially complete and Phase 1h (full determinism
   verification + commit) becomes the closing task.
+
+- **Session 3 (continued further still)**: Ported the last two small
+  `stepCar()` branches -- victory-lap burnout (index.html:702-707: fixed
+  throttle/steer, slow rotation, decaying speed floor at 7) and out/done
+  (index.html:708-730: DNF or already-finished cars limp to a fixed
+  apron lane and park; shared by both states since JS handles them in one
+  `else if`). `skid`, the JS render-only screen-shake bump both branches
+  set, is not ported (same rationale as every other cosmetic-only global
+  this session).
+
+  **`--force` gained a `state.field=value` entry** (alongside the existing
+  `idx:scenario` form) since the victory branch needs `RaceState.mode`
+  itself forced, not a per-car field -- `--force=state.mode=victory` sets
+  `S.mode`/`state.mode` directly on both the JS (`dump_js_trace.js`) and
+  C++ (`determinism_check.cpp`) sides. Currently only `mode` is a
+  recognized `state.` field; extend `applyForce()` on both sides together
+  if a future branch needs another one.
+
+  **Bug found and fixed in the test harness itself, not the port**:
+  `dump_js_trace.js`'s own argv parsing did
+  `(...).split('=')[1]` to pull the value out of a `--force=...` flag.
+  That breaks the instant a force spec contains its own `=`, which the new
+  `state.mode=value` syntax does -- `--force=state.mode=victory` parsed to
+  `FORCE_ARG = "state.mode"` (everything after the second `=` silently
+  dropped), so `S.mode` got set to `undefined`, which stringifies to `""`
+  when the trace line is built. That empty token, once the array is
+  `join(' ')`'d and later re-split on whitespace by `loadTrace()`'s
+  `istringstream >>` chain (which can't distinguish "empty field" from "no
+  field"), silently swallowed one column and shifted every subsequent
+  numeric field on that line left by one -- `greenLockT` read what should
+  have been `sinceGreenT`'s value, and so on down the row, right up until
+  a non-numeric token (`paceState`) finally failed to parse into a
+  `double` and zeroed it. This produced a very convincing-looking but
+  entirely bogus divergence (mode/flag string-diffs, several tick-level
+  numeric fields all "wrong" by exactly one field-width) that had nothing
+  to do with `stepCar()`. Root-caused by dumping the raw trace line and
+  noticing a doubled space exactly where `S.mode` should have printed.
+  Fixed with `.slice('--force='.length)` instead of the truncating split.
+  **Lesson for future `state.field=value` additions**: never reach for
+  `.split('=')[1]` on a flag value that might itself contain `=`.
+
+  **Verified** (after the harness fix): forced `--force=state.mode=victory`
+  at tick 0, 200 ticks on track 0 -- bit-exact match against JS for the
+  first **100 ticks** (confirmed with a separate clean 100-tick run), then
+  diverges at tick 113. Inspected the raw trace at the divergence point:
+  the player's `lat` field is oscillating right on `11.000000000` --
+  exactly `WALL_CLAMP_LAT` for this track, i.e. the same well-understood
+  cross-runtime floating-point boundary phenomenon documented below (now
+  seen a fourth time), not a translation bug -- consistent with the
+  victory branch's fixed `hdg += 3.1*DT` rotation repeatedly sweeping the
+  player back toward the wall in a tight, low-speed circle. Separately,
+  `--force=5:out` and `--force=6:done` (200 ticks each, track 0) both
+  matched JS **byte-for-bit for the full 200 ticks**, no boundary hit at
+  all -- these cars settle onto the fixed apron lane (`lat=-9.5`) well
+  inside the wall-clamp threshold, so the boundary case doesn't come up
+  for this branch in a short run.
+
+  **Status**: all of `stepCar()`'s branches are now ported and verified
+  except green-white-checkered and qualifying (deliberately last, larger
+  scope). **Next**: per the user's explicit priority redirect this
+  session, do NOT pick up further JS-side work (the paused "10-step AAA
+  wishlist" stays paused) -- go straight at GWC + qualifying next, then
+  Phase 1h's closing full-determinism pass, then start Phase 2 (minimal
+  desktop renderer: static camera, flat track ribbon + car boxes, keyboard
+  input, chase camera) -- that's the first point this port is actually
+  playable/visually improvable at all, which is the user's stated goal.
