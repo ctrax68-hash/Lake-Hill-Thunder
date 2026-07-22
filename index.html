@@ -445,7 +445,7 @@ const S = {
   sound:true, tilt:false, tiltG:0,
   shakeT:0,
   qual:false, gridOrder:null, qualPos:0,
-  flag:'green', yellowT:0, cautionUntilLap:-1, greenLockT:0,
+  flag:'green', yellowT:0, cautionUntilLap:-1, greenLockT:0, sinceGreenT:0,
   oneToGo:false, pitsOpen:true, cautionMaxSlot:-1,
   // green-white-checkered: finishLaps is the EFFECTIVE final lap (grows
   // past S.laps during overtime); gwcState machine walks
@@ -460,17 +460,37 @@ const S = {
 // essentially never binds in practice, matching the original intent, without
 // further suppressing organic racing incidents beyond the tuning already done.
 const GWC_MAX_ATTEMPTS = 8;
-// how long after ANY green flag (the initial start or a caution restart)
-// the field stays in "pack mode": collide()'s spin-roll and the tire-blowout
-// spin are both suppressed (see their own S.greenLockT<=0 gates), and
-// stepCar()'s AI branch eases each car's lane target from a tight starting
-// formation toward its personal groove instead of snapping straight to it.
-// ~22s approximates "about a lap" without needing per-track lap-time data
+// how long each car takes to ease its lane target from a tight starting
+// formation (grid double-file or caution single-file) toward its personal
+// groove after ANY green flag, once released from its own staggered hold
+// (see LANE_EASE_DUR's use in stepCar() via S.sinceGreenT). ~22s
+// approximates "about a lap" without needing per-track lap-time data
 // (organic lap times across the 4 tracks run roughly 17-45s) -- long enough
 // that the field is genuinely spread out and drafting/passing normally by
 // the time real incidents can occur again, short enough that it doesn't
 // read as the whole field driving in slow motion formation forever.
-const GREEN_LOCK_DUR = 22;
+const LANE_EASE_DUR = 22;
+// how long collide()'s spin-roll and the tire-blowout spin stay suppressed
+// after ANY green flag (see their own S.greenLockT<=0 gates). Deliberately
+// longer than LANE_EASE_DUR: the field's release is staggered by up to
+// ~2.68s (releaseAt maxes at 0.4+19*0.12 for the last car in the queue),
+// so the LAST car doesn't finish its own LANE_EASE_DUR-long ease until
+// ~24.7s after green -- this used to also gate the ease itself (as a single
+// combined value), which meant that once THIS timer hit 0, every car's
+// lane-ease computation was skipped in the same tick and ALL of them
+// (including cars still mid-ease) snapped straight to their personal
+// groove simultaneously, full passing enabled, at the same instant --
+// exactly the same "instant scramble" bug the pack hold was built to
+// prevent, just recurring wherever in the lap that cutoff happened to
+// land (confirmed via headless test: for a backstretch-start track, that's
+// almost exactly when the field reaches turns 1-2, which is also the
+// bigger/faster/higher-banked corner on half the tracks -- explaining why
+// crashes concentrated there specifically). The ease itself no longer
+// depends on this value at all (see S.sinceGreenT); this constant now only
+// bounds the wreck-roll/blowout grace window, with margin above the
+// worst-case ease completion time so it doesn't reopen wreck risk before
+// every car has actually finished easing into normal racing.
+const GREEN_LOCK_DUR = 28;
 
 /* ---------- rolling start: pace car + formation on the backstretch ---------- */
 const PACE = { s:0, lat:0, v:0, hdg:0, x:0, y:0, state:'lead',
@@ -794,20 +814,36 @@ function stepCar(c){
     // the just-formed formation (c.gridLane for the original start, 0 for
     // a caution restart's single-file queue), staggered by each car's
     // position in that formation (c.gridSlot or c.cautionSlot), then eased
-    // toward the personal groove over GREEN_LOCK_DUR (~a lap) instead of
+    // toward the personal groove over LANE_EASE_DUR (~a lap) instead of
     // snapping -- long enough that the field is genuinely spread out and
     // drafting normally, like the user asked for, before real passing
-    // (and the incident chances that come with it) resumes. Reuses
-    // S.greenLockT -- set to GREEN_LOCK_DUR the instant S.flag flips to
-    // 'green' at either site and decremented only while green -- as the
-    // elapsed-time source instead of a second timer.
+    // (and the incident chances that come with it) resumes. Uses
+    // S.sinceGreenT -- a plain monotonic clock reset to 0 the instant
+    // S.flag flips to 'green' at either site and incremented every green
+    // tick -- as the elapsed-time source, computed UNCONDITIONALLY (no
+    // outer timer gate). This used to derive elapsed time from the
+    // DECREMENTING S.greenLockT (`GREEN_LOCK_DUR - S.greenLockT`), gated
+    // behind `S.greenLockT>0`: the moment that shared global countdown hit
+    // zero, this whole block was skipped in the same tick for every car at
+    // once, so cars still mid-ease (their own stagger meant they hadn't had
+    // the full LANE_EASE_DUR yet) got force-snapped to laneEase=1 --
+    // restartHeld=false -- simultaneously, full personal groove and full
+    // passing logic enabled for the whole field on the same tick. That
+    // synchronized snap is what was actually producing crashes concentrated
+    // in turns 1-2: cars start on the backstretch heading into turns 3-4
+    // first, so the old cutoff (tied to a single shared timer) didn't land
+    // until the field was most of the way around to turns 1-2 on lap 1 --
+    // the exact same "instant scramble" bug as the original restart-merge
+    // issue, just relocated by this timing coincidence. S.sinceGreenT never
+    // gets externally reset mid-ease, so each car's own ramp completes (and
+    // then just stays at 1) independently, with no synchronized cutoff for
+    // anyone.
     let restartHeld = false, laneEase = 1;
     const holdLane = c.cautionSlot>=0 ? 0 : c.gridLane;
     const holdSlot = c.cautionSlot>=0 ? c.cautionSlot : Math.max(0, c.gridSlot);
-    if(S.flag==='green' && S.greenLockT>0){
-      const sinceGreen = GREEN_LOCK_DUR - S.greenLockT;
+    if(S.flag==='green'){
       const releaseAt = 0.4 + holdSlot*0.12;
-      const heldT = sinceGreen - releaseAt;
+      const heldT = S.sinceGreenT - releaseAt;
       // hard hold until this car's own staggered release point, exactly as
       // before; past that, EASE the lane target from the hold formation up
       // to the full groove instead of an instant snap. A binary snap made
@@ -820,8 +856,8 @@ function stepCar(c){
       // letting the blocker/pass logic fire mid-ease was producing spurious
       // swerves back toward a shared lane, which is what read as cars
       // "merging into one lane" right as they hit turn 1.
-      restartHeld = heldT < GREEN_LOCK_DUR;
-      laneEase = Math.max(0, Math.min(1, heldT/GREEN_LOCK_DUR));
+      restartHeld = heldT < LANE_EASE_DUR;
+      laneEase = Math.max(0, Math.min(1, heldT/LANE_EASE_DUR));
     }
     // groove-based lane target (both corners and straights) instead of the
     // old blanket -2.2-in-corners/laneBias-on-straights split -- see
@@ -3746,11 +3782,16 @@ function tick(){
   S.order = S.cars.slice().sort((a,b)=> (b.done?1e6-b.finishT:b.prog) - (a.done?1e6-a.finishT:a.prog));
   if(S.mode==='pace'){
     for(const c of S.cars) if(c.lap >= 0){          // leader took the green
-      S.mode='race'; S.greenT = 2.2; S.greenLockT = GREEN_LOCK_DUR;
+      S.mode='race'; S.greenT = 2.2; S.greenLockT = GREEN_LOCK_DUR; S.sinceGreenT = 0;
       break;
     }
   }
   if(S.greenLockT > 0 && S.flag==='green') S.greenLockT -= DT;
+  // plain monotonic elapsed-time clock for the green-flag pack-hold ease in
+  // stepCar() -- see LANE_EASE_DUR's comment for why this needs to be
+  // unconditional (no decrementing-to-zero gate) rather than derived from
+  // S.greenLockT the way it used to be.
+  if(S.flag==='green') S.sinceGreenT += DT;
   if(S.mode==='qual' && S.player.lap >= 1){         // flying lap complete
     S.mode='menuwait';                              // brief freeze before the race grid forms
     setTimeout(()=> finishQualifying(S.player.lastLapT), 400);
@@ -4002,7 +4043,7 @@ function tick(){
         }
         let dl = (TRACK.sFinish - lead.s + TRACK.total) % TRACK.total;
         if(PACE.state!=='lead' && (dl < 60 || dl > TRACK.total-10)){
-          S.flag='green'; S.greenT = 2.2; S.greenLockT = GREEN_LOCK_DUR;
+          S.flag='green'; S.greenT = 2.2; S.greenLockT = GREEN_LOCK_DUR; S.sinceGreenT = 0;
           S.oneToGo = false; S.pitsOpen = true;
           PACE.state='peel';
         }
