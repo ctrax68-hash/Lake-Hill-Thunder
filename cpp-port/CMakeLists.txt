@@ -47,3 +47,12 @@ target_include_directories(lht_port PRIVATE
   third_party/bgfx.cmake/bgfx/include
   third_party/bgfx.cmake/bx/include
 )
+
+# ---- Phase 1 sim tests (headless, no SDL2/bgfx dependency) ----
+# These verify src/sim's port of the JS physics/AI core against captured JS
+# ground truth. Deliberately not linked against SDL2/bgfx: the physics core
+# must be provably correct standalone before any rendering touches it.
+enable_testing()
+
+add_executable(rng_test tests/rng_test.cpp)
+add_test(NAME rng_test COMMAND rng_test)
