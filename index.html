@@ -79,18 +79,36 @@
         linear-gradient(-45deg, var(--c-black) 25%, transparent 25%),
         linear-gradient(45deg, transparent 75%, var(--c-black) 75%),
         linear-gradient(-45deg, transparent 75%, var(--c-black) 75%);
-      background-size:12px 12px; background-position:0 0, 0 6px, 6px -6px, -6px 0px; }
+      background-size:12px 12px; background-position:0 0, 0 6px, 6px -6px, -6px 0px;
+      animation:checkerCrawl 6s linear infinite; }
+  /* one tile-width (12px) crawl per loop — the 100% position is the exact
+     same pattern shifted by a full period, so the loop has no visible seam,
+     reading as a flag being drawn steadily across rather than a jump-cut */
+  @keyframes checkerCrawl {
+    0%   { background-position:0 0, 0 6px, 6px -6px, -6px 0px; }
+    100% { background-position:12px 0, 12px 6px, 18px -6px, 6px 0px; }
+  }
   .title { color:var(--c-yellow); font-family:var(--font-head); font-size:36px; font-weight:bold;
       letter-spacing:4px; text-align:center; padding:var(--sp-2) 0 0;
-      text-shadow:0 2px 4px rgba(0,0,0,0.7); }
+      text-shadow:0 2px 4px rgba(0,0,0,0.7);
+      animation:titlePulse 3.2s ease-in-out infinite; }
+  /* subtle "on-air" breathing pulse — small opacity/shadow swing only,
+     never a glow, consistent with the broadcast-graphics restraint used
+     elsewhere (e.g. the .rot portrait-icon keyframe) */
+  @keyframes titlePulse {
+    0%, 100% { opacity:1; text-shadow:0 2px 4px rgba(0,0,0,0.7); }
+    50% { opacity:0.92; text-shadow:0 2px 10px rgba(247,212,0,0.35), 0 2px 4px rgba(0,0,0,0.7); }
+  }
   .kicker { color:var(--c-white); font-family:var(--font-head); font-size:12px; font-weight:bold;
       letter-spacing:5px; }
-  .subtitle { color:var(--c-graycool); font-family:var(--font-head); font-size:13px; letter-spacing:2px; }
+  .subtitle { color:var(--c-graycool); font-family:var(--font-head); font-size:13px; letter-spacing:2px;
+      padding-bottom:var(--sp-2); border-bottom:2px solid var(--trackAccent, var(--c-yellow)); }
   .mbtn { min-width:230px; padding:13px 22px; font-family:var(--font-head); font-size:16px;
       font-weight:bold; letter-spacing:1px; color:var(--c-white);
       background:linear-gradient(180deg, rgba(255,255,255,0.04), rgba(0,0,0,0.04)), var(--c-black);
-      border:var(--bw-med) solid var(--c-blue); border-radius:0; box-shadow:var(--shadow-panel); }
-  .mbtn:active { background:var(--c-blue); }
+      border:var(--bw-med) solid var(--c-blue); border-radius:0; box-shadow:var(--shadow-panel);
+      transition:background-color 140ms ease, color 140ms ease, transform 140ms ease; }
+  .mbtn:active { background:var(--c-blue); transform:scale(0.97); }
   #startBtn { background:var(--c-black); border-color:var(--c-yellow); color:var(--c-yellow); font-size:19px; }
   #startBtn:active { background:var(--c-yellow); color:var(--c-black); }
   .hint { color:var(--c-graycool); font-family:var(--font-head); font-size:11px; text-align:center;
@@ -198,6 +216,11 @@ function mulberry32(seed){ let a = seed>>>0;
 
 /* ---------- track builder: two-center ovals from a spec ---------- */
 const G = 9.81, RHO = 1.225;
+// crowdPalette used to be one identical 6-color array shared by all 4
+// tracks -- addStand()/paintCrowdTile() already consume it generically per
+// track, so giving each venue its own palette (and, for the two
+// non-daylight venues, tying it loosely to their own env preset's
+// lighting) costs nothing but reads as visually distinct grandstands.
 const TRACKS = [
   { name:'THUNDER OVAL',     RL:140, RR:120, bankL:18, bankR:16, D:392, sBank:4, ramp: 90,
     sub:'1.6 KM &bull; 18&deg;/16&deg; BANKING',
@@ -207,6 +230,7 @@ const TRACKS = [
       jumbotron:false, pylon:false, sponsorDensity:0.25,
       sky:{ horizon:[0.78,0.86,0.94], zenith:[0.20,0.45,0.85], silhouette:'none' },
       env:{ preset:'noon-grass' },
+      // classic baseline palette, kept as-is
       crowdPalette:[[0.75,0.2,0.2],[0.2,0.35,0.75],[0.85,0.8,0.25],[0.8,0.8,0.82],[0.25,0.6,0.3],[0.5,0.3,0.6]] } },
   { name:'MILLTOWN BULLRING',RL:100, RR:100, bankL:14, bankR:14, D:110, sBank:5, ramp: 50,
     sub:'0.85 KM &bull; 14&deg; BANKING',
@@ -215,8 +239,9 @@ const TRACKS = [
       standScale:{tierD:2.4, tierH:1.6}, crowdFill:0.96, seamEvery:14, patches:0,
       jumbotron:false, pylon:false, sponsorDensity:0.35,
       sky:{ horizon:[0.80,0.85,0.92], zenith:[0.24,0.42,0.80], silhouette:'none' },
-      env:{ preset:'noon-grass' },
-      crowdPalette:[[0.75,0.2,0.2],[0.2,0.35,0.75],[0.85,0.8,0.25],[0.8,0.8,0.82],[0.25,0.6,0.3],[0.5,0.3,0.6]] } },
+      env:{ preset:'hazy-noon' },
+      // small local bullring: earthier, less saturated crowd than the big venues
+      crowdPalette:[[0.55,0.35,0.18],[0.30,0.30,0.30],[0.70,0.55,0.20],[0.35,0.45,0.30],[0.60,0.25,0.20],[0.45,0.40,0.55]] } },
   { name:'CEDAR VALLEY',     RL:190, RR:160, bankL:14, bankR:12, D:500, sBank:4, ramp:100,
     sub:'2.1 KM &bull; 14&deg;/12&deg; BANKING',
     theme:{ wall:[0.16,0.38,0.62], grass:[0.20,0.33,0.10] },
@@ -225,16 +250,18 @@ const TRACKS = [
       jumbotron:false, pylon:false, sponsorDensity:0.18,
       sky:{ horizon:[0.80,0.88,0.90], zenith:[0.35,0.55,0.80], silhouette:'hills' },
       env:{ preset:'sunset' },
-      crowdPalette:[[0.75,0.2,0.2],[0.2,0.35,0.75],[0.85,0.8,0.25],[0.8,0.8,0.82],[0.25,0.6,0.3],[0.5,0.3,0.6]] } },
+      // warm golden-hour tones matching the sunset preset
+      crowdPalette:[[0.65,0.30,0.15],[0.70,0.50,0.20],[0.40,0.30,0.55],[0.30,0.40,0.35],[0.75,0.65,0.35],[0.50,0.20,0.15]] } },
   { name:'BIG SABLE SPEEDWAY',RL:240, RR:240, bankL:23, bankR:23, D:546, sBank:5, ramp:120,
     sub:'2.6 KM &bull; 23&deg; BANKING',
     theme:{ wall:[0.85,0.12,0.10], grass:[0.19,0.34,0.11] },
     stadium:{ standTier:{front:10,back:8,corner:6}, standDensity:0.95, standReach:'full',
       standScale:{tierD:4.0, tierH:2.6}, crowdFill:0.97, seamEvery:0, patches:0,
-      jumbotron:true, pylon:true, sponsorDensity:0.30,
+      jumbotron:true, pylon:true, sponsorDensity:0.30, crowdTiers:4,
       sky:{ horizon:[0.75,0.83,0.93], zenith:[0.18,0.40,0.80], silhouette:'none' },
-      env:{ preset:'noon-grass' },
-      crowdPalette:[[0.75,0.2,0.2],[0.2,0.35,0.75],[0.85,0.8,0.25],[0.8,0.8,0.82],[0.25,0.6,0.3],[0.5,0.3,0.6]] } }
+      env:{ preset:'dusk-lights' },
+      // flagship superspeedway: bolder, higher-contrast "sold out" crowd
+      crowdPalette:[[0.85,0.15,0.12],[0.10,0.25,0.75],[0.95,0.85,0.15],[0.90,0.90,0.92],[0.15,0.15,0.18],[0.55,0.55,0.60]] } }
 ];
 function buildTrack(spec){
   const RL = spec.RL, bankL = spec.bankL*Math.PI/180;   // LEFT end = T1/T2
@@ -1607,7 +1634,7 @@ function addStand(B, sStart, sEnd, tiers, opts){
       B.quad(rd,rc,rb,ra, mixC(palette[Math.floor(rng2()*palette.length)],[0,0,0],0.3));
       const sA=crossPt(sa,latB,riseH), sB=crossPt(sb,latB,riseH);
       const sC=crossPt(sb,latT,hT), sD=crossPt(sa,latT,hT);
-      if(t < 2){                                  // front tiers: crowd texture
+      if(t < opts.crowdTiers){                    // front tiers: crowd texture (Big Sable gets more)
         B.quadUV(sD,sC,sB,sA,
           [crowdUV[0],crowdUV[3]],[crowdUV[2],crowdUV[3]],[crowdUV[2],crowdUV[1]],[crowdUV[0],crowdUV[1]]);
       } else {                                    // upper tiers: flat swatch (fog hides banding)
@@ -1853,7 +1880,7 @@ function buildWorld(){
   // branching here (front+back always seated, corners only if reach='full')
   {
     const st = TRACK.stadium;
-    const opts = { density: st.standDensity,
+    const opts = { density: st.standDensity, crowdTiers: st.crowdTiers||2,
                    tierD: st.standScale.tierD, tierH: st.standScale.tierH, palette: st.crowdPalette };
     const seg0 = TRACK.segs[0], seg1 = TRACK.segs[1], seg2 = TRACK.segs[2], seg3 = TRACK.segs[3];
     addStand(B, seg0.s0+seg0.len*0.12, seg0.s0+seg0.len*0.88, st.standTier.front, opts);
@@ -2853,7 +2880,7 @@ function poseOf(c){
            hdg: lerpAng(c.phdg, c.hdg, t), s: lerpS(c.ps, c.s, t),
            lat: c.plat+(c.lat-c.plat)*t };
 }
-function carModelMat(c){
+function carBasis(c){
   const P = poseOf(c);
   const th = P.hdg, b = TRACK.bankAt(P.s), cb=Math.cos(b), sb=Math.sin(b);
   const f = [Math.cos(th), 0, Math.sin(th)];                       // forward
@@ -2868,7 +2895,26 @@ function carModelMat(c){
   const right = v3norm(v3cross(fw, up));
   const upF = v3cross(right, fw);
   const h = surfH(P.s, Math.max(APRON_IN, Math.min(WALL_LAT, P.lat)));
-  return m4fromBasis(fw, upF, right, [P.x, h, P.y]);
+  return { fw, upF, right, pos:[P.x, h, P.y] };
+}
+function carModelMat(c){
+  const B = carBasis(c);
+  return m4fromBasis(B.fw, B.upF, B.right, B.pos);
+}
+// contact "blob" shadow: a flat decal quad lying in the same track-surface
+// tangent plane the car itself sits on (X->right, Y->fw, Z->upF, same as a
+// PlaneGeometry's default XY-plane/+Z-normal orientation) — the cheap
+// mobile-friendly stand-in for real shadow mapping this project uses
+// instead (20 shadow-casting cars would be a real perf risk on the phones
+// this targets; a soft alpha-blended ellipse under each car reads as
+// "grounded" at a fraction of the cost).
+function carShadowMat(c){
+  const B = carBasis(c);
+  const W = 2.3, L = 4.6, eps = 0.02;             // footprint + surface-lift to dodge z-fighting
+  const right = [B.right[0]*W, B.right[1]*W, B.right[2]*W];
+  const fw = [B.fw[0]*L, B.fw[1]*L, B.fw[2]*L];
+  const pos = [B.pos[0]+B.upF[0]*eps, B.pos[1]+B.upF[1]*eps, B.pos[2]+B.upF[2]*eps];
+  return m4fromBasis(right, fw, B.upF, pos);
 }
 
 /* ---------- particles (render-only: tire smoke, sparks, engine smoke) ---------- */
@@ -2879,15 +2925,19 @@ function spawnP(x,y,z, vx,vy,vz, life, size, col){
   PARTS.push({x,y,z,vx,vy,vz,life,age:0,size,col});
 }
 function emitFX(dt){
-  if(S.mode==='menu' || S.mode==='menuwait') return;
+  if(S.mode==='menuwait') return;
+  const inMenu = S.mode==='menu';
   // crowd camera-flash sparkle: white flecks in the grandstands at the big
   // moments (green flag, one-to-go, final lap, victory). Render-side only —
   // reads S, spawns via the particle system's own rngP stream (already
   // separate from the rng/rngR gameplay streams), no gameplay effect.
-  const bigMoment = S.greenT>0 || S.oneToGo || S.mode==='victory'
-    || (S.mode==='race' && S.order[0] && S.order[0].lap===S.laps-1);
-  if(bigMoment && STAND_ZONES.length){
-    const rate = 6*dt;
+  // On the menu (no race in progress) this instead runs at a low steady
+  // ambient rate so the stadium behind the home-screen card reads as a
+  // live, populated venue rather than a static backdrop.
+  const bigMoment = !inMenu && (S.greenT>0 || S.oneToGo || S.mode==='victory'
+    || (S.mode==='race' && S.order[0] && S.order[0].lap===S.laps-1));
+  if((bigMoment || inMenu) && STAND_ZONES.length){
+    const rate = (inMenu ? 1.1 : 6)*dt;
     for(let n=Math.floor(rate) + (rngP()<rate%1 ? 1:0); n>0; n--){
       const z = STAND_ZONES[Math.floor(rngP()*STAND_ZONES.length)];
       const s = z.s0 + rngP()*(z.s1-z.s0);
@@ -2897,7 +2947,7 @@ function emitFX(dt){
       spawnP(p[0], p[1], p[2], 0,0,0, 0.12, 0.05, [1,1,0.95]);
     }
   }
-  for(const c of S.cars){
+  for(const c of (inMenu ? [] : S.cars)){
     if(!c.slipFx && !c.hitFx && !(c.dmg>0.6)) continue;
     const M = carModelMat(c);
     const bx=M[12], by=M[13], bz=M[14];
@@ -3205,9 +3255,29 @@ function updateCamera(){
 // comes entirely from the directional sun's azimuth/elevation/color/
 // intensity below, following the same "one config object, one generic code
 // path" convention as `stadium` itself — zero per-track branching in code.
+// hemiSky/hemiGround/hemiIntensity mirror the sun fields below but drive
+// the HemisphereLight (previously hard-coded once at scene setup and never
+// varied per track) -- each preset now fully owns the venue's ambient
+// mood, not just its direct sun color.
 const ENV_PRESETS = {
-  'noon-grass': { azimuth:35,  elevation:55, color:0xfff4e0, intensity:3.2 },
-  'sunset':     { azimuth:250, elevation:12, color:0xffab66, intensity:2.6 }
+  'noon-grass': { azimuth:35,  elevation:55, color:0xfff4e0, intensity:3.2,
+                  hemiSky:0xbfd6ff, hemiGround:0x332f28, hemiIntensity:1.1 },
+  // hemi kept COOL (not warm) against the warm sun -- a warm hemi fill on
+  // top of an already-warm low sun crushed the whole scene toward a flat
+  // muddy brown wash (confirmed via screenshot comparison); cool ambient
+  // against a warm key light is the same contrast every other preset here
+  // already relies on, sunset just needed the same treatment explicitly.
+  'sunset':     { azimuth:250, elevation:12, color:0xffab66, intensity:2.6,
+                  hemiSky:0xb8c8e0, hemiGround:0x362e28, hemiIntensity:1.05 },
+  // Milltown: a hazier, slightly cooler midday than Thunder Oval's crisp
+  // noon-grass, reads as a smaller-market local track under thin cloud
+  'hazy-noon':  { azimuth:55,  elevation:64, color:0xfff0da, intensity:2.85,
+                  hemiSky:0xd7e4f2, hemiGround:0x3a3324, hemiIntensity:1.0 },
+  // Big Sable: a low, warm dusk sun for a marquee "evening race" superspeedway
+  // atmosphere. hemiIntensity raised above the other presets to compensate
+  // for the very low sun elevation so cars/track don't read as too dark.
+  'dusk-lights':{ azimuth:265, elevation:6,  color:0xffc48a, intensity:2.2,
+                  hemiSky:0x2a3c66, hemiGround:0x241f1a, hemiIntensity:1.15 }
 };
 let envMap = null, sunLight = null, hemiLight = null, envAppliedFor = null;
 function ensureEnvMap(){
@@ -3226,16 +3296,38 @@ function applyEnvPreset(stadium){
   sunLight.position.set(Math.cos(az)*Math.cos(el), Math.sin(el), Math.sin(az)*Math.cos(el));
   sunLight.color.setHex(preset.color);
   sunLight.intensity = preset.intensity;
+  hemiLight.color.setHex(preset.hemiSky);
+  hemiLight.groundColor.setHex(preset.hemiGround);
+  hemiLight.intensity = preset.hemiIntensity;
 }
 let placeholderLit = false;
+let SHADOW_GEO = null, SHADOW_MAT = null;
+function ensureShadowAssets(){
+  if(SHADOW_MAT) return;
+  SHADOW_GEO = new THREE.PlaneGeometry(1,1);
+  const s = 64;
+  const cv2 = document.createElement('canvas'); cv2.width=s; cv2.height=s;
+  const c2 = cv2.getContext('2d');
+  const g = c2.createRadialGradient(s/2,s/2,0, s/2,s/2,s/2);
+  g.addColorStop(0, 'rgba(0,0,0,0.5)'); g.addColorStop(0.65, 'rgba(0,0,0,0.22)');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  c2.fillStyle = g; c2.fillRect(0,0,s,s);
+  const tex = new THREE.CanvasTexture(cv2); tex.needsUpdate = true;
+  SHADOW_MAT = new THREE.MeshBasicMaterial({ map:tex, transparent:true, depthWrite:false, toneMapped:false });
+}
 function ensureCarMesh(num, pace){
   if(!CARBUFS[num]){
+    ensureShadowAssets();
+    const shadow = new THREE.Mesh(SHADOW_GEO, SHADOW_MAT);
+    shadow.matrixAutoUpdate = false;
+    shadow.renderOrder = -1;
+    scene.add(shadow);
     if(pace){
       // pace car is always shown near the camera (pit lane / pace laps) —
       // full detail only, no LOD switch needed.
       const mesh = buildCarMesh(num, pace);
       scene.add(mesh);
-      CARBUFS[num] = { mesh, materials: mesh.material, tex:null, builtFor:null };
+      CARBUFS[num] = { mesh, materials: mesh.material, tex:null, builtFor:null, shadow };
     } else {
       const full = buildCarMesh(num, false, false);
       const materials = full.material;                 // shared by both levels
@@ -3246,7 +3338,7 @@ function ensureCarMesh(num, pace){
       lod.autoUpdate = true;
       lod.matrixAutoUpdate = false;      // drawGL() writes .matrix directly, same as every other car mesh
       scene.add(lod);
-      CARBUFS[num] = { mesh: lod, materials, tex:null, builtFor:null };
+      CARBUFS[num] = { mesh: lod, materials, tex:null, builtFor:null, shadow };
     }
   }
   return CARBUFS[num];
@@ -3291,7 +3383,8 @@ function drawGL(){
       }
       FLAGMESH.position.set(FLAG_POS[0], FLAG_POS[1], FLAG_POS[2]);
     }
-    scene.background = buildSkyTexture(TRACK.stadium.sky);
+    scene.background = buildSkyTexture(TRACK.stadium.sky,
+      ENV_PRESETS[TRACK.stadium.env.preset] || ENV_PRESETS['noon-grass']);
     // Exponential fog, not linear: a chase cam spends most of its time
     // looking almost straight down-track, which puts long stretches of the
     // boundary wall/fence nearly edge-on to the camera simultaneously (real
@@ -3365,11 +3458,14 @@ function drawGL(){
     cb.mesh.matrixAutoUpdate = false;
     cb.mesh.matrix.fromArray(carModelMat(c));
     cb.mesh.matrixWorldNeedsUpdate = true;
+    cb.shadow.matrix.fromArray(carShadowMat(c));
+    cb.shadow.matrixWorldNeedsUpdate = true;
   }
   const showPace = S.mode==='pace' || S.flag==='yellow' || PACE.state==='peel' || PACE.state==='parked';
   if(showPace){
     const pb = ensureCarMesh('pace', true);
     pb.mesh.visible = true;
+    pb.shadow.visible = true;
     if(!pb.tex){
       pb.tex = buildCarTexture(PACE, true);
       pb.materials[0].map = pb.tex; pb.materials[1].map = pb.tex;
@@ -3378,21 +3474,64 @@ function drawGL(){
     pb.mesh.matrixAutoUpdate = false;
     pb.mesh.matrix.fromArray(carModelMat(PACE));
     pb.mesh.matrixWorldNeedsUpdate = true;
+    pb.shadow.matrix.fromArray(carShadowMat(PACE));
+    pb.shadow.matrixWorldNeedsUpdate = true;
   } else if(CARBUFS.pace){
     CARBUFS.pace.mesh.visible = false;
+    CARBUFS.pace.shadow.visible = false;
   }
 
   drawParticlesThree();
 
   if(composer) composer.render(); else renderer.render(scene, camera);
 }
-function buildSkyTexture(sky){
-  const cnv = document.createElement('canvas'); cnv.width=2; cnv.height=64;
+// sunPreset (optional): the resolved ENV_PRESETS entry, used to paint a
+// stylized horizon-glow/sun-disk blob tinted to the actual sun color and
+// roughly positioned by elevation. This is still a flat SCREEN-SPACE
+// backdrop (scene.background set to a plain texture, not a cube/equirect
+// map) -- it never rotates with camera direction, same simplification the
+// original bare gradient already had (which is why it already read fine
+// across the menu's hard-cut camera phases and the caution TV montage).
+// The glow is a "painted backdrop" element, not a real per-direction sky.
+function buildSkyTexture(sky, sunPreset){
+  const W = 128, H = 256;
+  const cnv = document.createElement('canvas'); cnv.width=W; cnv.height=H;
   const c2 = cnv.getContext('2d');
   const css = a => 'rgb('+Math.round(a[0]*255)+','+Math.round(a[1]*255)+','+Math.round(a[2]*255)+')';
-  const g = c2.createLinearGradient(0,0,0,64);
-  g.addColorStop(0, css(sky.zenith)); g.addColorStop(1, css(sky.horizon));
-  c2.fillStyle = g; c2.fillRect(0,0,2,64);
+  const g = c2.createLinearGradient(0,0,0,H);
+  g.addColorStop(0, css(sky.zenith));
+  g.addColorStop(0.82, css(sky.horizon));
+  // horizon haze band: a touch lighter than the horizon color itself, fakes
+  // the atmospheric-scattering brightening real skies show right at the
+  // horizon line (the old 2-stop gradient stopped exactly at the horizon
+  // color with no further lightening).
+  const hz = sky.horizon;
+  g.addColorStop(1, 'rgb('+[0,1,2].map(i=>Math.min(255,Math.round(hz[i]*255*1.12+18))).join(',')+')');
+  c2.fillStyle = g; c2.fillRect(0,0,W,H);
+  if(sunPreset){
+    // vertical position from elevation (90=zenith/top, 0=horizon) -- see
+    // function comment above re: this being a stylized placement, not a
+    // true per-direction sky
+    const sunY = H * (1 - Math.max(0, Math.min(85, sunPreset.elevation))/100);
+    const r = (sunPreset.color>>16)&255, gg=(sunPreset.color>>8)&255, b=sunPreset.color&255;
+    const glow = c2.createRadialGradient(W/2, sunY, 0, W/2, sunY, H*0.3);
+    glow.addColorStop(0, 'rgba('+r+','+gg+','+b+',0.22)');
+    glow.addColorStop(1, 'rgba('+r+','+gg+','+b+',0)');
+    c2.fillStyle = glow; c2.fillRect(0,0,W,H);
+  }
+  // a couple of very faint, softened cloud streaks -- reuses the same
+  // canvas-blur technique paintWorldAtlas() already uses for its seam-
+  // gutter pass, not a new trick. rng2 is the scenery-only RNG stream
+  // (mulberry32(777), documented as "keeps AI RNG untouched"), so this
+  // doesn't affect gameplay determinism.
+  c2.save();
+  c2.filter = 'blur(5px)';
+  c2.fillStyle = 'rgba(255,255,255,0.09)';
+  for(let i=0;i<2;i++){
+    const cy = H*(0.12+0.16*i) + rng2()*H*0.08;
+    c2.fillRect(0, cy-2, W, 4);
+  }
+  c2.restore();
   const tex = new THREE.CanvasTexture(cnv);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
@@ -4288,8 +4427,12 @@ function selectTrack(i){
   if(FLAGMESH){ scene.remove(FLAGMESH); FLAGMESH = null; }
   document.getElementById('trkTog').textContent = 'TRACK: ' + TRACK.name;
   document.getElementById('trackSub').innerHTML = TRACK.name + ' &bull; ' + TRACK.sub;
+  const wc = TRACK.theme.wall;
+  document.documentElement.style.setProperty('--trackAccent',
+    `rgb(${Math.round(wc[0]*255)},${Math.round(wc[1]*255)},${Math.round(wc[2]*255)})`);
 }
 document.getElementById('trkTog').addEventListener('click', ()=> selectTrack(trackIdx+1));
+selectTrack(0);   // also stamps --trackAccent for the initial menu card
 document.addEventListener('visibilitychange', ()=>{ last=0; acc=0; });
 if(!gl){
   document.getElementById('glFail').style.display='flex';
