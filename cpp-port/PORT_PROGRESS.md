@@ -442,7 +442,38 @@ port; it's the reference the C++ port must match).
       register -- same known category of SDL2+Xvfb synthetic-input flakiness already
       documented below, not chased further per that same precedent (one attempt, not
       three, once the pattern is already this well established).
-- [ ] `SDL_Sensor` accelerometer/gyro read for tilt-steer, matching `S.tiltG`
+- [x] `SDL_Sensor` accelerometer/gyro read for tilt-steer, matching `S.tiltG`. **Done**:
+      `src/platform/tilt_input.{h,cpp}` -- `TiltInput` opens the first `SDL_SENSOR_ACCEL`
+      device (`SDL_NumSensors()`/`SDL_SensorGetDeviceType()`/`SDL_SensorOpen()`), gracefully
+      leaving `available()==false` when none exists rather than treating that as an error
+      (mirrors JS: a desktop browser with no motion sensor just never fires
+      `deviceorientation`, and `S.tiltG` stays whatever it was, `0` by default). Every
+      frame, `update()` computes gravity-vector roll/pitch from the raw accelerometer
+      vector and picks one via `SDL_GetDisplayOrientation()`, mirroring
+      `index.html:1260-1264`'s own `screen.orientation.angle` branch (`o===90 ? -beta :
+      (o===-90||o===270) ? beta : gamma`) as closely as SDL's API allows. Note this is
+      populating fields that were *already* ported into the sim core back in Phase 1
+      (`race_state.h:40-41`'s `state.tilt`/`state.tiltG`, read by `step_car.cpp:216`) --
+      no sim-core change was needed, only the platform layer that feeds them from real
+      hardware. `main.cpp` wires `SDL_INIT_SENSOR` into `SDL_Init()`, calls
+      `tiltInput.update()` each frame and copies `tiltInput.tiltG()` into `state.tiltG`
+      when available, and adds a debug-only `T` keydown to toggle `state.tilt` (JS toggles
+      `S.tilt` from a menu checkbox that doesn't exist in this port yet -- Phase 4's job --
+      same convenience-key rationale as `P`/`C`).
+      **Open question, not silently assumed correct**: SDL's accelerometer axes are fixed
+      to the device's own physical frame and are *not* remapped for display rotation
+      (`SDL_sensor.h`'s own doc comment), which is also true of the browser's beta/gamma --
+      exactly why both JS and this port need an explicit orientation-based remap. But
+      which of `SDL_ORIENTATION_LANDSCAPE`/`_LANDSCAPE_FLIPPED` corresponds to the
+      browser's `angle===90` vs. `angle===-90/270` is a genuine guess: neither API
+      documents a shared convention, and this dev container has no accelerometer hardware
+      to test against at all (a fundamentally different kind of verification gap than the
+      earlier synthetic-input-delivery failures -- there's no sensor here full stop, not
+      just a software delivery problem). The dominant-axis logic (roll in portrait, pitch
+      in landscape) should be right; the overall sign in landscape is a single flip away
+      from correct if a real device steers opposite to the physical tilt direction.
+      **Genuinely unverified end-to-end** -- confirm on a real Android/iOS device once the
+      NDK (item 4 below) is installed and this can actually run on one.
 - [ ] Portrait-lock rotate prompt (landscape-only)
 - [ ] **Install Android NDK here** (deferred from Phase 0 per the sequencing decision)
 
@@ -1327,3 +1358,83 @@ elsewhere in the same run.
   **Next**: Phase 3 items 2-4, or real interactive verification (both
   keyboard from Phase 2 and touch/click from this session) whenever a
   session with an actual display and input devices is available.
+
+- **Session 3 (continued once more -- Phase 3b, `SDL_Sensor` tilt-steer)**:
+  Scoped to Phase 3 checklist item 2 only, following the same "one sub-task
+  per run" discipline as Phase 3a, leaving the portrait-lock prompt and NDK
+  install for future runs.
+
+  **A pleasant surprise on inspection**: `state.tilt`/`state.tiltG`
+  (`race_state.h:40-41`) and the `steerIn` override that reads them
+  (`step_car.cpp:216`, `if (state.tilt) steerIn = clamp(state.tiltG/22,
+  -1,1)`) were *already* ported, all the way back in Phase 1 -- correctly
+  filed as a physics input rather than UI state (see `race_state.h`'s own
+  "Correction from this file's first version" comment). So this session's
+  entire scope was the platform layer that actually *feeds* those fields
+  from real hardware; zero sim-core changes were needed.
+
+  **New `src/platform/tilt_input.{h,cpp}`**: `TiltInput::init()` opens the
+  first `SDL_SENSOR_ACCEL` device found via `SDL_NumSensors()`/
+  `SDL_SensorGetDeviceType()`/`SDL_SensorOpen()`, returning `false` (not an
+  error) if none exists -- this dev container has no accelerometer at all,
+  same as most desktop Linux machines, mirroring how a desktop browser
+  with no motion sensor simply never fires JS's `deviceorientation` event
+  and `S.tiltG` just stays at its default. `update()` (called once per
+  frame) reads the raw 3-axis vector and computes two standard
+  gravity-vector tilt formulas -- `roll` (portrait-frame left/right tilt,
+  the gamma-equivalent) and `pitch` (portrait-frame front/back tilt, the
+  beta-equivalent) -- then picks one via `SDL_GetDisplayOrientation()`,
+  mirroring `index.html:1260-1264`'s own `screen.orientation.angle`
+  three-way branch structure as closely as SDL's API allows.
+
+  **Honest open question, written up in the checklist above, not glossed
+  over**: SDL's accelerometer axes are fixed to the device's physical
+  frame and don't remap for display rotation (documented in
+  `SDL_sensor.h` itself) -- the same is true of the browser's beta/gamma,
+  which is exactly why both JS and this port need an orientation-based
+  remap in the first place. But there is no shared, documented convention
+  between SDL's `SDL_DisplayOrientation` enum and the browser's
+  `screen.orientation.angle` values for *which* rotation direction each
+  calls "landscape" vs. "landscape flipped" -- and unlike the earlier
+  input-verification gaps (synthetic X11 delivery failing in a headless
+  Xvfb setup, a software problem with a real fix path), there is no
+  accelerometer hardware in this container at all, so this can't be
+  narrowed down further here regardless of technique. The dominant-axis
+  selection (roll in portrait orientations, pitch in either landscape
+  orientation) should be structurally correct; the landscape sign is a
+  coin flip, trivially fixed with one sign change once tested on an
+  actual phone.
+
+  **`main.cpp` wiring**: added `SDL_INIT_SENSOR` to the `SDL_Init()` flags,
+  a `TiltInput tiltInput` constructed and `init()`'d at startup, `update()`
+  + `state.tiltG` assignment each frame (only when `available()`, so a
+  sensor-less machine leaves `state.tiltG` untouched rather than pinning
+  it to a bogus reading), a debug-only `T` keydown toggling `state.tilt`
+  (JS toggles `S.tilt` from a menu checkbox that doesn't exist in this
+  port yet -- Phase 4's "UI overlay" job -- same convenience-key rationale
+  as the existing `P`/`C` bindings), and `tiltInput.shutdown()` in the
+  cleanup sequence.
+
+  **Verification**: full `ctest` suite still passes, 7/7, unchanged from
+  Phase 3a (this session touched no test-covered sim code). `lht_port`
+  rebuilds clean with the new source linked in and `SDL_INIT_SENSOR`
+  added. Ran the binary headlessly under `xvfb-run` (`LHT_FORCE_RACE=1`,
+  300 frames) to confirm the new sensor-init/update/shutdown path doesn't
+  crash or misbehave on a machine with zero sensors (`SDL_NumSensors()`
+  legitimately returns 0 here) -- it ran clean, `available()` stayed
+  false throughout as expected, `state.tiltG` was simply never touched.
+  **Genuinely unverified**: the actual tilt-to-steering feel and the
+  landscape sign convention on a real device, which needs real hardware
+  (a phone) to check at all -- flagged explicitly above rather than
+  claimed.
+
+  **Status**: Phase 3 item 2 done as far as this environment allows --
+  code path is real, exercised, and doesn't crash, but its core
+  correctness claim (does tilting the phone actually steer the right way)
+  is unverifiable until Phase 3 item 4 (Android NDK) lets this run on
+  real hardware. Items 3-4 remain open.
+
+  **Next**: Phase 3 items 3 (portrait-lock rotate prompt) and 4 (Android
+  NDK install), or real hardware verification of both Phase 3a's
+  touch/click input and this session's tilt-steer sign convention
+  whenever a suitable device/session is available.

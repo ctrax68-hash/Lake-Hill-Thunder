@@ -2,8 +2,10 @@
 // Opens an SDL2 window, drives a real race through the verified Phase 1 sim
 // (gridStart()/tick()), and renders it with src/render/Renderer: a
 // flat-shaded track ribbon + car boxes from a static top-down camera (press
-// C to toggle a placeholder chase-camera view). Keyboard controls the
-// player car; AI cars run the real stepCar() AI branch.
+// C to toggle a placeholder chase-camera view). Keyboard, touch/mouse
+// (src/ui/touch_controls.h), and tilt (src/platform/tilt_input.h, toggled
+// with T) all drive the player car; AI cars run the real stepCar() AI
+// branch.
 
 #include <SDL.h>
 #include <SDL_syswm.h>
@@ -14,6 +16,7 @@
 #include "../sim/rng.h"
 #include "../sim/tracks_data.h"
 #include "../ui/touch_controls.h"
+#include "tilt_input.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -23,7 +26,7 @@ int main(int argc, char** argv)
 {
     const int trackIdx = argc > 1 ? std::atoi(argv[1]) : 0;
 
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_SENSOR) != 0) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
     }
@@ -100,6 +103,17 @@ int main(int argc, char** argv)
     PlayerInput input;
     std::vector<Car*> finishOrder;
 
+    // Phase 3b (PORT_PROGRESS.md): tilt-steer via SDL_Sensor, feeding
+    // state.tilt/state.tiltG the same way JS's `deviceorientation` listener
+    // feeds S.tilt/S.tiltG (index.html:1260-1264) -- stepCar()'s player
+    // branch (step_car.cpp:216) already reads these fields exactly as
+    // ported since Phase 1, so no sim-core change is needed here, only
+    // populating them from real hardware. init() gracefully reports
+    // unavailable on machines with no accelerometer (this dev container
+    // included) rather than treating that as an error.
+    TiltInput tiltInput;
+    tiltInput.init();
+
     // Phase 3a (PORT_PROGRESS.md): touch/click input regions matching the JS
     // original's bL/bR/bB/bG/bP on-screen buttons (index.html:1235-1246,
     // 4664-4669). No visible button is drawn yet -- that's Phase 4's job --
@@ -154,6 +168,12 @@ int main(int argc, char** argv)
                 // convenience, same rationale as LHT_FORCE_RACE/
                 // LHT_START_CHASE, not a JS behavior being ported.
                 if (ev.key.keysym.sym == SDLK_p && !ev.key.repeat) togglePlayerPit();
+                // Debug-only: JS's tilt-steer mode is toggled from a menu
+                // checkbox (index.html:4704) that doesn't exist yet in this
+                // port (Phase 4's "UI overlay" job) -- this is a desktop-
+                // testing convenience standing in for that checkbox, same
+                // rationale as the P/C keys above.
+                if (ev.key.keysym.sym == SDLK_t && !ev.key.repeat) state.tilt = !state.tilt;
             }
             if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_RESIZED) {
                 width = ev.window.data1;
@@ -188,6 +208,9 @@ int main(int argc, char** argv)
                 touchLeft = touchRight = touchGas = touchBrake = false;
             }
         }
+
+        tiltInput.update();
+        if (tiltInput.available()) state.tiltG = tiltInput.tiltG();
 
         const Uint8* keys = SDL_GetKeyboardState(nullptr);
         input.gas = keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W] || touchGas;
@@ -225,6 +248,7 @@ int main(int argc, char** argv)
     std::printf("Rendered %d frames without crashing. Final: mode=%s t=%.1f\n",
                 frame, state.mode.c_str(), state.t);
 
+    tiltInput.shutdown();
     renderer.shutdown();
     SDL_DestroyWindow(window);
     SDL_Quit();

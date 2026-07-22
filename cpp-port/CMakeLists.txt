@@ -96,6 +96,7 @@ add_custom_target(lht_shaders DEPENDS ${LHT_VS_FLAT_OUTPUTS} ${LHT_FS_FLAT_OUTPU
 # by the real sim loop -- the first point this port is actually playable.
 add_executable(lht_port
   src/platform/main.cpp
+  src/platform/tilt_input.cpp
   src/render/renderer.cpp
   src/ui/touch_controls.cpp
   ${SIM_SOURCES}
