@@ -511,7 +511,7 @@ port; it's the reference the C++ port must match).
       pixels present as expected from the track/cars).
 - [ ] **Install Android NDK here** (deferred from Phase 0 per the sequencing decision)
 
-### Phase 4 — UI overlay — IN PROGRESS (Session 3, Phase 4b added Session 5)
+### Phase 4 — UI overlay — DONE (Session 3; Phase 4b added Session 5; Phase 4c-4h added Session 6)
 - [x] Menu screen (track/laps/qualifying/sound/tilt toggles, volume slider, start button)
       **Phase 4b done (Session 5)**: `src/ui/menu.{h,cpp}` -- see this file's own Session 5
       log entry below for the full writeup (region layout, what's a real toggle vs.
