@@ -9,6 +9,45 @@ double cornerCap(double mu, double bank) {
     return G * (mu + t) / std::max(0.25, 1 - mu * t);
 }
 
+// Tire-model upgrade: real per-axle Fz. `dfK*v*v` used to be added straight
+// into a dimensionless mu (the old muEff formula in step_car.cpp); here it's
+// force-ized as `dfK*v*v*mass*G` so it carries the exact same *relative*
+// magnitude versus a car's own static weight that the old formula gave it
+// versus mu=1.0, rather than introducing a fresh, untuned aero constant.
+AxleLoads axleLoads(const CarConstants& c, double v, double a, double aeroEfficiency) {
+    const double fzFrontStatic = c.mass * G * c.weightDistF;
+    const double fzRearStatic = c.mass * G * (1 - c.weightDistF);
+    const double dFzLong = c.mass * a * c.cgHeight / c.wheelBase;
+    const double downforce = c.dfK * v * v * c.mass * G * aeroEfficiency;
+    const double fzFront = fzFrontStatic - dFzLong + downforce * c.aeroBalanceF;
+    const double fzRear = fzRearStatic + dFzLong + downforce * (1 - c.aeroBalanceF);
+    // Floor, not clamp-to-zero: a division by fz elsewhere (friction-ellipse
+    // fxFrac) must never see an exact zero.
+    return {std::max(100.0, fzFront), std::max(100.0, fzRear)};
+}
+
+// Tire-model upgrade: bicycle-model slip angles (small-angle, standard
+// single-track-model decomposition). `v` is the caller's already-floored
+// forward speed (this file's existing `vSafe` convention).
+SlipAngles slipAngles(const CarConstants& c, double vy, double r, double v, double steerAngle) {
+    const double aF = c.wheelBase * (1 - c.weightDistF); // CG -> front axle
+    const double aR = c.wheelBase * c.weightDistF;       // CG -> rear axle
+    const double alphaFront = steerAngle - std::atan2(vy + aF * r, v);
+    const double alphaRear = -std::atan2(vy - aR * r, v);
+    return {alphaFront, alphaRear};
+}
+
+// Tire-model upgrade: linear cornering-stiffness region, friction-ellipse
+// clamped. `fxFrac` in [-1,1] is how much of this axle's longitudinal grip
+// is already spent (engine/brake force / muFz) -- reduces the lateral
+// capacity available, same physical effect as trail-braking or
+// power-on-oversteer in a real car.
+double axleLateralForce(double stiffness, double slipAngle, double mu, double fz, double fxFrac) {
+    const double fyMax = mu * fz * std::sqrt(std::max(0.0, 1.0 - fxFrac * fxFrac));
+    const double fyWanted = -stiffness * slipAngle;
+    return std::max(-fyMax, std::min(fyMax, fyWanted));
+}
+
 // ROSTER (index.html:431-451)
 const std::array<RosterEntry, 19> ROSTER{{
     {"B. HOLLISTER", 28, CarPalette::Red, {0, 0, 0, CarPalette::White}},

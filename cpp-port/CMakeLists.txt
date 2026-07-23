@@ -478,6 +478,13 @@ add_test(NAME car_test COMMAND car_test)
 add_executable(speed_model_test tests/speed_model_test.cpp src/sim/track.cpp src/sim/car.cpp)
 add_test(NAME speed_model_test COMMAND speed_model_test)
 
+# Tire-model upgrade: axleLoads()/slipAngles()/axleLateralForce() themselves
+# are pure math with no Track dependency, but car.cpp's other functions
+# (makeCar()/cornerSpeed()/targetSpeed()) call into Track, so track.cpp still
+# needs linking here too (same as car_test/speed_model_test above).
+add_executable(tire_model_test tests/tire_model_test.cpp src/sim/car.cpp src/sim/track.cpp)
+add_test(NAME tire_model_test COMMAND tire_model_test)
+
 # touch_controls_test only needs SDL2's headers (SDL_Rect) for the region
 # math -- linked against SDL2::SDL2 for its include path the same way
 # lht_port is, not because this test touches any actual SDL subsystem.

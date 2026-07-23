@@ -24,10 +24,52 @@ struct CarConstants {
     double dfK = 0.00016;
     double len = 5.08;
     double wid = 2.0;
+
+    // Tire-model upgrade (bicycle model + weight transfer + aero-as-force):
+    // additive to the fields above, which stay exactly as they were and
+    // still drive the unchanged longitudinal (engine/drag/roll/brake) model.
+    // cornerCap()/cornerSpeed()/targetSpeed() below are ALSO unchanged --
+    // they remain the AI's forward-looking corner-speed-planning heuristic,
+    // verified bit-for-bit against JS by speed_model_test.cpp. These new
+    // constants only feed the new per-tick execution physics in
+    // step_car.cpp, a separate concern from AI planning.
+    double wheelBase = 2.79;      // m, front-to-rear axle distance
+    double weightDistF = 0.50;    // static front weight fraction
+    double cgHeight = 0.50;       // m, effective CG height (longitudinal transfer)
+    double aeroBalanceF = 0.45;   // fraction of aero downforce carried by the front axle
+    double cf = 95000.0;          // N/rad, front axle cornering stiffness
+    double cr = 105000.0;         // N/rad, rear axle cornering stiffness
+    double iz = 2800.0;           // kg*m^2, yaw moment of inertia
+    double maxSteerAngle = 0.5;   // rad, full-lock front steer angle
+    double brakeBiasFront = 0.62; // fraction of brake force applied at the front axle
 };
 inline const CarConstants CAR{};
 
 double cornerCap(double mu, double bank); // defined in car.cpp (index.html:404)
+
+// Tire-model upgrade: real per-axle vertical load, from static weight
+// distribution + longitudinal weight transfer (from acceleration `a`) + aero
+// downforce (from speed `v`, force-ized from the same `dfK` constant that
+// used to be added straight into a scalar mu). `aeroEfficiency` carries over
+// the old model's dirty-air/damage aero degradation (previously a multiplier
+// on the mu-additive term only, not on base tire mu -- same causal effect,
+// now expressed as reduced downforce/Fz instead). Clamped to a small
+// positive floor so a friction-ellipse division never sees a zero/negative
+// load.
+struct AxleLoads { double front, rear; };
+AxleLoads axleLoads(const CarConstants& c, double v, double a, double aeroEfficiency = 1.0);
+
+// Tire-model upgrade: bicycle-model slip angles from body-frame lateral
+// velocity `vy`, yaw rate `r`, forward speed `v` (caller-supplied, already
+// floor-clamped away from zero), and front steer angle `steerAngle` (rad).
+struct SlipAngles { double front, rear; };
+SlipAngles slipAngles(const CarConstants& c, double vy, double r, double v, double steerAngle);
+
+// Tire-model upgrade: one axle's lateral tire force -- linear cornering-
+// stiffness region (`-stiffness * slipAngle`), clamped by a friction ellipse
+// combining `mu*fz` with `fxFrac` (how much of that axle's longitudinal grip
+// is already spent, in [-1,1]).
+double axleLateralForce(double stiffness, double slipAngle, double mu, double fz, double fxFrac);
 
 // CAR_PALETTE (index.html:413-423)
 namespace CarPalette {
@@ -153,6 +195,16 @@ struct Car {
     // Set later, in gridStart() (Phase 1g) -- not by makeCar() itself.
     int gridAhead = -1;
     double px = 0, py = 0, phdg = 0, ps = 0, plat = 0;
+
+    // Tire-model upgrade: real integrated bicycle-model dynamic state. `vy`
+    // (lateral velocity, car-body frame) and `r` (yaw rate) replace the old
+    // model's instantaneous-recompute-every-frame `yaw` local -- they now
+    // carry real inertia between ticks. `fzFront`/`fzRear`/`slipRatio` are
+    // read-only outputs (never fed back into the physics themselves) that
+    // Step 3's wheel/suspension animation consumes.
+    double vy = 0, r = 0;
+    double fzFront = 0, fzRear = 0;
+    double slipRatio = 0; // driven (rear) axle longitudinal slip fraction, [-1,1]
 };
 
 // makeCar() (index.html:453-503). `track` supplies TRACK.pointAt(0) for the

@@ -21,6 +21,14 @@ double wrapPi(double a) {
 void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car>& allCars,
              const PaceCar& pace, const PlayerInput& input) {
     double thr = 0, brk = 0, steerIn = 0;
+    // Tire-model upgrade: these two branches directly increment c.hdg
+    // themselves (victory burnout, wreck spin-out) rather than steering
+    // through the normal yaw model -- set by whichever branch below applies,
+    // and used by the shared tail to skip the new bicycle-model integration
+    // for them (their own forced rotation would otherwise fight the tire
+    // forces, which is exactly the failure mode a real tire model would
+    // have no reason to resolve sensibly).
+    bool freeSpin = false;
 
     if (c.spinCd > 0) c.spinCd -= DT;
     if (c.dmgCd > 0) c.dmgCd -= DT;
@@ -51,6 +59,7 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         steerIn = 0;
         c.hdg += 3.1 * DT;
         c.v = std::max(7.0, c.v * 0.985);
+        freeSpin = true;
     } else if (c.out || c.done) {
         // index.html:708-730: DNF, or already-finished (cool-down) -- limp
         // to the infield apron and park.
@@ -70,6 +79,7 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         c.spinT -= DT;
         thr = 0;
         brk = 0.4;
+        freeSpin = true;
         steerIn = 0;
         c.hdg += (c.spinDir != 0 ? c.spinDir : 1) * 4.0 * DT;
     } else if (c.pit > 0) {
@@ -306,7 +316,12 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
     const double bank = track.bankAt(c.s);
     const double muSurf = (onGrass ? 0.72 : 1.0) * (1 - 0.12 * c.wear) * (c.blown ? 0.7 : 1);
     if (c.blown && c.v > 30) c.v = std::max(30.0, c.v - 18 * DT);
-    const double muEff = CAR.mu * muSurf + CAR.dfK * c.v * c.v * (c.dirty ? 0.85 : 1) * (1 - 0.35 * c.dmg);
+    // Tire-model upgrade: aero no longer adds straight into a scalar mu --
+    // it's now a real Fz contribution (axleLoads() below). aeroEfficiency
+    // carries over the exact same dirty-air/damage degradation the old
+    // mu-additive term had (see axleLoads()'s own comment).
+    const double muEff = CAR.mu * muSurf;
+    const double aeroEfficiency = (c.dirty ? 0.85 : 1) * (1 - 0.35 * c.dmg);
 
     c.fuel = std::max(0.0, c.fuel - c.thr * c.v * DT * 5e-5);
     const double dragMod = (1 - 0.25 * c.draftF) * (c.dirty ? 1.10 : 1) * (1 + 0.5 * c.dmg);
@@ -319,23 +334,70 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
     c.v = std::max(0.0, c.v + a * DT);
     c.pitch += ((-a * 0.006) - c.pitch) * 0.12;
 
-    const double cap = cornerCap(muEff, bank);
     const double vSafe = std::max(3.0, c.v);
-    const double maxYaw = cap / vSafe;
-    const double kinYaw = c.v * 0.24;
-    const double wantYaw = c.steer * std::min({1.3, kinYaw, maxYaw * 1.06});
-    double yaw = wantYaw;
-    const double demand = std::abs(wantYaw) * vSafe;
-    if (demand > cap) {
-        yaw = sign(wantYaw) * maxYaw;
-        c.v = std::max(0.0, c.v - (demand - cap) * 0.16 * DT);
-        c.wear = std::min(1.0, c.wear + 0.00012);
-        // c.slipFx (tire-smoke render hook) intentionally not ported -- cosmetic only.
+
+    // Tire-model upgrade: real bicycle-model cornering physics -- replaces
+    // the old single-scalar cornerCap()-capped yaw-rate formula. cornerCap()
+    // itself is untouched and still used by cornerSpeed()/targetSpeed() for
+    // the AI's forward-looking corner-speed planning (verified bit-for-bit
+    // against JS by speed_model_test.cpp) -- this block only changes how
+    // stepCar() executes the actual per-tick cornering physics, a separate
+    // concern from how far ahead the AI plans.
+    if (freeSpin) {
+        // Victory burnout / wreck spin-out: those branches drive c.hdg
+        // directly themselves. Decay the dynamic state toward zero instead
+        // of integrating it -- real tire forces have no reason to resolve
+        // sensibly against an externally forced rotation, and stale
+        // vy/r would otherwise make the car lurch the instant normal
+        // control resumes.
+        c.vy *= std::max(0.0, 1.0 - 6.0 * DT);
+        c.r *= std::max(0.0, 1.0 - 6.0 * DT);
+        c.fzFront = CAR.mass * G * CAR.weightDistF;
+        c.fzRear = CAR.mass * G * (1 - CAR.weightDistF);
+        c.slipRatio = 0;
+    } else {
+        const AxleLoads fz = axleLoads(CAR, c.v, a, aeroEfficiency);
+        c.fzFront = fz.front;
+        c.fzRear = fz.rear;
+
+        const double steerAngle = c.steer * CAR.maxSteerAngle;
+        const SlipAngles alpha = slipAngles(CAR, c.vy, c.r, vSafe, steerAngle);
+
+        // Longitudinal-grip fraction already spent at each axle (RWD engine
+        // force + brake-bias split between the axles) -- feeds the friction
+        // ellipse below, so less lateral grip is available under hard
+        // acceleration or heavy braking (trail-braking, power-oversteer).
+        const double fxRear = engF - brkF * (1 - CAR.brakeBiasFront);
+        const double fxFront = -brkF * CAR.brakeBiasFront;
+        const double fxFracRear = std::max(-1.0, std::min(1.0, fxRear / (muEff * fz.rear)));
+        const double fxFracFront = std::max(-1.0, std::min(1.0, fxFront / (muEff * fz.front)));
+        c.slipRatio = fxFracRear;
+
+        const double fyFront = axleLateralForce(CAR.cf, alpha.front, muEff, fz.front, fxFracFront);
+        const double fyRear = axleLateralForce(CAR.cr, alpha.rear, muEff, fz.rear, fxFracRear);
+
+        const double aF = CAR.wheelBase * (1 - CAR.weightDistF);
+        const double aR = CAR.wheelBase * CAR.weightDistF;
+        const double rDot = (aF * fyFront * std::cos(steerAngle) - aR * fyRear) / CAR.iz;
+        const double vyDot = (fyFront * std::cos(steerAngle) + fyRear) / CAR.mass - vSafe * c.r;
+        c.r += rDot * DT;
+        c.vy += vyDot * DT;
+
+        // Mirrors the old model's two wear contributions: a steady rate
+        // proportional to slip while cornering (equivalent to the old
+        // |yaw|*v term), plus an extra flat bump once an axle's demanded
+        // force actually got friction-ellipse-clamped -- the equivalent of
+        // the old model's `demand > cap` "past the grip limit" case.
+        const double slipMag = std::abs(alpha.front) + std::abs(alpha.rear);
+        c.wear = std::min(1.0, c.wear + slipMag * c.v * 0.0000004);
+        const double fyMaxFront = muEff * fz.front * std::sqrt(std::max(0.0, 1.0 - fxFracFront * fxFracFront));
+        const double fyMaxRear = muEff * fz.rear * std::sqrt(std::max(0.0, 1.0 - fxFracRear * fxFracRear));
+        const bool pastLimit = std::abs(fyFront) >= fyMaxFront * 0.999 || std::abs(fyRear) >= fyMaxRear * 0.999;
+        if (pastLimit) c.wear = std::min(1.0, c.wear + 0.00012);
+
+        c.hdg += c.r * DT;
     }
-    c.wear = std::min(1.0, c.wear + std::abs(yaw) * c.v * 0.0000004);
-    c.hdg += yaw * DT;
-    double dv = wrapPi(c.hdg - c.vdir);
-    c.vdir += dv * std::min(1.0, (6 + 10 * muSurf) * DT);
+    c.vdir = c.hdg - wrapPi(std::atan2(c.vy, vSafe));
     c.x += std::cos(c.vdir) * c.v * DT;
     c.y += std::sin(c.vdir) * c.v * DT;
 
@@ -353,6 +415,11 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
             c.hdg = p2.hdg + dh * 0.9;
         }
         c.vdir = c.hdg;
+        // Tire-model upgrade: a wall hit directly overrides hdg/vdir above --
+        // without this, stale vy/r from just before impact would fight the
+        // new heading next tick instead of the car settling onto it.
+        c.vy = 0;
+        c.r = 0;
         if (c.dmgCd <= 0 && state.flag != "yellow") {
             c.dmg = std::min(1.0, c.dmg + std::min(0.12, vLost * 0.005));
             c.dmgCd = 0.6;

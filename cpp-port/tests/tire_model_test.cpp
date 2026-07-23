@@ -1,0 +1,157 @@
+// Verifies the tire-model upgrade's new pure functions (src/sim/car.{h,cpp}):
+// axleLoads(), slipAngles(), axleLateralForce(). These replace how
+// step_car.cpp executes per-tick cornering physics -- cornerCap()/
+// cornerSpeed()/targetSpeed() (the AI's corner-speed-planning heuristic) are
+// untouched and stay covered by speed_model_test.cpp/car_test.cpp/
+// race_sim_test.cpp, all still passing bit-for-bit against JS ground truth,
+// which is what confirms this upgrade didn't disturb them.
+
+#include "../src/sim/car.h"
+
+#include <cmath>
+#include <cstdio>
+
+namespace {
+int g_failures = 0;
+
+void expect(bool cond, const char* what) {
+    if (!cond) {
+        std::fprintf(stderr, "FAIL: %s\n", what);
+        ++g_failures;
+    }
+}
+
+void expectNear(const char* label, double got, double expected, double tol = 1e-6) {
+    if (std::fabs(got - expected) > tol) {
+        std::fprintf(stderr, "%s: got %.17g expected %.17g (diff %.3g)\n",
+                     label, got, expected, got - expected);
+        ++g_failures;
+    }
+}
+} // namespace
+
+int main() {
+    const CarConstants c{}; // defaults: mass=1500, weightDistF=0.50, cgHeight=0.50,
+                             // wheelBase=2.79, aeroBalanceF=0.45, dfK=0.00016
+
+    // ---- axleLoads(): static split at zero speed/accel ----
+    {
+        AxleLoads fz = axleLoads(c, 0.0, 0.0);
+        expectNear("static fzFront", fz.front, c.mass * G * c.weightDistF);
+        expectNear("static fzRear", fz.rear, c.mass * G * (1 - c.weightDistF));
+        expectNear("static split sums to weight", fz.front + fz.rear, c.mass * G, 1e-6);
+    }
+
+    // ---- axleLoads(): braking (negative a) shifts load toward the front ----
+    {
+        AxleLoads level = axleLoads(c, 30.0, 0.0);
+        AxleLoads braking = axleLoads(c, 30.0, -5.0); // decelerating
+        expect(braking.front > level.front, "braking increases front load");
+        expect(braking.rear < level.rear, "braking decreases rear load");
+        // Conservation: aero contribution is identical at the same speed, so
+        // the longitudinal-transfer delta should exactly cancel between axles.
+        expectNear("braking load transfer conserves total (front)",
+                   (braking.front - level.front) + (braking.rear - level.rear), 0.0, 1e-6);
+    }
+
+    // ---- axleLoads(): accelerating (positive a) shifts load toward the rear ----
+    {
+        AxleLoads level = axleLoads(c, 30.0, 0.0);
+        AxleLoads accel = axleLoads(c, 30.0, 3.0);
+        expect(accel.rear > level.rear, "accelerating increases rear load");
+        expect(accel.front < level.front, "accelerating decreases front load");
+    }
+
+    // ---- axleLoads(): aero downforce grows with speed^2 and splits by aeroBalanceF ----
+    {
+        AxleLoads slow = axleLoads(c, 20.0, 0.0);
+        AxleLoads fast = axleLoads(c, 60.0, 0.0);
+        const double slowTotal = slow.front + slow.rear;
+        const double fastTotal = fast.front + fast.rear;
+        expect(fastTotal > slowTotal, "higher speed produces more total downforce");
+        // Downforce added at 60 m/s vs 20 m/s should scale with v^2 (60^2-20^2 vs 0),
+        // split between axles per aeroBalanceF (0.45 front / 0.55 rear by default).
+        const double expectedDownforce = c.dfK * (60.0 * 60.0 - 20.0 * 20.0) * c.mass * G;
+        expectNear("aero downforce total delta matches dfK*v^2*mass*G",
+                   fastTotal - slowTotal, expectedDownforce, 1e-3);
+        expectNear("aero split matches aeroBalanceF (front share)",
+                   (fast.front - slow.front) / expectedDownforce, c.aeroBalanceF, 1e-6);
+    }
+
+    // ---- axleLoads(): aeroEfficiency scales the downforce contribution only ----
+    {
+        AxleLoads full = axleLoads(c, 40.0, 0.0, 1.0);
+        AxleLoads degraded = axleLoads(c, 40.0, 0.0, 0.5);
+        expect(degraded.front + degraded.rear < full.front + full.rear,
+               "degraded aeroEfficiency reduces total downforce");
+    }
+
+    // ---- axleLoads(): floors to a small positive value, never zero/negative ----
+    {
+        CarConstants extreme = c;
+        extreme.cgHeight = 50.0; // absurdly high CG to force a large transfer
+        AxleLoads fz = axleLoads(extreme, 5.0, -20.0); // hard braking
+        expect(fz.front > 0.0 && fz.rear > 0.0, "axle loads never go non-positive");
+    }
+
+    // ---- slipAngles(): straight-line, no yaw/lateral velocity -> zero slip ----
+    {
+        SlipAngles a = slipAngles(c, 0.0, 0.0, 40.0, 0.0);
+        expectNear("straight-line front slip angle", a.front, 0.0);
+        expectNear("straight-line rear slip angle", a.rear, 0.0);
+    }
+
+    // ---- slipAngles(): pure steering input with no body motion yet ----
+    {
+        SlipAngles a = slipAngles(c, 0.0, 0.0, 40.0, 0.1); // 0.1 rad steer
+        expectNear("steer-only front slip angle equals steer angle", a.front, 0.1, 1e-6);
+        expectNear("steer-only rear slip angle stays zero", a.rear, 0.0, 1e-6);
+    }
+
+    // ---- slipAngles(): positive lateral velocity (sliding left) increases
+    // magnitude of both slip angles in the expected direction ----
+    {
+        SlipAngles zero = slipAngles(c, 0.0, 0.0, 40.0, 0.0);
+        SlipAngles slid = slipAngles(c, 5.0, 0.0, 40.0, 0.0);
+        expect(slid.front < zero.front, "lateral velocity reduces front slip angle (opposes steer sense)");
+        expect(slid.rear < zero.rear, "lateral velocity reduces rear slip angle the same way");
+    }
+
+    // ---- axleLateralForce(): linear region, no clamping ----
+    {
+        const double fy = axleLateralForce(/*stiffness=*/90000.0, /*slipAngle=*/0.02,
+                                            /*mu=*/1.0, /*fz=*/7000.0, /*fxFrac=*/0.0);
+        expectNear("linear-region force = -stiffness*slipAngle", fy, -90000.0 * 0.02, 1e-6);
+    }
+
+    // ---- axleLateralForce(): clamps at the friction circle (fxFrac=0) ----
+    {
+        const double fy = axleLateralForce(90000.0, /*slipAngle=*/1.0 /* huge */, 1.0, 7000.0, 0.0);
+        expectNear("clamped force magnitude equals mu*fz", std::fabs(fy), 1.0 * 7000.0, 1e-6);
+    }
+
+    // ---- axleLateralForce(): friction ellipse shrinks available Fy as
+    // longitudinal grip fraction (fxFrac) increases ----
+    {
+        const double fyNoLongitudinal = axleLateralForce(90000.0, 1.0, 1.0, 7000.0, 0.0);
+        const double fyHalfSpent = axleLateralForce(90000.0, 1.0, 1.0, 7000.0, 0.8);
+        expect(std::fabs(fyHalfSpent) < std::fabs(fyNoLongitudinal),
+               "spending longitudinal grip reduces available lateral force");
+        expectNear("ellipse at fxFrac=0.8 matches sqrt(1-0.8^2)",
+                   std::fabs(fyHalfSpent), 1.0 * 7000.0 * std::sqrt(1.0 - 0.8 * 0.8), 1e-6);
+    }
+
+    // ---- axleLateralForce(): fxFrac at +-1 (all grip spent longitudinally)
+    // leaves zero lateral capacity ----
+    {
+        const double fy = axleLateralForce(90000.0, 1.0, 1.0, 7000.0, 1.0);
+        expectNear("fxFrac=1 leaves zero lateral force", fy, 0.0, 1e-6);
+    }
+
+    if (g_failures == 0) {
+        std::printf("tire_model_test: axleLoads/slipAngles/axleLateralForce all correct.\n");
+        return 0;
+    }
+    std::fprintf(stderr, "tire_model_test: %d FAILURES.\n", g_failures);
+    return 1;
+}
