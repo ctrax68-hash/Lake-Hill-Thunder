@@ -683,6 +683,15 @@ triggers -- all ported into `race.cpp`'s `tick()`, bgfx/SDL2-free;
 `tests/spotter_test.cpp` exercises every trigger condition end-to-end
 through a real 20-car `gridStart()` field).
 
+**Phase 6c done (Session 8)**: mixer graph + SDL2 audio device + audioTick
+equivalent -- see this session's log entry below (`src/audio/mixer.h`/`.cpp`:
+the full voice graph -- engine/opponents/skid/draft/crowd/one-shots -- built
+on Phase 6a's DSP primitives; `src/audio/audio_engine.h`/`.cpp`: the only
+SDL2-touching audio code, opens a float-stereo device and wires the
+callback; wired into `main.cpp`'s per-frame loop and `MenuSelection::sound`/
+`volume`; `tests/mixer_test.cpp` verifies the parameter updates and sample
+synthesis, bgfx/SDL2-free).
+
 ### Phase 7 — WebAssembly/browser build — DONE, first pass (Session 3)
 - [x] Get `lht_port` compiling to WebAssembly via Emscripten and running inside a real
       browser tab, verified headlessly. **Explicitly out of scope for this pass** (left
@@ -3595,3 +3604,111 @@ elsewhere in the same run.
 
   **Next**: Phase 6c (mixer graph + SDL2 audio device + `audioTick()`
   equivalent, consuming `hitFx`/`blown`/`spotTxt`/`spotT` for real sound).
+
+- **Session 8 -- Phase 6c: mixer graph + SDL2 audio device + audioTick
+  equivalent.** The last real DSP-and-wiring piece of the audio port: turns
+  Phase 6a's DSP primitives into the actual voice graph JS's audioInit()/
+  audioTick() build (index.html:1284-1461), backed by a real SDL2 audio
+  device.
+
+  **New `src/audio/mixer.h`/`.cpp`** (bgfx/SDL2-free): every JS Web Audio
+  node becomes a plain C++ member instead of a graph node, and every
+  `.connect()` edge becomes an explicit per-sample sum in `renderStereo()`.
+  Engine voice: twin detuned saws + sub square (gains 0.35/0.55, index.html:
+  1293-1294) through a shared lowpass (900Hz Q=1), plus a bandpassed
+  (420Hz Q=0.7) noise layer, both summed into one overall smoothed gain.
+  Opponent pack: 3 independent oscillator/lowpass(650Hz Q=1)/gain/pan
+  voices, reassigned every `tick()` to the N nearest cars exactly as JS
+  does (nearest-sort, then retune voices[0..2] in place). Skid/draft/crowd:
+  each the shared `NoiseBuffer` read through its own filter (highpass
+  1800Hz Q=1 / bandpass 1200Hz Q=0.5 / bandpass 850Hz Q=0.4, crowd read at
+  0.35x rate matching JS's `playbackRate`) and smoothed gain. One-shots
+  (thump/bang/spotter-blip): a fixed 8-slot pool (JS allows unlimited
+  concurrent one-shot nodes; a small pool is a documented, deliberate
+  simplification -- this game never produces enough real overlap to
+  exhaust it) with each slot computing `AudioParam.
+  exponentialRampToValueAtTime(0.001, dur)`'s exact curve
+  (`gainStart*(0.001/gainStart)^(t/dur)`) directly rather than needing
+  another smoother primitive. Opponent-voice panning uses a standard
+  equal-power law (not a byte-exact port of `StereoPannerNode`'s own
+  per-side formula, which differs slightly for negative vs. positive pan --
+  functionally equivalent, logged as a simplification). `tick()` mirrors
+  `audioTick()` line-for-line (gear/RPM via the shared `gearRpm()`,
+  reused from `render/gear_rpm.h` exactly as JS shares one function between
+  audio and HUD -- see that header's own updated comment) and edge-detects
+  `hitFx`/`blown`/`spotT` rising past their last-seen value to fire the
+  one-shots, since this port's `spotterSay()` (Phase 6b) only sets state
+  fields rather than calling an audio function synchronously the way JS's
+  own does.
+
+  **Corrected a Phase 6a assumption while building this**: `dsp_test.cpp`'s
+  lowpass/highpass checks had used Q=0.9 for the engine and skid filters,
+  but JS never sets `.Q` on either -- `BiquadFilterNode`'s own spec default
+  is Q=1, which is what `mixer.cpp` actually uses. Fixed `dsp_test.cpp` to
+  Q=1.0 (the test's own pass/fail behavior was unaffected either way, since
+  it only checks general frequency-response shape, not an exact Q match).
+
+  **New `src/audio/audio_engine.h`/`.cpp`** -- the only SDL2-touching audio
+  code: opens a stereo `AUDIO_F32SYS` device (no `SDL_AUDIO_ALLOW_*_CHANGE`
+  flags, so SDL always hands the callback exactly the requested format,
+  converting internally as needed -- simpler than this code branching on
+  whatever a given backend negotiates) and wires its callback straight to
+  `Mixer::renderStereo()`. `tick()` locks/unlocks the device around
+  `Mixer::tick()`'s parameter writes, SDL2's own documented pattern for
+  safely mutating audio-callback-shared state from the main thread.
+  Deliberately always opens the device at startup regardless of the
+  initial sound/volume selection (unlike JS's lazy, `S.sound`-gated
+  `audioInit()`) -- muting is just the mixer's busMaster gain smoothing to
+  0 from then on, avoiding the need to lazily open/close a device in
+  response to a live menu toggle.
+
+  **A real regression caught before it shipped**: an earlier version of
+  this change added `SDL_INIT_AUDIO` directly to `main.cpp`'s top-level
+  `SDL_Init()` flags alongside `SDL_INIT_VIDEO`. That broke every existing
+  native run in this sandbox outright -- unlike `SDL_OpenAudioDevice()`
+  failing gracefully later, `SDL_Init(SDL_INIT_AUDIO)` itself hard-fails
+  the *entire process* if no default audio driver exists at all, and this
+  sandbox has no audio hardware without `SDL_AUDIODRIVER=dummy` set. Fixed
+  by moving the audio subsystem init into `AudioEngine::init()` itself via
+  `SDL_InitSubSystem(SDL_INIT_AUDIO)`, with its own non-fatal fallback
+  (`ok_=false`, every other method becomes a no-op) -- exactly mirroring
+  `SDL_OpenAudioDevice`'s own graceful-failure path and JS's own
+  `try/catch(e){AC=null}` resilience. Verified both paths explicitly:
+  a native run with no `SDL_AUDIODRIVER` override now degrades silently
+  (audio inert, rest of the game unaffected) instead of refusing to start,
+  and `SDL_AUDIODRIVER=dummy` opens a real (silent) device with no errors.
+
+  **New `tests/mixer_test.cpp`** (bgfx/SDL2-free, doesn't link
+  `audio_engine.cpp`): a cold mixer (never ticked) is silent; a driving
+  engine becomes audible once its `ParamSmoother`s converge and fades back
+  out when sound is turned off; a hitFx rising edge and a fresh spotter
+  message each trigger an audible one-shot; output stays within [-1,1] and
+  finite under a deliberately "loud" mix (blowout + nearby pack + spotter
+  message all at once). The one-shot checks needed a real fix mid-
+  development, not just threshold-tuning: comparing RMS across two
+  separately-measured time windows (before/after triggering) couldn't
+  reliably detect the trigger at all, since a one-shot's peak contribution
+  is small next to a driving engine's own noise-driven layers and gets
+  diluted averaging over several thousand samples. Switched to a
+  controlled diff instead -- `Mixer` has no owning pointers, so copying it
+  (via the implicit copy constructor) snapshots the exact DSP state; one
+  copy gets the trigger, the other doesn't, and diffing their rendered
+  output sample-for-sample isolates exactly (and only) the one-shot's own
+  contribution, unconfounded by ambient noise-buffer/oscillator phase.
+
+  **`main.cpp` wiring**: `AudioEngine` added to `LoopState`, initialized
+  right after `Renderer::init()` (non-fatal if it fails), `tick()`ed once
+  per rendered frame right after the physics tick loop (matching JS's own
+  `audioTick()` call site, index.html:4171 -- once per `requestAnimationFrame`,
+  not once per physics tick), fed `MenuSelection::sound`/`volume` (the
+  existing but previously-inert menu fields, `/100.0` to convert to
+  Web-Audio-style `0..1`), and shut down on both exit paths (native loop
+  end, Emscripten's cancel-main-loop branch).
+
+  **Verified**: `ctest` **26/26** (up from 25/25, `mixer_test` added, zero
+  regressions). Native `xvfb-run`, `LHT_FORCE_RACE=1 LHT_MAX_FRAMES=150`:
+  runs clean both without `SDL_AUDIODRIVER` set (audio gracefully inert)
+  and with `SDL_AUDIODRIVER=dummy` (a real device opens, no errors).
+
+  **Next**: Phase 6d (minimal HUD spotter caption, full native+WASM
+  verification sweep, close out Phase 6, commit/push).

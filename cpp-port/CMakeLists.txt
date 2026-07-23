@@ -304,6 +304,9 @@ endif()
 # flat-shaded track ribbon + car boxes from a static top-down camera, driven
 # by the real sim loop -- the first point this port is actually playable.
 add_executable(lht_port
+  src/audio/audio_engine.cpp
+  src/audio/dsp.cpp
+  src/audio/mixer.cpp
   src/platform/main.cpp
   src/platform/tilt_input.cpp
   src/render/atlas_texture.cpp
@@ -460,6 +463,14 @@ add_test(NAME hill_silhouette_test COMMAND hill_silhouette_test)
 # free, links only rng.h's Mulberry32.
 add_executable(dsp_test tests/dsp_test.cpp src/audio/dsp.cpp)
 add_test(NAME dsp_test COMMAND dsp_test)
+
+# Phase 6c (PORT_PROGRESS.md): mixer_test exercises src/audio/mixer.{h,cpp}'s
+# audioTick()-equivalent parameter updates and renderStereo() sample
+# synthesis -- bgfx/SDL2-free (audio_engine.h/.cpp, the only SDL2-touching
+# layer, is deliberately not linked here).
+add_executable(mixer_test tests/mixer_test.cpp src/audio/dsp.cpp src/audio/mixer.cpp
+                src/render/gear_rpm.cpp src/sim/car.cpp src/sim/track.cpp)
+add_test(NAME mixer_test COMMAND mixer_test)
 
 add_executable(car_test tests/car_test.cpp src/sim/track.cpp src/sim/car.cpp)
 add_test(NAME car_test COMMAND car_test)

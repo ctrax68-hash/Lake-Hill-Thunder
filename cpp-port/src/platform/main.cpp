@@ -19,6 +19,7 @@
 #include <SDL_syswm.h>
 #endif
 
+#include "../audio/audio_engine.h"
 #include "../render/hud.h"
 #include "../render/renderer.h"
 #include "../sim/car.h"
@@ -50,6 +51,7 @@ namespace {
 struct LoopState {
     SDL_Window* window = nullptr;
     Renderer renderer;
+    AudioEngine audio; // Phase 6c (PORT_PROGRESS.md): audioTick() equivalent
     Track track;
     Mulberry32 rng;
     Mulberry32 rngR;
@@ -344,6 +346,14 @@ void mainLoopTick(void* argPtr) {
         }
     }
 
+    // Phase 6c (PORT_PROGRESS.md): audioTick() equivalent -- once per
+    // rendered frame (index.html:4171, inside frame(ts) after the physics
+    // tick loop, NOT once per physics tick), regardless of simRunning (JS's
+    // own audioTick() has its own `if(!AC||!S.player) return;` guard, and
+    // its `live` gate already zeroes every target when not actually racing
+    // -- see mixer.cpp's own tick()).
+    S.audio.tick(S.state, S.cars, S.menu.sound, S.menu.volume / 100.0);
+
     if (S.portrait) {
         S.renderer.renderBlockedFrame();
     } else if (S.state.mode == "menu") {
@@ -377,6 +387,7 @@ void mainLoopTick(void* argPtr) {
     if (!S.running || S.frame >= S.maxFrames) {
         emscripten_cancel_main_loop();
         S.tiltInput.shutdown();
+        S.audio.shutdown();
         S.renderer.shutdown();
         SDL_DestroyWindow(S.window);
         SDL_Quit();
@@ -395,6 +406,15 @@ int main(int argc, char** argv)
     // its video/audio/joystick backends which are all confirmed present --
     // so SDL_INIT_SENSOR is only requested on the native build, rather than
     // assuming SDL_Init() tolerates a subsystem flag with nothing behind it.
+    // SDL_INIT_AUDIO is deliberately NOT requested here (Phase 6c,
+    // PORT_PROGRESS.md): unlike SDL_OpenAudioDevice() failing gracefully
+    // later, SDL_Init(SDL_INIT_AUDIO) itself hard-fails the whole process
+    // if no default audio driver exists at all -- confirmed this session,
+    // this exact sandbox has no audio hardware without SDL_AUDIODRIVER=
+    // dummy set, so requesting it here would break every existing native
+    // run that doesn't set that env var. AudioEngine::init() instead calls
+    // SDL_InitSubSystem(SDL_INIT_AUDIO) itself and handles that failure
+    // non-fatally, exactly like its own SDL_OpenAudioDevice fallback.
     Uint32 sdlInitFlags = SDL_INIT_VIDEO;
 #ifndef __EMSCRIPTEN__
     sdlInitFlags |= SDL_INIT_SENSOR;
@@ -471,6 +491,10 @@ int main(int argc, char** argv)
         SDL_Quit();
         return 1;
     }
+
+    // Phase 6c (PORT_PROGRESS.md): not fatal if this fails (no audio device
+    // available) -- see AudioEngine::init()'s own comment for the fallback.
+    S.audio.init();
 
     S.renderer.setTrack(S.track);
     S.renderer.setChaseTarget(0); // idx 0 is always the player, see car.h
@@ -565,6 +589,7 @@ int main(int argc, char** argv)
                 S.frame, S.state.mode.c_str(), S.state.t);
 
     S.tiltInput.shutdown();
+    S.audio.shutdown();
     S.renderer.shutdown();
     SDL_DestroyWindow(S.window);
     SDL_Quit();

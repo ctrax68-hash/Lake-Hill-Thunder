@@ -59,12 +59,14 @@ double biquadRmsAtFreq(Biquad& bq, double freqHz) {
 
 int main() {
     // Biquad lowpass (cutoff 900Hz, matching the engine tone's own filter,
-    // index.html:1299): a low frequency (100Hz) should pass through close to
-    // unchanged (RMS near sin's own ~0.707), a high frequency (8000Hz, well
-    // above cutoff) should be strongly attenuated.
+    // index.html:1299 -- JS never sets .Q there, and BiquadFilterNode's own
+    // spec default is Q=1, so that's the value to match, not an assumed
+    // one): a low frequency (100Hz) should pass through close to unchanged
+    // (RMS near sin's own ~0.707), a high frequency (8000Hz, well above
+    // cutoff) should be strongly attenuated.
     {
         Biquad lp;
-        lp.setLowpass(900.0, 0.9, kSampleRate);
+        lp.setLowpass(900.0, 1.0, kSampleRate);
         const double low = biquadRmsAtFreq(lp, 100.0);
         const double high = biquadRmsAtFreq(lp, 8000.0);
         expectTrue("lowpass passes low frequencies (RMS > 0.5)", low > 0.5);
@@ -72,11 +74,12 @@ int main() {
         expectTrue("lowpass attenuates high freq far more than low freq", high < low * 0.2);
     }
 
-    // Biquad highpass (1800Hz, matching the skid filter, index.html:1314):
-    // opposite shape from the lowpass check above.
+    // Biquad highpass (1800Hz, matching the skid filter, index.html:1314 --
+    // again no .Q set in JS, so Q=1, the spec default): opposite shape from
+    // the lowpass check above.
     {
         Biquad hp;
-        hp.setHighpass(1800.0, 0.9, kSampleRate);
+        hp.setHighpass(1800.0, 1.0, kSampleRate);
         const double low = biquadRmsAtFreq(hp, 100.0);
         const double high = biquadRmsAtFreq(hp, 8000.0);
         expectTrue("highpass rejects low frequencies (RMS < 0.1)", low < 0.1);
