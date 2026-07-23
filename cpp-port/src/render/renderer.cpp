@@ -1,6 +1,8 @@
 #include "renderer.h"
+#include "color.h"
 #include "hud.h"
 #include "shaders_embedded.h"
+#include "vertex.h"
 #include "../ui/menu.h"
 
 #include "../sim/car.h"
@@ -14,21 +16,6 @@
 #include <string>
 
 namespace {
-
-struct PosColorVertex {
-    float x, y, z;
-    uint32_t abgr;
-};
-
-// bgfx's Uint8x4 Color0 attribute is read back as a single little-endian
-// uint32 in R,G,B,A byte order -- i.e. 0xAABBGGRR when written out as a hex
-// literal (same convention bgfx's own examples use for `m_abgr`).
-uint32_t packColor(float r, float g, float b, float a = 1.0f) {
-    auto b8 = [](float v) -> uint32_t {
-        return (uint32_t)(std::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f);
-    };
-    return (b8(a) << 24) | (b8(b) << 16) | (b8(g) << 8) | b8(r);
-}
 
 // Debug-only screenshot capture (see renderer.h's requestScreenshot()
 // comment): bgfx hands back raw BGRA8 pixels, which this dumps verbatim
@@ -353,12 +340,55 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     // (index.html:3927), drawn via bgfx's debug-text overlay -- see
     // hud.cpp for exactly what's ported vs. deferred.
     bgfx::dbgTextClear();
-    drawHud(raceState, cars);
+    std::vector<PosColorVertex> uiVerts;
+    drawHud(raceState, cars, uiVerts);
     // Phase 4b (PORT_PROGRESS.md): drawHud() itself already early-returns
     // for mode=="menu" (hud.cpp:21), so both can unconditionally run here
     // without stepping on each other's dbgText rows.
     if (raceState.mode == "menu" && menu && menuTrackName) {
         drawMenu(*menu, raceState.laps, raceState.tilt, *menuTrackName);
+    }
+
+    // Phase 4e (PORT_PROGRESS.md): a second, pixel-space orthographic view
+    // for 2D UI-overlay geometry (segmented bars today; minimap/leaderboard/
+    // results chips in later Phase 4 sub-tasks), reusing the exact same
+    // flat-color vertex layout/shader/program as the world-space geometry
+    // above -- just a different view transform, no new shader. bgfx submits
+    // views in ascending ID order by default, so this draws after view 0's
+    // track/cars; bgfx's own debug-text overlay always draws on top of
+    // every view regardless of ID (confirmed empirically in every
+    // screenshot this project has taken), so the resulting layering is
+    // world geometry -> UI quads -> HUD/menu text, which is what's wanted
+    // (numbers legible over bars, not chips over text). Skipped entirely
+    // when empty (e.g. mode=="menu", where drawHud() early-returns before
+    // adding anything) -- same "nothing submitted this frame -> nothing
+    // drawn" precedent view 0's own `if (!cars.empty())` guard above relies
+    // on.
+    if (!uiVerts.empty()) {
+        const bgfx::ViewId kUiView = 1;
+        bgfx::setViewRect(kUiView, 0, 0, (uint16_t)width_, (uint16_t)height_);
+        float uiViewMtx[16], uiProj[16];
+        bx::mtxIdentity(uiViewMtx);
+        // Top-left origin, y-down, matching dbgText/SDL mouse coordinates --
+        // bottom=height, top=0 is the standard ortho y-flip trick.
+        bx::mtxOrtho(uiProj, 0.0f, (float)width_, (float)height_, 0.0f, -1.0f, 1.0f, 0.0f,
+                     homogeneousDepth);
+        bgfx::setViewTransform(kUiView, uiViewMtx, uiProj);
+
+        const uint32_t uiVertCount = (uint32_t)uiVerts.size();
+        if (bgfx::getAvailTransientVertexBuffer(uiVertCount, layout_) >= uiVertCount) {
+            bgfx::TransientVertexBuffer tvb;
+            bgfx::allocTransientVertexBuffer(&tvb, uiVertCount, layout_);
+            std::memcpy(tvb.data, uiVerts.data(), uiVertCount * sizeof(PosColorVertex));
+            bgfx::setTransform(identity);
+            bgfx::setVertexBuffer(0, &tvb, 0, uiVertCount);
+            // Alpha blending isn't needed by the opaque segmented bars yet,
+            // but is by the minimap's pulsing trouble ring (Phase 4f) --
+            // enabled now so that addition doesn't need a second state
+            // variant later.
+            bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_BLEND_ALPHA);
+            bgfx::submit(kUiView, program_);
+        }
     }
 
     bgfx::frame();

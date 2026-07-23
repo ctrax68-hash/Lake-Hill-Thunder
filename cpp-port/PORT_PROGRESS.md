@@ -556,6 +556,10 @@ port; it's the reference the C++ port must match).
       **Phase 4c done (Session 6)**: LAST/BEST lap time strip added, see this file's
       own Session 6 log entry below for the full writeup.
       **Phase 4d done (Session 6)**: GEAR/RPM readout added, same log entry.
+      **Phase 4e done (Session 6)**: segmented TIRE/FUEL/CAR status strip added --
+      this port's first real quad/shape rendering (previously dbgText-only), a new
+      reusable UI-overlay rendering path used by every remaining Phase 4 sub-task.
+      Same log entry.
 - [ ] Results screen
 
 ### Phase 5 — Full render fidelity — NOT STARTED
@@ -2313,3 +2317,100 @@ elsewhere in the same run.
   (truncated to the displayed integer `30`): `0.25 + 0.75*(30.5-26)/
   (40-26) ≈ 0.491 → 49%`, confirming the live HUD value, not just the
   unit test, matches the ported formula.
+
+  **Phase 4e -- segmented TIRE/FUEL/CAR bars, and this port's first real
+  quad/shape rendering.** Everything through Phase 4d was dbgText-only
+  (bgfx's built-in fixed 8x16 character grid); the status bars need real
+  filled rectangles, which needed new rendering infrastructure first.
+
+  **Architecture**: reused the exact same flat-color vertex layout/shader/
+  program (`PosColorVertex` + `vs_flat`/`fs_flat`) the track ribbon and car
+  boxes already use, via a **second bgfx view** (view id 1) with an
+  orthographic, top-left-origin, y-down pixel-space projection
+  (`bx::mtxOrtho` with `bottom=height, top=0`) -- no new shader needed.
+  Confirmed (not assumed) that bgfx's debug-text overlay draws on top of
+  every view regardless of ID, matching every screenshot this project has
+  ever taken. Hoisted `packColor()` (`src/render/color.h`) and the vertex
+  struct (`src/render/vertex.h`, `PosColorVertex`) out of `renderer.cpp`'s
+  anonymous namespace so UI-emitting modules don't depend on renderer
+  internals. New `src/render/color.h` also carries a `Theme` namespace
+  matching `index.html`'s `THEME` table exactly (`#F7D400` yellow,
+  `#1A4FFF` blue, `#2A2A2A` steel, `#FF7A00` orange, `#D62828` red,
+  `#C8C8C8` graycool) -- confirmed this is genuinely a *different* table
+  from `CarPalette`'s livery colors (`car.h`), not a duplicate: checked
+  each value directly, `CarPalette::Orange` happens to equal
+  `THEME.orange` but `CarPalette::Red`/`Blue` do not equal `THEME.red`/
+  `blue` at all -- a coincidence for one entry, not a shared concept.
+
+  **New `src/render/ui_draw.h/.cpp`**: pure 2D pixel-space geometry
+  helpers, zero bgfx dependency (same "isolate pure logic" precedent as
+  `touch_controls.h`/`menu.cpp`) -- `pushQuad`/`pushTriangle`/
+  `pushLineSegment`/`pushPolyline`/`pushRingOutline`/`pushFilledCircle`,
+  and `pushSegBar()` (a direct port of JS's `drawSegBar()`,
+  index.html:3868-3874). `pushLineSegment()` extrudes along the segment's
+  normal by half-thickness -- the same technique `Renderer::setTrack()`
+  already uses for the world-space track ribbon, just parameterized by
+  two explicit points instead of `Track::pointAt()`/`halfW()`.
+
+  **`renderer.cpp`'s `renderFrame()`**: `drawHud()` now takes a
+  `std::vector<PosColorVertex>& uiOut` output parameter; after building it,
+  `renderFrame()` submits it as view 1 (skipped entirely when empty, e.g.
+  `mode=="menu"` -- same "nothing submitted this frame -> nothing drawn"
+  precedent view 0's own `if (!cars.empty())` guard already relies on).
+  Enabled `BGFX_STATE_BLEND_ALPHA` on view 1 now, even though today's
+  opaque bars don't need it, since the minimap's pulsing trouble ring
+  (Phase 4f) will.
+
+  **New `src/render/status_bars.h/.cpp`**: assembles the real TIRE/FUEL/
+  CAR strip from `pushSegBar()` -- 3 rows (dbgText labels + a 6-segment
+  bar each), reading `Car::wear/fuel/dmg` (all three already exist and are
+  already correctly maintained by the physics core -- this is a pure
+  rendering addition) with JS's exact color thresholds
+  (index.html:4005-4009): tire uses `1-wear` vs yellow/orange/red at
+  0.5/0.25; fuel vs blue/orange/red at 0.3/0.12; car uses `1-dmg` vs
+  blue/orange/red at 0.6/0.3. Placed at dbgText rows 8-10, directly below
+  Phase 4a-4d's existing rows 1-7 (never rendered in the same frame as
+  `menu.cpp`'s rows, since `drawHud()`/`drawMenu()` are mode-exclusive).
+
+  **New `tests/ui_draw_test.cpp`** (ctest now 11/11): vertex counts and
+  bounding boxes for `pushQuad`/`pushTriangle`/`pushLineSegment`, segment
+  counts for open vs. closed `pushPolyline`, radius-distance checks for
+  `pushRingOutline`, center-point/triangle-count checks for
+  `pushFilledCircle`, and `pushSegBar`'s exact fill-count math including
+  edge cases (`frac=0`, `frac=1`, out-of-range clamping).
+
+  **A real false alarm, run down and disproven, not left ambiguous**:
+  the first headless screenshot appeared to show every bar's color
+  channel-swapped (expected tire yellow `#F7D400` rendered as a cyan-ish
+  `(0,212,247)`; expected fuel/car blue `#1A4FFF` rendered as orange
+  `(255,79,26)` -- R and B swapped, G untouched). Before assuming a
+  renderer bug, cross-checked whether *pre-existing* car colors (unrelated
+  to this session's changes) showed the same swap in the same screenshot --
+  they did (`CarPalette::Red`, expected `(192,0,0)`, sampled as
+  `(0,0,192)`) -- ruling out anything specific to the new UI-overlay code
+  and pointing at something systemic. Decoded the screenshot's own `.meta`
+  sidecar format code (`71`) against `bgfx::TextureFormat`'s actual enum
+  values (compiled a two-line program against this project's own vendored
+  bgfx headers to check, rather than guessing) and found it's `RGBA8`, not
+  `BGRA8` -- the ad hoc Python screenshot-to-PNG conversion snippet reused
+  verbatim across every phase's verification this whole project had been
+  hardcoding PIL's raw decode mode as `'BGRA'`. Re-decoding as `'RGBA'`
+  produced exact hex matches for every sampled color (tire `(247,212,0)`,
+  fuel/car `(26,79,255)`). **Conclusion**: this was a mistake in this
+  project's own ad hoc verification tooling, not the renderer -- `packColor()`/
+  the vertex layout have been correct all along. Worth flagging for future
+  sessions: this format mismatch was invisible in every prior phase's
+  screenshots because grass/background/HUD-text colors used there are all
+  R≈B-symmetric (white, gray, near-equal-channel green), so a channel swap
+  never looked wrong by eye until this session's first genuinely
+  asymmetric, precisely-specified colors made it detectable.
+
+  **Verified**: `ctest` 11/11. Headless `xvfb-run` screenshot
+  (`LHT_FORCE_RACE=1`, long enough that the field is spread out and
+  `wear=0`/`fuel=1`/`dmg=0` still hold for the stationary player) shows,
+  once correctly decoded: `TIRE` fully yellow (6/6 segments, matching
+  `wr=1>0.5`), `FUEL`/`CAR` fully blue (6/6 segments, matching `fuel=1>0.3`
+  and `dOK=1>0.6`) -- exact hex matches against `Theme`'s own constants,
+  not just "some color renders." dbgText numbers (`LAP`/`POS`/`GEAR`/etc.)
+  remained crisp and correctly positioned alongside the new quads, with no
+  interference between the two rendering paths.

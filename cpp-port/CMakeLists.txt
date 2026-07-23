@@ -201,6 +201,8 @@ add_executable(lht_port
   src/render/gear_rpm.cpp
   src/render/hud.cpp
   src/render/renderer.cpp
+  src/render/status_bars.cpp
+  src/render/ui_draw.cpp
   src/ui/menu.cpp
   src/ui/touch_controls.cpp
   ${SIM_SOURCES}
@@ -312,6 +314,12 @@ add_test(NAME fmt_time_test COMMAND fmt_time_test)
 # breakpoint math -- same zero-dependency category as fmt_time_test.
 add_executable(gear_rpm_test tests/gear_rpm_test.cpp src/render/gear_rpm.cpp)
 add_test(NAME gear_rpm_test COMMAND gear_rpm_test)
+
+# Phase 4e (PORT_PROGRESS.md): ui_draw_test exercises ui_draw.cpp's pure 2D
+# geometry helpers -- same zero-dependency category as fmt_time_test/
+# gear_rpm_test (ui_draw.{h,cpp} itself has no bgfx dependency at all).
+add_executable(ui_draw_test tests/ui_draw_test.cpp src/render/ui_draw.cpp)
+add_test(NAME ui_draw_test COMMAND ui_draw_test)
 
 add_executable(determinism_test tests/determinism_test.cpp tests/determinism/trace.cpp)
 add_test(NAME determinism_test COMMAND determinism_test)

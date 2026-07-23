@@ -1,6 +1,7 @@
 #include "hud.h"
 #include "fmt_time.h"
 #include "gear_rpm.h"
+#include "status_bars.h"
 
 #include <bgfx/bgfx.h>
 
@@ -19,7 +20,7 @@ constexpr uint8_t attr(uint8_t fg, uint8_t bg) {
 
 } // namespace
 
-void drawHud(const RaceState& state, const std::vector<Car>& cars) {
+void drawHud(const RaceState& state, const std::vector<Car>& cars, std::vector<PosColorVertex>& uiOut) {
     if (state.mode == "menu" || state.mode == "menuwait") return; // index.html:3931
 
     const Car* player = nullptr;
@@ -68,4 +69,10 @@ void drawHud(const RaceState& state, const std::vector<Car>& cars) {
     // aren't real physics state, just a display-time function of Car::v.
     const GearRpm gr = gearRpm(player->v);
     bgfx::dbgTextPrintf(1, 7, attr(kWhite, kBlack), "GEAR %d  RPM %3d%%", gr.gear, (int)(gr.rpm * 100));
+
+    // Phase 4e (PORT_PROGRESS.md): index.html:3999-4020's segmented TIRE/
+    // FUEL/CAR status strip -- the first HUD feature needing real quad
+    // geometry (drawStatusBars() appends into `uiOut`; Renderer submits it
+    // as a separate UI-overlay view after this function returns).
+    drawStatusBars(*player, uiOut);
 }

@@ -2,6 +2,7 @@
 
 #include "../sim/car.h"
 #include "../sim/race_state.h"
+#include "vertex.h"
 
 #include <vector>
 
@@ -24,6 +25,13 @@
 // Those are left for the remaining Phase 4 sub-tasks -- see
 // PORT_PROGRESS.md.
 //
+// Phase 4e added the segmented TIRE/FUEL/CAR status strip -- the first HUD
+// feature needing real quad geometry rather than just dbgText. `uiOut` is
+// the frame's shared UI-overlay vertex list (Renderer submits it as a
+// second, pixel-space bgfx view after this call returns) -- hud.cpp stays
+// Renderer-independent, only appending vertex data, never touching bgfx
+// view/state calls itself for this part.
+//
 // Caller is expected to have called bgfx::setDebug(BGFX_DEBUG_TEXT) once
 // at init and bgfx::dbgTextClear() once this frame before calling this.
-void drawHud(const RaceState& state, const std::vector<Car>& cars);
+void drawHud(const RaceState& state, const std::vector<Car>& cars, std::vector<PosColorVertex>& uiOut);
