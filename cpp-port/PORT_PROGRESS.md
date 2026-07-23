@@ -3793,3 +3793,132 @@ elsewhere in the same run.
   caution-TV-montage/menu-establishing-shot) and the real hands-on Safari/
   iOS PWA verification (Phase 7b's own open item) -- both untouched by
   this session, still deferred for a future one.
+
+## Step 1: Tire-model upgrade -- regression pass (post-`fdb6b12`)
+
+  Commit `fdb6b12` replaced `cornerCap()`'s single-scalar friction-circle
+  yaw cap with a real 2D bicycle model (per-axle slip angles, cornering
+  stiffness, friction ellipse, weight transfer, aero-as-force) and was
+  smoke-tested (3000 frames, 4 tracks, no crashes) but not yet regression-
+  tested against the pre-tire-model baseline, per this project's own
+  tasks #124-134 discipline (crash rate/pack behavior must be re-verified
+  with the same rigor whenever core cornering physics changes).
+
+  **Methodology**: `git worktree add` at `f590dd0` (the commit immediately
+  before the tire-model change), identical instrumentation applied to
+  both trees (a `wreckCount` counter reusing the exact `spinT=...` sites
+  tasks #124-134 tuned against, a one-shot `RACE_SUMMARY` print, and
+  `LHT_HEADLESS_FAST` to make a 20000-frame/400-simulated-second run
+  fast enough to iterate on -- forcing a fixed virtual `DT` per tick
+  instead of tying the sim accumulator to real wall-clock time, since
+  skipping rendering alone left real time-per-iteration too close to zero
+  for the accumulator to ever cross `DT`). Same fixed RNG seed
+  (`12345u, 999u`) on both trees, run through `LHT_FORCE_RACE`.
+
+  **First finding, and a correction to the test methodology itself**:
+  `LHT_FORCE_RACE` skips `startRaceFromMenu()`'s normal ~28-second pace
+  phase, landing directly in a running green-flag race with all 20 cars
+  still in tight grid formation -- a legitimately harsher, non-
+  representative stress condition than any real race start. A second env
+  var, `LHT_NATURAL_START`, was added so `LHT_FORCE_RACE` can leave
+  `startRaceFromMenu()`'s own "pace" mode in place instead of forcing
+  `mode=race, flag=green` immediately, letting the real pace-lap-to-
+  green-flag transition run for verification. Confirmed: the baseline
+  handles `LHT_FORCE_RACE`'s instant-bunched-race-start stress condition
+  reasonably (a few incidents, but no field-wide failure) *and* the
+  natural pace-lap flow cleanly (full field, several cars reaching
+  `done=1`, `wreckCount=5`, lap times ~23-30s over 400s) -- so both test
+  conditions are valid baselines, and the natural-start one is the more
+  representative of real play.
+
+  **The regression, confirmed real via this baseline comparison (not
+  assumed)**: under the *natural* pace-lap flow, the tire-model commit
+  left the field unable to even reach green flag within 400 simulated
+  seconds -- cars took heavy, sometimes-terminal (`dmg=1.0`) damage during
+  ordinary formation driving, something the baseline never did at all.
+
+  **Root causes found and fixed, in the order discovered**:
+  1. **Traction budget.** Engine force could demand more longitudinal
+     grip than the tires could actually deliver (`CAR.maxForce` sits
+     close to/above static rear-axle traction), permanently pinning
+     `fxFracRear` at 1.0 and zeroing rear lateral capacity via the
+     friction ellipse whenever a car needed to accelerate hard from low
+     speed. Fixed in `step_car.cpp`'s shared physics tail: engine force is
+     now capped at `muEff * fz.rear` before being used, where `fz` is
+     computed from the *previous* tick's acceleration (`c.aPrev`, a new
+     `Car` field) to avoid a circular dependency between engine force and
+     weight transfer -- a one-tick-stale estimate, self-correcting every
+     tick.
+  2. **Wall-collision state reset firing every tick.** A car moving too
+     slowly to escape the wall-clamp zone in a single tick re-triggered
+     the *entire* wall-hit response (speed cut, heading snap, and -- new
+     in the tire-model commit -- zeroing `vy`/`r`) every single tick it
+     stayed embedded. The old kinematic yaw model had no persistent state
+     to lose this way, so it was invisible before; the bicycle model's
+     real yaw inertia never survived more than one 20ms tick under this.
+     Fixed with a new `Car::wallCd` cooldown (deliberately separate from
+     `dmgCd`, which stays suppressed during yellow flag and must not gate
+     this): the full "fresh impact" response now fires once per contact,
+     with just a positional re-clamp on the ticks in between.
+  3. **AI steering assumed zero-latency yaw response.** Every non-player
+     `steerIn` formula (pace/yellow/pit/DNF/race-green branches) was
+     written against the old model, where `c.steer` mapped instantaneously
+     to yaw rate with no persistent state. The bicycle model's `r` takes
+     several ticks to develop, so the AI had no way to tell it wasn't
+     turning as fast as intended. Added a yaw-rate feedback term (new
+     `CarConstants::yawCorrGain`) to all 5 branches' `steerIn`, nudging it
+     by the gap between the yaw rate that branch's raw feedforward value
+     implies and the car's actual current `c.r`.
+  4. **Curvature-blind pace/yellow-flag target speed.** The old model
+     enforced a real, grip-based yaw cap (`cornerCap()`) in its *shared*
+     execution physics regardless of what any driving branch's target
+     speed asked for -- a blanket safety net the bicycle model replaces
+     with genuine understeer instead. Branches that never looked ahead at
+     curvature (pace, yellow-flag) were exposed once that net was gone.
+     Fixed by capping their target speed with `targetSpeed()` -- the
+     AI-race branch's own existing, already-tested corner-speed lookahead,
+     reused rather than inventing a second formula. (Verified neutral but
+     harmless on the specific regression scenario tested -- the crash
+     there turned out to be caused by finding #2/#3/#5, not insufficient
+     corner-speed planning.)
+  5. **A genuine numerical instability, still open.** A fine-grained
+     per-tick trace (new temporary `LHT_PACE_DEBUG` hook, removed before
+     this commit) isolated a specific residual failure: at highway speed
+     (~28-31 m/s) with `steerIn` saturated at full lock for several
+     consecutive ticks, `vy`/`r` diverge under this sim's fixed 0.02s
+     explicit-Euler step -- confirmed present even with `yawCorrGain=0`,
+     so it is not caused by fix #3. Switched the `vy`/`r` integration to
+     semi-implicit (symplectic) Euler (computing `vyDot` from the
+     just-updated `r`, not the stale pre-tick value) as a standard, cheap
+     stability improvement -- this alone did not fully resolve the high-
+     speed case. A linear yaw-damping term on `rDot` (representing
+     steering-system/suspension dissipation beyond pure tire forces) *was*
+     tried and made the specific divergence go away, but made the overall
+     regression result markedly worse (crippled legitimate cornering
+     response fleet-wide once real racing began) -- rejected. The
+     principled fix is substepping the `vy`/`r` integration at a smaller
+     effective timestep specifically for this subsystem (the textbook cure
+     for this class of explicit-Euler instability), not a tunable
+     constant; left for a follow-up session rather than continuing to
+     iterate on damping/gain values with diminishing returns.
+
+  **Net effect of fixes 1-4**: the catastrophic full-field failure (no
+  car reaching green flag, most of the field permanently damaged) is
+  eliminated. In the natural-start regression scenario, most of the field
+  now survives with light-to-moderate damage; roughly 4/20 cars still
+  take terminal damage during the pace phase, root-caused to finding #5
+  above.
+
+  **Verified**: native `ctest` **27/27** passing throughout every fix in
+  this pass (adds no new test target; `tire_model_test.cpp` from `fdb6b12`
+  already covers the pure-logic tire-model functions). A post-fix smoke
+  test (`LHT_FORCE_RACE=1 LHT_HEADLESS_FAST=1`, 3000 frames / 60 simulated
+  seconds) across all 4 tracks shows `wreckCount=0` and no instability on
+  every track.
+
+  **Deliberately not done this pass**: constants (`Cf`/`Cr`/`aeroBalanceF`/
+  etc.) were not further tuned once the structural bugs above were fixed,
+  since finding #5 (the substepping fix) is likely to change the dynamics
+  enough that tuning now would be wasted work. Step 2/3 (glTF skinned-mesh
+  animation) remain gated on this regression pass fully clearing, per the
+  original plan's own stated ordering -- not yet unblocked.

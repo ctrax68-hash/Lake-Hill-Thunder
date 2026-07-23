@@ -230,6 +230,11 @@ void handleResultsClick(LoopState& S, int x, int y) {
 void mainLoopTick(void* argPtr) {
     LoopState& S = *static_cast<LoopState*>(argPtr);
 
+    // Tire-model-upgrade regression pass (PORT_PROGRESS.md): see this flag's
+    // two use sites below (fixed-step dt, and skipping the render call
+    // entirely) for why it exists. Debug/regression-measurement only.
+    static const bool headlessFast = std::getenv("LHT_HEADLESS_FAST") != nullptr;
+
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
         if (ev.type == SDL_QUIT) S.running = false;
@@ -328,7 +333,20 @@ void mainLoopTick(void* argPtr) {
     S.input.right = keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D] || S.touchRight;
 
     const Uint64 now = SDL_GetPerformanceCounter();
-    double dt = (double)(now - S.last) / (double)S.perfFreq;
+    double dt;
+    if (headlessFast) {
+        // Real play/normal headless runs tie simulation progress to actual
+        // elapsed wall-clock time (the whole point of this accumulator).
+        // With rendering skipped, real time per loop iteration collapses to
+        // near-zero, so that same accumulator would never cross DT and the
+        // sim would never advance at all (confirmed: a 20000-frame run
+        // finished in 0.3s with state.t stuck at 0.0). A fixed-step virtual
+        // clock is also the more correct thing for a reproducible regression
+        // run anyway, not just a workaround.
+        dt = DT;
+    } else {
+        dt = (double)(now - S.last) / (double)S.perfFreq;
+    }
     S.last = now;
     if (dt > 0.25) dt = 0.25; // clamp a stall (e.g. window drag) instead of a physics-time jump
     S.simAcc += dt;
@@ -354,14 +372,22 @@ void mainLoopTick(void* argPtr) {
     // -- see mixer.cpp's own tick()).
     S.audio.tick(S.state, S.cars, S.menu.sound, S.menu.volume / 100.0);
 
-    if (S.portrait) {
-        S.renderer.renderBlockedFrame();
-    } else if (S.state.mode == "menu") {
-        S.renderer.renderFrame(S.state, S.cars, &S.menu, &S.track.name());
-    } else if (S.state.mode == "done") {
-        S.renderer.renderFrame(S.state, S.cars, nullptr, nullptr, &S.finishOrder);
-    } else {
-        S.renderer.renderFrame(S.state, S.cars);
+    // headlessFast (declared at the top of this function): skips the render
+    // call entirely -- screenshot/portrait/menu-art paths are irrelevant to
+    // a metrics-only run, and rendering (even off-screen via EGL/xvfb) turned
+    // out to dominate wall-clock cost by a wide margin versus the sim itself
+    // (a 20000-frame race-to-completion run didn't finish in 5+ minutes with
+    // rendering on).
+    if (!headlessFast) {
+        if (S.portrait) {
+            S.renderer.renderBlockedFrame();
+        } else if (S.state.mode == "menu") {
+            S.renderer.renderFrame(S.state, S.cars, &S.menu, &S.track.name());
+        } else if (S.state.mode == "done") {
+            S.renderer.renderFrame(S.state, S.cars, nullptr, nullptr, &S.finishOrder);
+        } else {
+            S.renderer.renderFrame(S.state, S.cars);
+        }
     }
     ++S.frame;
 
@@ -376,6 +402,28 @@ void mainLoopTick(void* argPtr) {
         std::printf("frame=%d t=%.1f mode=%s flag=%s player.lap=%d player.v=%.1f\n",
                     S.frame, S.state.t, S.state.mode.c_str(), S.state.flag.c_str(),
                     player ? player->lap : -99, player ? player->v : -1.0);
+    }
+    // Tire-model-upgrade regression pass (PORT_PROGRESS.md): a one-shot
+    // per-race summary -- wreck count, and each car's finish/lap-time/DNF
+    // outcome -- printed once the race actually reaches "done" (or, if it
+    // doesn't finish within LHT_MAX_FRAMES, right before the run ends
+    // anyway). Debug/regression-measurement only, gated behind the same
+    // LHT_FORCE_RACE headless-verification path every other LHT_* debug
+    // hook in this file already uses; no effect on real play.
+    if (std::getenv("LHT_FORCE_RACE")) {
+        static bool summaryPrinted = false;
+        const bool aboutToStop = S.frame + 1 >= S.maxFrames;
+        if (!summaryPrinted && (S.state.mode == "done" || aboutToStop)) {
+            summaryPrinted = true;
+            std::printf("RACE_SUMMARY wreckCount=%d frame=%d t=%.1f mode=%s\n",
+                        S.state.wreckCount, S.frame, S.state.t, S.state.mode.c_str());
+            for (auto& c : S.cars) {
+                std::printf("RACE_SUMMARY car=%d num=%d lap=%d bestLapT=%.3f lastLapT=%.3f "
+                            "finishT=%.3f out=%d done=%d dmg=%.3f\n",
+                            c.idx, c.num, c.lap, c.bestLapT, c.lastLapT, c.finishT,
+                            c.out ? 1 : 0, c.done ? 1 : 0, c.dmg);
+            }
+        }
     }
 
 #ifdef __EMSCRIPTEN__
@@ -519,8 +567,17 @@ int main(int argc, char** argv)
     // determinism tests, not a physics bypass.
     if (std::getenv("LHT_FORCE_RACE")) {
         startRaceFromMenu(S);
-        S.state.mode = "race";
-        S.state.flag = "green";
+        // Tire-model-upgrade regression pass: LHT_NATURAL_START skips only
+        // the mode/flag override above, leaving startRaceFromMenu()'s normal
+        // "pace" mode in place so the ~28-sim-second pace-lap-to-green-flag
+        // transition runs for real -- used to verify the actually-played
+        // race flow, as opposed to LHT_FORCE_RACE's own instant-bunched-
+        // green-flag bypass (a much harsher, non-representative stress
+        // condition on its own).
+        if (!std::getenv("LHT_NATURAL_START")) {
+            S.state.mode = "race";
+            S.state.flag = "green";
+        }
     }
 
     // Debug-only: see seedForceDoneState()'s own comment above.

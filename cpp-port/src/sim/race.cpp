@@ -125,7 +125,7 @@ void updateAero(std::vector<Car>& cars, const Track& track) {
 }
 
 // collide() (index.html:1158-1231)
-void collide(std::vector<Car>& cars, const RaceState& state, const Track& track, Mulberry32& rngR) {
+void collide(std::vector<Car>& cars, RaceState& state, const Track& track, Mulberry32& rngR) {
     const double trackWreckScale = std::min(1.0, 1600.0 / track.total());
     for (size_t i = 0; i < cars.size(); ++i) {
         for (size_t j = i + 1; j < cars.size(); ++j) {
@@ -162,6 +162,7 @@ void collide(std::vector<Car>& cars, const RaceState& state, const Track& track,
                                 victim2.spinT = 1.6 + rngR.next() * 1.2;
                                 victim2.spinDir = ny > 0 ? 1 : -1;
                                 victim2.spinCd = 10;
+                                ++state.wreckCount; // debug/regression-measurement only, see race_state.h
                             }
                         }
                         hitter.hitFx = std::min(1.0, hitter.hitFx + cv2 * 0.04); // index.html:1227
@@ -407,6 +408,7 @@ void tick(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& 
                     c.spinT = 1.8 + rngR.next() * 1.2;
                     c.spinDir = rngR.next() < 0.5 ? -1 : 1;
                     c.spinCd = 10;
+                    ++state.wreckCount; // debug/regression-measurement only, see race_state.h
                 }
             }
             if (c.dmg >= 1 && !c.out) {

@@ -31,7 +31,10 @@ void updateAero(std::vector<Car>& cars, const Track& track);
 // even though they're provably inert during the pace phase, since collide()
 // is one small self-contained function, not something that needs the same
 // branch-by-branch splitting stepCar() does).
-void collide(std::vector<Car>& cars, const RaceState& state, const Track& track, Mulberry32& rngR);
+// Tire-model-upgrade regression pass: state is now non-const so this can
+// increment state.wreckCount (debug/regression-measurement only, see
+// race_state.h) -- no other behavior change.
+void collide(std::vector<Car>& cars, RaceState& state, const Track& track, Mulberry32& rngR);
 
 // activeLead() (index.html:1138-1141): first still-racing (not done/out) car
 // in race-position order; falls back to the leader-by-position if every car

@@ -42,6 +42,19 @@ struct CarConstants {
     double iz = 2800.0;           // kg*m^2, yaw moment of inertia
     double maxSteerAngle = 0.5;   // rad, full-lock front steer angle
     double brakeBiasFront = 0.62; // fraction of brake force applied at the front axle
+
+    // Regression-pass fix: the AI's steerIn formulas (step_car.cpp) were
+    // written against the old model, where c.steer mapped directly and
+    // instantaneously to yaw rate (no persistent state). The bicycle model's
+    // `r` has real inertia, so a target yaw rate now takes several ticks to
+    // develop -- confirmed via the regression pass to cause wall contact
+    // during ordinary pace-lap/race driving, not just chaotic starts, since
+    // the AI had no way to tell it wasn't turning as fast as intended. This
+    // gain scales a yaw-rate-error feedback term (desired minus actual `r`,
+    // see step_car.cpp's steerIn sites) added on top of each branch's
+    // existing feedforward steerIn, so the AI compensates for the lag
+    // instead of assuming zero-latency turning.
+    double yawCorrGain = 0.35;    // dimensionless per (rad/s) of yaw-rate error
 };
 inline const CarConstants CAR{};
 
@@ -176,6 +189,13 @@ struct Car {
     double dmgCd = 0;
     bool blown = false;
 
+    // Tire-model-upgrade regression-pass fix, not a JS port field: gates the
+    // wall-clamp's "fresh impact" response (see step_car.cpp) so a car
+    // continuously embedded against the wall only gets its vy/r wiped once
+    // per contact, not every single tick -- deliberately separate from
+    // dmgCd, which stays suppressed during yellow flag (this must not be).
+    double wallCd = 0;
+
     int pit = 0;
     double pitT = 0;
     bool pitReq = false;
@@ -205,6 +225,12 @@ struct Car {
     double vy = 0, r = 0;
     double fzFront = 0, fzRear = 0;
     double slipRatio = 0; // driven (rear) axle longitudinal slip fraction, [-1,1]
+
+    // Regression-pass fix: last tick's longitudinal acceleration, reused to
+    // estimate this tick's axle loads *before* engine force is finalized (see
+    // step_car.cpp's traction-budget comment) -- breaks what would otherwise
+    // be a circular dependency between engine force and weight transfer.
+    double aPrev = 0;
 };
 
 // makeCar() (index.html:453-503). `track` supplies TRACK.pointAt(0) for the

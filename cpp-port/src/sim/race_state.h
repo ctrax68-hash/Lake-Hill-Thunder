@@ -65,6 +65,15 @@ struct RaceState {
     bool fuelMsg = false;
     bool tireMsg = false;
     bool dmgMsg = false;
+
+    // Debug/regression-measurement only -- not a JS port field. Incremented
+    // wherever a car transitions into spinT>0 (collide()'s contact-triggered
+    // spin, race.cpp, and the tire-blowout spin below it) -- the same
+    // "wreck" signal tasks #124-134 tuned crash frequency against
+    // previously, reused here for the tire-model-upgrade regression pass
+    // (see PORT_PROGRESS.md). Read by main.cpp's LHT_FORCE_RACE summary
+    // print; otherwise inert.
+    int wreckCount = 0;
 };
 
 // PACE (index.html:562-563). px/py/phdg/ps/plat (render-interpolation only,
