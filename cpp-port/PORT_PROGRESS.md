@@ -646,18 +646,34 @@ correctly together, including confirming Phase 5h's own color-swap finding
 (the WASM screenshot's grass hue is correct where the native one is a
 known sandbox-only artifact). **Phase 5 is closed.**
 
-### Phase 6 — Polish & platform packaging — NOT STARTED, DEPRIORITIZED
+### Phase 6 — Polish & platform packaging — AUDIO PORT IN PROGRESS (Session 8), Android/iOS + device-perf-pass OUT OF SCOPE
 The user explicitly clarified (Session 3, same session Phase 7 below started): no App Store,
 no native Android/iOS distribution wanted at all -- they want to play from Safari, ideally
 installed as a home-screen PWA. This phase (native Android/iOS builds) is **not deleted**, just
 no longer the near-term goal -- Phase 7 (WebAssembly/browser build) is the actual path to what
 the user wants, and is now the priority track instead of this one.
-- [ ] Audio port (JS has a real Web Audio graph: multi-voice opponent engines, a
+
+**Session 8 scope decision**: asked the user directly (this phase's own 3-item checklist
+already flagged 2 of 3 items as likely moot, and this sandbox has no physical device for a
+real hardware perf pass) which of the 3 items to pursue. The user answered **"Audio port
+only."** Android/iOS native builds and the real-mid-tier-hardware performance pass are
+therefore explicitly deprioritized/out of scope for this phase going forward, not merely
+"not started yet" -- do not resume them without a fresh explicit ask.
+- [x] Audio port (JS has a real Web Audio graph: multi-voice opponent engines, a
       4-bus mixer, crowd/spotter/impact one-shots — check `index.html`'s audio
       section for current scope, it has grown since the original master prompt was written)
-- [ ] Android build (Gradle/NDK) and iOS build (Xcode project) — iOS always needs a
-      real Mac session, per the environment facts above
-- [ ] Device performance pass on real mid-tier hardware (20-car field + postprocessing)
+      -- **6a done (Session 8)**, 6b/6c/6d in progress/pending, see session log.
+- [ ] ~~Android build (Gradle/NDK) and iOS build (Xcode project)~~ -- **out of scope**,
+      user wants Safari/PWA only (Session 3 decision, reconfirmed Session 8).
+- [ ] ~~Device performance pass on real mid-tier hardware~~ -- **out of scope**, no
+      physical device exists in this sandbox and the user did not ask for a proxy pass
+      (Session 8 decision).
+
+**Phase 6a done (Session 8)**: audio DSP primitives -- see this session's log entry
+below (`src/audio/dsp.h`/`.cpp`: `Biquad` lowpass/highpass/bandpass, a naive
+sawtooth/square `Oscillator`, a shared `NoiseBuffer`, and `ParamSmoother` matching
+`AudioParam.setTargetAtTime()`; `tests/dsp_test.cpp` verifies frequency response/
+waveform shape/noise stats/smoother convergence, bgfx/SDL2-free).
 
 ### Phase 7 — WebAssembly/browser build — DONE, first pass (Session 3)
 - [x] Get `lht_port` compiling to WebAssembly via Emscripten and running inside a real
@@ -3406,3 +3422,78 @@ elsewhere in the same run.
   correct where the native screenshot alone would have been misleading.
 
   **Next**: Phase 5 final integration + verification pass.
+
+- **Session 8 -- Phase 6a: audio DSP primitives.** With Phase 5 fully closed,
+  asked the user to confirm Phase 6's scope: its own checklist already
+  flagged Android/iOS native builds and a device-perf-pass as likely moot
+  (the user's own Session 3 "Safari/PWA only" decision, plus this sandbox
+  having no physical device to run a real hardware pass on). The user
+  answered **"Audio port only"** -- binding for the rest of this phase; see
+  the updated Phase 6 heading above.
+
+  JS's audio section (`index.html:1263-1461`) builds a full Web Audio
+  `AudioContext` node graph (oscillators, `BiquadFilterNode`s, a shared
+  noise `AudioBuffer`, `GainNode`s, `StereoPannerNode`s, `AudioParam.
+  setTargetAtTime()` smoothing). SDL2 only hands back a raw callback-filled
+  sample buffer, not a node graph, so this sub-phase ports the handful of
+  DSP building blocks Web Audio provides as built-ins, as their own
+  bgfx/SDL2-free pure-math module -- same "pure logic isolated from the
+  platform layer" split this project already uses for render/sim
+  (`track_surface.h`, `stadium_mesh.h`, etc.), so they get real unit tests
+  instead of only being checkable by ear (and this sandbox has no audio
+  hardware at all to check anything by ear with -- confirmed no
+  `/proc/asound`, no `pactl`, and `libasound.so.2` present but zero
+  registered ALSA devices; later sub-phases will need
+  `SDL_AUDIODRIVER=dummy`, the audio equivalent of this project's existing
+  `xvfb-run` headless-video precedent).
+
+  **New `src/audio/dsp.h`/`.cpp`**: `Biquad` (lowpass/highpass/bandpass, the
+  RBJ Audio EQ Cookbook formulas -- the same ones a browser's
+  `BiquadFilterNode` implements; bandpass specifically uses the cookbook's
+  "constant 0dB peak gain" variant, since that's what the Web Audio spec
+  mandates for `BiquadFilterNode`'s `'bandpass'` type, not the alternative
+  "constant skirt gain" variant); `Oscillator` (phase-accumulator sawtooth/
+  square, standing in for `oscA.type='sawtooth'`/`oscB.type='square'`) --
+  **logged simplification**: naive, not band-limited/PolyBLEP synthesis,
+  justified because every oscillator in this game is lowpass-filtered
+  downstream, masking the extra aliasing harmonics a naive oscillator adds;
+  `NoiseBuffer` (a single generated white-noise buffer with a linear-
+  interpolated, wrapping `sampleAt()` read, standing in for JS's one shared
+  `NZBUF` `AudioBuffer` reused across every noise-driven voice) -- seeded
+  via the caller's own `Mulberry32` rather than a true RNG, the same
+  already-blessed "scenery-only, safe to diverge" precedent this project
+  established for sky clouds/crowd-tile fill/stand density (audio is
+  cosmetic-only, never feeds back into sim state); `ParamSmoother`, matching
+  `AudioParam.setTargetAtTime(target, startTime, timeConstant)`'s exact
+  discretized exponential-approach math, with its per-sample coefficient
+  (`1 - exp(-1/(tau*sampleRate))`) precomputed once in `init()` rather than
+  recomputed every sample.
+
+  **New `tests/dsp_test.cpp`**: a `biquadRmsAtFreq()` helper feeds a steady
+  sine through a filter (4000-sample warmup + 4000-sample RMS measurement)
+  to spot-check real frequency response without needing a full FFT --
+  confirms the lowpass (900Hz/Q=0.9, matching the engine tone's own filter)
+  passes 100Hz and rejects 8000Hz, the highpass (1800Hz/Q=0.9, matching the
+  skid filter) does the opposite, and the bandpass (420Hz/Q=0.7, matching
+  the engine intake-noise filter) passes its own center frequency far more
+  strongly than either a far-low or far-high test tone. Also checks the
+  sawtooth/square oscillators stay in range and cover their expected shape,
+  the noise buffer's sample count/range/near-zero mean/wrap-at-length/
+  interpolated-read behavior, and that `ParamSmoother` reaches ~63.2% of
+  its target after exactly one time constant (matching `1 - 1/e`) and
+  converges after many.
+
+  **`CMakeLists.txt`**: added a `dsp_test` target/ctest entry, linking only
+  `src/audio/dsp.cpp` + `rng.h`'s `Mulberry32` -- deliberately did **not**
+  add `dsp.cpp` to the main `lht_port` executable yet, since no consumer
+  exists until Phase 6c's mixer/audio-engine code lands.
+
+  **Verified**: `ctest` **24/24** (up from 23/23, `dsp_test` added with zero
+  regressions), all of `dsp_test`'s own checks pass on first run.
+
+  **Next**: Phase 6b (sim-side `Car::hitFx` damage-impact accumulation +
+  RaceState spotter-message fields + porting `spotterSay()`'s trigger
+  conditions into `race.cpp`'s `tick()` -- discovered during this sub-
+  phase's research that the spotter-message system was never ported in any
+  prior phase, confirmed via `race.h`'s own existing comment explicitly
+  excluding it and a zero-match grep across `cpp-port/src`).

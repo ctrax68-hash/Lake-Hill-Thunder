@@ -454,6 +454,13 @@ add_test(NAME pylon_mesh_test COMMAND pylon_mesh_test)
 add_executable(hill_silhouette_test tests/hill_silhouette_test.cpp src/render/hill_silhouette.cpp)
 add_test(NAME hill_silhouette_test COMMAND hill_silhouette_test)
 
+# Phase 6a (PORT_PROGRESS.md): dsp_test exercises src/audio/dsp.{h,cpp}'s
+# pure DSP math (biquad frequency response, oscillator waveform shape,
+# noise-buffer stats/looping, parameter-smoother convergence) -- bgfx/SDL2-
+# free, links only rng.h's Mulberry32.
+add_executable(dsp_test tests/dsp_test.cpp src/audio/dsp.cpp)
+add_test(NAME dsp_test COMMAND dsp_test)
+
 add_executable(car_test tests/car_test.cpp src/sim/track.cpp src/sim/car.cpp)
 add_test(NAME car_test COMMAND car_test)
 
