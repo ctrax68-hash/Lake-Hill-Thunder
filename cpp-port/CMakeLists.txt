@@ -275,6 +275,7 @@ add_executable(lht_port
   src/render/gear_rpm.cpp
   src/render/hud.cpp
   src/render/leaderboard.cpp
+  src/render/livery.cpp
   src/render/minimap.cpp
   src/render/renderer.cpp
   src/render/sky_texture.cpp
@@ -386,6 +387,11 @@ add_test(NAME stadium_mesh_test COMMAND stadium_mesh_test)
 # pure pixel math, bgfx-free.
 add_executable(atlas_texture_test tests/atlas_texture_test.cpp src/render/atlas_texture.cpp)
 add_test(NAME atlas_texture_test COMMAND atlas_texture_test)
+
+# Phase 5f (PORT_PROGRESS.md): livery_test exercises buildLiveryPixels()'s
+# pure pixel math, bgfx-free (links track.cpp/car.cpp for ROSTER data).
+add_executable(livery_test tests/livery_test.cpp src/sim/track.cpp src/sim/car.cpp src/render/livery.cpp)
+add_test(NAME livery_test COMMAND livery_test)
 
 add_executable(car_test tests/car_test.cpp src/sim/track.cpp src/sim/car.cpp)
 add_test(NAME car_test COMMAND car_test)

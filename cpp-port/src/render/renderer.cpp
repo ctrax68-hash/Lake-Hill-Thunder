@@ -3,6 +3,7 @@
 #include "color.h"
 #include "env_presets.h"
 #include "hud.h"
+#include "livery.h"
 #include "shaders_embedded.h"
 #include "sky_texture.h"
 #include "stadium_mesh.h"
@@ -175,6 +176,10 @@ void Renderer::shutdown() {
     if (bgfx::isValid(texturedLitProgram_)) bgfx::destroy(texturedLitProgram_);
     if (bgfx::isValid(atlasTexture_)) bgfx::destroy(atlasTexture_);
     if (bgfx::isValid(stadiumTexturedVb_)) bgfx::destroy(stadiumTexturedVb_);
+    for (auto& [num, tex] : carTextures_) {
+        if (bgfx::isValid(tex)) bgfx::destroy(tex);
+    }
+    carTextures_.clear();
     bgfx::shutdown();
     delete callback_;
     callback_ = nullptr;
@@ -468,6 +473,17 @@ void Renderer::renderBlockedFrame() {
     bgfx::frame();
 }
 
+bgfx::TextureHandle Renderer::getOrBuildCarTexture(const Car& car) {
+    auto it = carTextures_.find(car.num);
+    if (it != carTextures_.end()) return it->second;
+    const std::vector<uint8_t> pixels = buildLiveryPixels(car.col, car.num, car.idx, car.scheme);
+    const bgfx::TextureHandle tex =
+        bgfx::createTexture2D((uint16_t)kLiveryTextureSize, (uint16_t)kLiveryTextureSize, false, 1,
+                               bgfx::TextureFormat::RGBA8, 0, bgfx::copy(pixels.data(), (uint32_t)pixels.size()));
+    carTextures_[car.num] = tex;
+    return tex;
+}
+
 void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& cars,
                             const MenuSelection* menu, const std::string* menuTrackName,
                             const std::vector<Car*>* finishOrder) {
@@ -723,54 +739,53 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         bgfx::submit(kView, texturedLitProgram_);
     }
 
+    // Phase 5f (PORT_PROGRESS.md): each car now samples its own livery
+    // texture (livery.h) instead of a flat vertex color -- one draw call
+    // per car (a shared transient buffer no longer works once every car
+    // can bind a different texture). UV mapping is a "logged adaptation"
+    // (livery.h's own header comment): JS's carU()/carV() map onto a full
+    // 3D lofted body this port doesn't have; here the quad's long axis
+    // (nose-tail) maps to carU()'s own linear formula and the short axis
+    // (left-right) maps to a narrow band straddling the roof/number-decal
+    // region (v=0.30-0.70) -- roughly what a camera looking straight down
+    // would actually see, not the full wraparound side profile.
     if (!cars.empty() && track_) {
-        const uint32_t maxVerts = (uint32_t)cars.size() * 6; // 2 triangles/car, triangle list
-        if (bgfx::getAvailTransientVertexBuffer(maxVerts, litLayout_) >= maxVerts) {
-            bgfx::TransientVertexBuffer tvb;
-            bgfx::allocTransientVertexBuffer(&tvb, maxVerts, litLayout_);
-            auto* vertex = (PosNormalColorVertex*)tvb.data;
-            uint32_t vIdx = 0;
-            const float hl = (float)(CAR.len / 2.0);
-            const float hw = (float)(CAR.wid / 2.0);
-            for (auto& c : cars) {
-                const float ch = (float)c.hdg;
-                const float cs = std::cos(ch), sn = std::sin(ch);
-                const float wx = (float)c.x, wy = (float)c.y;
-                const uint32_t col = packColor((float)c.col[0], (float)c.col[1], (float)c.col[2]);
-                // Phase 5a (PORT_PROGRESS.md): the quad now sits at its
-                // pos3()-derived height on the (possibly banked) surface
-                // instead of a flat world Z, with a surfaceUp()-derived
-                // normal so it shades correctly -- but the quad's own
-                // shape/corners stay flat and horizontal (no 3D car loft;
-                // that's out of scope for all of Phase 5, not just this
-                // sub-phase).
-                const Vec3 carPos = pos3(*track_, c.s, c.lat);
-                const Vec3 carUp = surfaceUp(*track_, c.s);
-                const float carY = (float)carPos.y;
-                // Local-space corners, rotated by heading then translated to
-                // world position -- baked directly into vertex positions
-                // (world space) rather than via a per-draw model matrix,
-                // since this transient buffer is rebuilt from scratch every
-                // frame anyway.
-                const float lx[4] = {hl, hl, -hl, -hl};
-                const float ly[4] = {hw, -hw, -hw, hw};
-                float px[4], py[4];
-                for (int k = 0; k < 4; ++k) {
-                    px[k] = wx + lx[k] * cs - ly[k] * sn;
-                    py[k] = wy + lx[k] * sn + ly[k] * cs;
-                }
-                const float nx = (float)carUp.x, ny = (float)carUp.y, nz = (float)carUp.z;
-                vertex[vIdx++] = {px[0], carY, py[0], nx, ny, nz, col};
-                vertex[vIdx++] = {px[1], carY, py[1], nx, ny, nz, col};
-                vertex[vIdx++] = {px[2], carY, py[2], nx, ny, nz, col};
-                vertex[vIdx++] = {px[0], carY, py[0], nx, ny, nz, col};
-                vertex[vIdx++] = {px[2], carY, py[2], nx, ny, nz, col};
-                vertex[vIdx++] = {px[3], carY, py[3], nx, ny, nz, col};
+        const float hl = (float)(CAR.len / 2.0);
+        const float hw = (float)(CAR.wid / 2.0);
+        for (auto& c : cars) {
+            const float ch = (float)c.hdg;
+            const float cs = std::cos(ch), sn = std::sin(ch);
+            const float wx = (float)c.x, wy = (float)c.y;
+            const Vec3 carPos = pos3(*track_, c.s, c.lat);
+            const Vec3 carUp = surfaceUp(*track_, c.s);
+            const float carY = (float)carPos.y;
+            const float lx[4] = {hl, hl, -hl, -hl};
+            const float ly[4] = {hw, -hw, -hw, hw};
+            float px[4], py[4], uu[4], vv[4];
+            for (int k = 0; k < 4; ++k) {
+                px[k] = wx + lx[k] * cs - ly[k] * sn;
+                py[k] = wy + lx[k] * sn + ly[k] * cs;
+                uu[k] = 0.02f + (hl - lx[k]) / (2.0f * hl) * 0.76f; // carU(), nose->0.02, tail->0.78
+                vv[k] = 0.5f + (ly[k] / hw) * 0.20f;                // roof-straddling band
             }
+            const float nx = (float)carUp.x, ny = (float)carUp.y, nz = (float)carUp.z;
+            if (bgfx::getAvailTransientVertexBuffer(6, texturedLitLayout_) < 6) continue;
+            bgfx::TransientVertexBuffer tvb;
+            bgfx::allocTransientVertexBuffer(&tvb, 6, texturedLitLayout_);
+            auto* vertex = (PosNormalUVVertex*)tvb.data;
+            vertex[0] = {px[0], carY, py[0], nx, ny, nz, uu[0], vv[0]};
+            vertex[1] = {px[1], carY, py[1], nx, ny, nz, uu[1], vv[1]};
+            vertex[2] = {px[2], carY, py[2], nx, ny, nz, uu[2], vv[2]};
+            vertex[3] = {px[0], carY, py[0], nx, ny, nz, uu[0], vv[0]};
+            vertex[4] = {px[2], carY, py[2], nx, ny, nz, uu[2], vv[2]};
+            vertex[5] = {px[3], carY, py[3], nx, ny, nz, uu[3], vv[3]};
+
+            const bgfx::TextureHandle carTex = getOrBuildCarTexture(c);
             bgfx::setTransform(identity);
-            bgfx::setVertexBuffer(0, &tvb, 0, vIdx);
+            bgfx::setVertexBuffer(0, &tvb, 0, 6);
+            bgfx::setTexture(0, uSkyTexColor_, carTex);
             bgfx::setState(state);
-            bgfx::submit(kView, litProgram_);
+            bgfx::submit(kView, texturedLitProgram_);
         }
     }
     } // !showResults

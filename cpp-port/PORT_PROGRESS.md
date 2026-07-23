@@ -609,6 +609,11 @@ see this session's log entry below (atlas_texture.h/.cpp CPU rasterizer,
 vs_textured_lit/fs_textured_lit shader path, front-tier stand seats now
 genuinely crowd-textured instead of flat-colored).
 
+**Phase 5f done (Session 7)**: livery texture painting -- see this session's
+log entry below (livery.h/.cpp CPU rasterizer, per-car texture cache keyed
+by car number, car quads switched to the textured-lit shader with UVs,
+7-segment digit rasterizer standing in for real font-based number decals).
+
 ### Phase 6 — Polish & platform packaging — NOT STARTED, DEPRIORITIZED
 The user explicitly clarified (Session 3, same session Phase 7 below started): no App Store,
 no native Android/iOS distribution wanted at all -- they want to play from Safari, ideally
@@ -3131,3 +3136,71 @@ elsewhere in the same run.
   sky/track/HUD rendering.
 
   **Next**: Phase 5f (livery texture painting).
+
+- **Session 7 -- Phase 5f: livery texture painting.** Ports JS's
+  `paintLivery()`/`buildCarTexture()` (index.html:2594-2880) as a
+  full-fidelity CPU rasterizer producing one texture per car, cached by
+  car number (mirrors JS's `CARBUFS`), applied to the existing flat car
+  quad via the same textured-lit pipeline Phase 5e introduced.
+
+  **New `src/render/livery.h/.cpp`** (bgfx-free): `buildLiveryPixels()`
+  ports the 3-tone flat shading (shadow/base/highlight bands), all 5
+  stripe styles (twin stripes, forward-slash via an explicit shear-space
+  fill rather than simulating canvas's `transform()`, two-tone fade,
+  halo, flames via the exact overlapping-circle `drawFlameLick()`
+  algorithm), rocker/seam darkening, graduated wheel-arch shadow rings,
+  rubber/soot smudges, tinted glass (windshield/side/rear + window-net
+  weave + A/B pillar edges), roof flaps, roof/door/deck-lid number
+  decals, and all 3 nose/tail mask styles. **Logged simplifications**
+  (all in the header's own comment, following this sub-phase's own
+  "full-fidelity, not a shortcut tint" framing while still being explicit
+  about what a CPU rasterizer without a font/3D-loft can't reasonably
+  do): a 256x256 texture instead of JS's 768x768; car numbers use a small
+  embedded 7-segment-style digit rasterizer instead of real font text
+  (JS's `drawNum()` calls into the browser's own font renderer -- no
+  equivalent here without embedding a full font); sponsor wordmarks and
+  the "LHT CUP" series-bar text are skipped entirely (same `drawWord()`
+  bitmap-font gap Phase 5e's sponsor tiles already hit); the SW.*
+  "swatches" JS paints for its separate 3D wheel/rim/chrome geometry to
+  sample are skipped as **inapplicable, not deferred** (this port's car
+  has no such separate geometry); contingency decal chips, hood pins, and
+  the fuel-filler ring are skipped for scope control (low visual value
+  relative to cost, unlike the stripes/numbers that are the livery's
+  actual identity). New `tests/livery_test.cpp`: 3-tone shading band
+  brightness ordering, all 5 stripe styles producing pairwise-distinct
+  textures, different car numbers producing different pixels in the
+  number-decal region, every real `ROSTER` entry building successfully,
+  and the player car's null-scheme fallback path.
+
+  **UV-mapping adaptation** (the other half of the already-agreed "no 3D
+  car loft" scope cut, so this was expected going in, not a new corner
+  cut): JS's `carU()`/`carV()` map onto a full lofted 3D body; this
+  port's car is one flat top-down quad, so the mapping used is the quad's
+  long axis (nose-tail) -> `carU()`'s own linear formula, short axis
+  (left-right) -> a narrow band straddling the roof/number-decal region
+  (v=0.30-0.70) approximating what a straight-down camera would actually
+  see, rather than the full wraparound side profile. Most side-panel-
+  specific detail (rocker shadows, wheel-arch rings, nose/tail masks) is
+  therefore never actually visible from this port's supported camera
+  angles -- ported anyway for a complete, correct texture, in case a 3D
+  loft is ever added later.
+
+  **`renderer.cpp`**: added `getOrBuildCarTexture()` (lazy-build-and-cache
+  by car number, mirrors `CARBUFS`, never cleared by `setTrack()` since a
+  car's livery doesn't depend on which track it's racing at). The car-
+  quad draw loop changed from one shared transient buffer for all cars to
+  one draw call per car (unavoidable once every car can bind a different
+  texture), using `PosNormalUVVertex` + the textured-lit program from
+  Phase 5e. No pace-car texture variant: confirmed before starting that
+  this port has no pace-car visual to build one for.
+
+  **Verified**: `ctest` 20/20 (livery_test added). Headless `xvfb-run`
+  screenshots (`TopDown` and `Chase`, Thunder Oval) show every car with a
+  genuinely distinguishable livery -- different base colors, a visible
+  dark roof/glass band, and (on the closest `Chase`-mode cars) legible
+  number-decal digits via the 7-segment rasterizer -- a clear improvement
+  over the previous single flat-color car quads, with no regression to
+  the sky/ground/stadium/HUD rendering established in 5a-5e.
+
+  **Next**: Phase 5g (Big Sable jumbotron/pylon + Cedar Valley hill
+  silhouette).

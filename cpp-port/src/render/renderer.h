@@ -23,6 +23,7 @@
 #include <bgfx/bgfx.h>
 
 #include <chrono>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -191,6 +192,14 @@ private:
     bgfx::UniformHandle uSkyTexColor_ = BGFX_INVALID_HANDLE;
     bgfx::VertexBufferHandle skyVb_ = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle skyTexture_ = BGFX_INVALID_HANDLE;
+
+    // Phase 5f (PORT_PROGRESS.md): per-car livery textures (livery.h),
+    // cached by car number -- mirrors JS's own CARBUFS cache. Built lazily
+    // the first time each car number is drawn; NOT cleared by setTrack()
+    // (a car's number/livery doesn't depend on which track it's racing
+    // at), only by shutdown().
+    std::unordered_map<int, bgfx::TextureHandle> carTextures_;
+    bgfx::TextureHandle getOrBuildCarTexture(const Car& car);
 
     bgfx::CallbackI* callback_ = nullptr;
 };
