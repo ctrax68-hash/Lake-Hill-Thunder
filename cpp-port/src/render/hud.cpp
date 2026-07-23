@@ -1,5 +1,6 @@
 #include "hud.h"
 #include "fmt_time.h"
+#include "gear_rpm.h"
 
 #include <bgfx/bgfx.h>
 
@@ -61,4 +62,10 @@ void drawHud(const RaceState& state, const std::vector<Car>& cars) {
     // rendering addition.
     bgfx::dbgTextPrintf(1, 5, attr(kWhite, kBlack), "LAST %s", fmtLapTime(player->lastLapT).c_str());
     bgfx::dbgTextPrintf(1, 6, attr(kWhite, kBlack), "BEST %s", fmtLapTime(player->bestLapT).c_str());
+
+    // Phase 4d (PORT_PROGRESS.md): index.html:3800-3821's drawSpeedModule()
+    // gear+RPM readout, via the ported gearRpm() (gear_rpm.h) -- gear/RPM
+    // aren't real physics state, just a display-time function of Car::v.
+    const GearRpm gr = gearRpm(player->v);
+    bgfx::dbgTextPrintf(1, 7, attr(kWhite, kBlack), "GEAR %d  RPM %3d%%", gr.gear, (int)(gr.rpm * 100));
 }

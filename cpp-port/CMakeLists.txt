@@ -198,6 +198,7 @@ add_executable(lht_port
   src/platform/main.cpp
   src/platform/tilt_input.cpp
   src/render/fmt_time.cpp
+  src/render/gear_rpm.cpp
   src/render/hud.cpp
   src/render/renderer.cpp
   src/ui/menu.cpp
@@ -306,6 +307,11 @@ add_test(NAME menu_test COMMAND menu_test)
 # formatting logic -- zero bgfx/SDL2 dependency at all, unlike menu_test.
 add_executable(fmt_time_test tests/fmt_time_test.cpp src/render/fmt_time.cpp)
 add_test(NAME fmt_time_test COMMAND fmt_time_test)
+
+# Phase 4d (PORT_PROGRESS.md): gear_rpm_test exercises gearRpm()'s pure
+# breakpoint math -- same zero-dependency category as fmt_time_test.
+add_executable(gear_rpm_test tests/gear_rpm_test.cpp src/render/gear_rpm.cpp)
+add_test(NAME gear_rpm_test COMMAND gear_rpm_test)
 
 add_executable(determinism_test tests/determinism_test.cpp tests/determinism/trace.cpp)
 add_test(NAME determinism_test COMMAND determinism_test)

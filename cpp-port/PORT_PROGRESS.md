@@ -539,9 +539,8 @@ port; it's the reference the C++ port must match).
       **Explicitly NOT ported** (deferred to future Phase 4 sub-tasks, all noted in
       `hud.h`'s own header comment): the per-driver leaderboard panel (names, car-color
       chips, live broadcast-style gaps), the minimap (player wedge + trouble-pulse
-      rings), the segmented tire/fuel/car bars, and the gear/RPM readout -- this is
-      deliberately just the three-item literal brief, not the JS side's much bigger
-      current HUD surface.
+      rings), and the segmented tire/fuel/car bars -- this was deliberately just the
+      three-item literal brief, not the JS side's much bigger current HUD surface.
       **Verified**: full `ctest` suite unaffected, 7/7. `lht_port` rebuilds clean.
       Captured a headless `xvfb-run` screenshot, corrected for the capture's `yflip`
       metadata (a mistake caught mid-verification -- an early flip-less crop showed
@@ -556,6 +555,7 @@ port; it's the reference the C++ port must match).
       text buffer too.
       **Phase 4c done (Session 6)**: LAST/BEST lap time strip added, see this file's
       own Session 6 log entry below for the full writeup.
+      **Phase 4d done (Session 6)**: GEAR/RPM readout added, same log entry.
 - [ ] Results screen
 
 ### Phase 5 — Full render fidelity — NOT STARTED
@@ -2289,3 +2289,27 @@ elsewhere in the same run.
   this screenshot actually exercises, and the formatting logic itself is
   exhaustively covered by the new unit test instead of chasing a live
   completed-lap screenshot for its own sake).
+
+  **Phase 4d -- gear/RPM readout**: confirmed via `index.html`'s own
+  comment (1389-1391) that `gearRpm(v)` is a *shared* breakpoint table JS
+  uses for both the HUD readout and its engine-audio pitch calc
+  (`audioTick()`) -- but it's a pure function of `Car::v` either way, not
+  stored car state, so only the HUD side needed porting (this port has no
+  audio system to share it with yet). Ported line-for-line into a new
+  `src/render/gear_rpm.h/.cpp` (`GEAR_BREAKS=[14,26,40,70]`, including the
+  `g===GEAR_BREAKS.length-1` fallback branch that keeps any speed past 70
+  in top gear with clamped rpm, rather than falling off the loop). One new
+  `GEAR n  RPM nnn%` dbgText row in `hud.cpp`.
+
+  **New `tests/gear_rpm_test.cpp`** (ctest now 10/10): hand-computed
+  `(v, gear, rpm)` triples straddling each of the 4 breakpoints exactly
+  (at each breakpoint, just past it, and one case past the last
+  breakpoint confirming the clamp-to-gear-4 fallback).
+
+  **Verified**: `ctest` 10/10. Headless `xvfb-run` screenshot
+  (`LHT_FORCE_RACE=1`, a short 120-frame run so the player's initial pace-
+  lap velocity hasn't decayed to zero yet) shows `GEAR 3  RPM  49%` at
+  `SPD 30` -- hand-checked against `gearRpm()`'s own formula for `v≈30.5`
+  (truncated to the displayed integer `30`): `0.25 + 0.75*(30.5-26)/
+  (40-26) ≈ 0.491 → 49%`, confirming the live HUD value, not just the
+  unit test, matches the ported formula.
