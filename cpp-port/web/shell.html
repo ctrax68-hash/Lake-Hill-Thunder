@@ -42,11 +42,27 @@
     background: #000; color: #f55; font: 14px/1.5 monospace;
     padding: 24px; box-sizing: border-box; overflow: auto; white-space: pre-wrap;
   }
+  /* Diagnostic build: a real device console isn't reachable here (no
+     macOS/iOS Safari Web Inspector available in any sandbox this project
+     has ever run in -- see PORT_PROGRESS.md), so this surfaces every
+     stdout/stderr line -- including bgfx's own trace output, previously
+     silently discarded by ScreenshotCallback::traceVargs() -- directly on
+     the page. Non-blocking (small, top-anchored, semi-transparent) so it
+     doesn't hide a working game once the real bug is found and fixed.
+     Remove or gate behind a query param once this diagnostic pass is done. */
+  #lht-log {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 9;
+    max-height: 40vh; overflow: auto; margin: 0;
+    background: rgba(0, 0, 0, 0.75); color: #6f6; font: 11px/1.4 monospace;
+    padding: 6px 8px; box-sizing: border-box; white-space: pre-wrap;
+    pointer-events: none;
+  }
 </style>
 </head>
 <body>
 <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
 <div id="lht-fatal"></div>
+<pre id="lht-log"></pre>
 <script>
   // Without this, a failure before/during WASM init (WebGL2 context
   // creation failing, bgfx::init() returning false, an uncaught JS
@@ -61,26 +77,46 @@
     el.style.display = 'block';
   }
 
+  var lhtLogEl = document.getElementById('lht-log');
+  function lhtLog(line) {
+    lhtLogEl.textContent += line + '\n';
+    lhtLogEl.scrollTop = lhtLogEl.scrollHeight;
+  }
+
   var canvas = document.getElementById('canvas');
-  if (!canvas.getContext('webgl2')) {
+  // Feature-detect on a throwaway canvas, not the real one -- calling
+  // getContext('webgl2') on #canvas here would create a real WebGL2
+  // context before bgfx/Emscripten ever gets to it, and a given canvas
+  // can only ever be bound to one context in its lifetime. Avoids that
+  // risk entirely rather than relying on same-type getContext() reuse
+  // behaving identically across engines.
+  if (!document.createElement('canvas').getContext('webgl2')) {
     lhtShowFatal(
       'This browser/device does not support WebGL2, which this game requires.\n' +
       'Try updating your browser, or use a recent desktop browser instead.'
     );
   }
+  lhtLog('[lht] WebGL2 available: ' + !!document.createElement('canvas').getContext('webgl2'));
 
   window.addEventListener('error', function (e) {
-    lhtShowFatal((e.message || String(e.error || e)) +
-      (e.filename ? '\n(' + e.filename + ':' + e.lineno + ')' : ''));
+    var msg = (e.message || String(e.error || e)) +
+      (e.filename ? '\n(' + e.filename + ':' + e.lineno + ')' : '');
+    lhtLog('[error] ' + msg);
+    lhtShowFatal(msg);
   });
   window.addEventListener('unhandledrejection', function (e) {
-    lhtShowFatal(String((e.reason && e.reason.message) || e.reason));
+    var msg = String((e.reason && e.reason.message) || e.reason);
+    lhtLog('[unhandledrejection] ' + msg);
+    lhtShowFatal(msg);
   });
 
   var Module = {
     canvas: canvas,
-    onAbort: function (what) { lhtShowFatal(String(what)); },
+    onAbort: function (what) { lhtLog('[onAbort] ' + what); lhtShowFatal(String(what)); },
+    print: function (text) { lhtLog(text); },
+    printErr: function (text) { lhtLog('[stderr] ' + text); },
   };
+  lhtLog('[lht] shell.html running, waiting for lht_port.js...');
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js');
   }

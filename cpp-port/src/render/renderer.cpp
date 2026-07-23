@@ -44,7 +44,11 @@ public:
         std::fprintf(stderr, "bgfx fatal (%s:%u): %s\n", filePath, line, str);
         std::abort();
     }
-    void traceVargs(const char*, uint16_t, const char*, va_list) override {}
+    void traceVargs(const char* filePath, uint16_t line, const char* format, va_list argList) override {
+        char buf[512];
+        std::vsnprintf(buf, sizeof(buf), format, argList);
+        std::fprintf(stderr, "bgfx trace (%s:%u): %s", filePath, line, buf);
+    }
     void profilerBegin(const char*, uint32_t, const char*, uint16_t) override {}
     void profilerBeginLiteral(const char*, uint32_t, const char*, uint16_t) override {}
     void profilerEnd() override {}

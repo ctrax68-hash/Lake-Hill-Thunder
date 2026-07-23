@@ -2,7 +2,7 @@
 // shell. Bump CACHE_NAME on any redeploy that changes these files -- the
 // activate handler below deletes anything not matching the current name,
 // so this is the whole cache-busting mechanism.
-const CACHE_NAME = 'lht-v3';
+const CACHE_NAME = 'lht-v4';
 const APP_SHELL = [
   './index.html',
   './lht_port.js',
