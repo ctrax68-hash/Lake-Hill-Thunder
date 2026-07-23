@@ -17,13 +17,12 @@ $input v_color0, v_normal
 // JS's own light intensities (e.g. sun=3.2, hemi=1.1) are calibrated to be
 // used WITH ACES filmic tonemapping (THREE.ACESFilmicToneMapping,
 // index.html:1508), which gracefully compresses over-bright values back
-// into a displayable range -- that tonemap pass is Phase 5h's job, not
-// this sub-phase's. Writing those same intensities straight to an LDR
-// backbuffer with no tonemap at all would clip almost everything to a
-// uniform blown-out near-white, hiding the very shading variation (banked
-// vs. flat surfaces) Phase 5a exists to make visible. Clamping the
-// light sum to 1.0 here is a deliberate, temporary stand-in -- logged in
-// PORT_PROGRESS.md -- until Phase 5h's real tonemap pass replaces it.
+// into a displayable range. Phase 5a-5g's `min(..., vec3(1.0))` hard clamp
+// was a temporary stand-in for that missing tonemap pass (logged in
+// PORT_PROGRESS.md at the time); Phase 5h adds the real offscreen-FBO +
+// ACES tonemap chain (renderer.cpp/fs_grade_tonemap.sc), so this shader now
+// writes its lit color unclamped, above 1.0 where the lighting math wants
+// it to be, and lets that later pass do the graceful roll-off instead.
 
 #include <bgfx_shader.sh>
 #include <shaderlib.sh>
@@ -39,7 +38,7 @@ void main()
 	float hemiT = clamp(n.y * 0.5 + 0.5, 0.0, 1.0);
 	vec3 ambient = mix(u_hemiGround.rgb, u_hemiSky.rgb, hemiT);
 	float ndotl = max(dot(n, u_sunDir.xyz), 0.0);
-	vec3 lightAmt = min(ambient + u_sunColor.rgb * ndotl, vec3(1.0, 1.0, 1.0));
+	vec3 lightAmt = ambient + u_sunColor.rgb * ndotl;
 	vec3 lit = v_color0.rgb * lightAmt;
 	gl_FragColor = vec4(lit, v_color0.a);
 }

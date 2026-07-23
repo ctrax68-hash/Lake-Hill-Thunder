@@ -201,5 +201,32 @@ private:
     std::unordered_map<int, bgfx::TextureHandle> carTextures_;
     bgfx::TextureHandle getOrBuildCarTexture(const Car& car);
 
+    // Phase 5h (PORT_PROGRESS.md): the bloom+grade+tonemap postprocess
+    // chain. The sky/world views now render into `sceneFb_` (an offscreen
+    // color+depth target) instead of the backbuffer; `bloomBrightFb_`/
+    // `bloomBlurFb_` are a half-resolution bright-pass + fixed-radius-blur
+    // pair; the final grade+tonemap pass composites both back onto the
+    // real backbuffer, and the UI view (unchanged) draws on top of that,
+    // same as before -- see renderFrame()'s own comments for the full view
+    // chain. `sceneFb_`'s color format is RGBA16F when the backend supports
+    // it as a render target, RGBA8 otherwise (chosen once in
+    // createPostFxTargets()) -- letting fs_lit.sc/fs_textured_lit.sc write
+    // lit values above 1.0 for this pass's ACES curve to roll off, instead
+    // of Phase 5a-5g's earlier hard `min(..., 1.0)` clamp.
+    bgfx::FrameBufferHandle sceneFb_ = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle bloomBrightFb_ = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle bloomBlurFb_ = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle bloomBrightProgram_ = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle bloomBlurProgram_ = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle gradeTonemapProgram_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle uTexBloom_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle uBloomParams_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle uGradeParams1_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle uGradeParams2_ = BGFX_INVALID_HANDLE;
+    // (Re)creates sceneFb_/bloomBrightFb_/bloomBlurFb_ at the given size --
+    // called from init() and resize() (bgfx framebuffers, unlike the real
+    // backbuffer, don't auto-resize on bgfx::reset()).
+    void createPostFxTargets(int width, int height);
+
     bgfx::CallbackI* callback_ = nullptr;
 };

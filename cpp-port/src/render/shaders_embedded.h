@@ -59,6 +59,19 @@
 #include "essl/vs_textured_lit.sc.bin.h"
 #include "essl/fs_textured_lit.sc.bin.h"
 
+// Phase 5h (PORT_PROGRESS.md): fs_bloom_bright/fs_bloom_blur/fs_grade_tonemap,
+// the bloom+grade+tonemap postprocess chain. Fragment-only -- each reuses
+// vs_sky (above) as its vertex stage, so no new vs_* embed entries needed.
+#include "spirv/fs_bloom_bright.sc.bin.h"
+#include "glsl/fs_bloom_bright.sc.bin.h"
+#include "essl/fs_bloom_bright.sc.bin.h"
+#include "spirv/fs_bloom_blur.sc.bin.h"
+#include "glsl/fs_bloom_blur.sc.bin.h"
+#include "essl/fs_bloom_blur.sc.bin.h"
+#include "spirv/fs_grade_tonemap.sc.bin.h"
+#include "glsl/fs_grade_tonemap.sc.bin.h"
+#include "essl/fs_grade_tonemap.sc.bin.h"
+
 static const bgfx::EmbeddedShader s_embeddedShaders[] = {
     BGFX_EMBEDDED_SHADER(vs_flat),
     BGFX_EMBEDDED_SHADER(fs_flat),
@@ -68,5 +81,8 @@ static const bgfx::EmbeddedShader s_embeddedShaders[] = {
     BGFX_EMBEDDED_SHADER(fs_sky),
     BGFX_EMBEDDED_SHADER(vs_textured_lit),
     BGFX_EMBEDDED_SHADER(fs_textured_lit),
+    BGFX_EMBEDDED_SHADER(fs_bloom_bright),
+    BGFX_EMBEDDED_SHADER(fs_bloom_blur),
+    BGFX_EMBEDDED_SHADER(fs_grade_tonemap),
     BGFX_EMBEDDED_SHADER_END()
 };

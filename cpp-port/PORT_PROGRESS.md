@@ -620,6 +620,15 @@ LED-digit geometry, pylon_mesh.h/.cpp scoring-pylon/jumbotron builders gated
 on `stadium.pylon`/`.jumbotron`, hill_silhouette.h/.cpp's ring-of-quads
 backdrop gated on `sky.silhouette=='hills'`).
 
+**Phase 5h done (Session 7)**: hand-rolled bloom + tonemap postprocessing --
+see this session's log entry below (offscreen scene FBO, half-res bright-
+pass + fixed-radius blur, grade+ACES-tonemap combine pass, fs_lit/
+fs_textured_lit's tonemap-stand-in clamp removed). Also root-caused and
+resolved (as a verification-environment-only finding, not a code fix) a
+real R/B color-swap investigation -- see the log entry for the full
+diagnosis and why native `xvfb-run` screenshots need a WASM/Chromium
+cross-check for hue-sensitive claims going forward.
+
 ### Phase 6 — Polish & platform packaging — NOT STARTED, DEPRIORITIZED
 The user explicitly clarified (Session 3, same session Phase 7 below started): no App Store,
 no native Android/iOS distribution wanted at all -- they want to play from Safari, ideally
@@ -3279,3 +3288,104 @@ elsewhere in the same run.
   stand/livery/HUD rendering from 5a-5f.
 
   **Next**: Phase 5h (hand-rolled bloom + tonemap postprocessing).
+
+- **Session 7 -- Phase 5h: hand-rolled bloom + tonemap postprocessing.** The
+  last Phase 5 checklist item: an offscreen bloom + grade + ACES-tonemap
+  chain, ported from JS's `EffectComposer` pipeline
+  (`RenderPass -> UnrealBloomPass -> ShaderPass(GradeShader) -> OutputPass`,
+  index.html:1552-1567).
+
+  **`renderer.cpp`/`.h`**: sky+world (views 0/1) now render into an offscreen
+  `sceneFb_` (color + D24S8 depth) instead of the real backbuffer -- color
+  format is `RGBA16F` when `bgfx::getCaps()` reports it usable as a render
+  target, `RGBA8` otherwise (`createPostFxTargets()`, called from `init()`
+  and `resize()`, since bgfx framebuffers don't auto-resize on
+  `bgfx::reset()` the way the backbuffer does). Three new views composite
+  this back onto the real backbuffer: a half-res bright-pass (threshold=0.85,
+  JS's own `UnrealBloomPass` threshold), a half-res fixed-radius 3x3 binomial
+  blur (view 2/3), then a final grade+tonemap fullscreen pass (view 4) that
+  additively combines the blurred bloom (strength=0.32, JS's own
+  `UnrealBloomPass` strength), applies JS's `GradeShader` math verbatim
+  (`color=pow(max(0,color*1.04+0),1/0.94)` -> saturation=1.10 -> vignette via
+  `smoothstep(0.55,0.95,...)`), then an ACES filmic tonemap curve (the
+  standard Narkowicz 2015 approximation) applied LAST -- matching JS's own
+  pass ordering (tonemap happens in `OutputPass`, which runs after
+  `GradeShader`, not before). The UI view (renumbered 2->5 to stay the last
+  view every frame) and bgfx's own dbgText overlay are both unaffected by
+  this chain, matching JS's HUD being a separate DOM/CSS layer entirely
+  outside `EffectComposer`.
+
+  **New shaders**: `fs_bloom_bright.sc`, `fs_bloom_blur.sc`,
+  `fs_grade_tonemap.sc` -- all three reuse `vs_sky.sc`/`varying_sky.def.sc`
+  as their vertex stage (a fullscreen NDC quad with a UV passthrough is
+  already exactly what a postprocess pass needs) rather than adding a
+  redundant `vs_fullscreen.sc`, logged in `fs_bloom_bright.sc`'s own comment.
+  The bloom-combine step lives inside `fs_grade_tonemap.sc` rather than a
+  separate `fs_bloom_combine.sc` (JS's own bloom pass already composites
+  internally before its grade pass runs, so this port's equivalent combine
+  step has no reason to be its own view/framebuffer round-trip) -- a
+  documented simplification from the plan's original 4-shader sketch.
+
+  **`fs_lit.sc`/`fs_textured_lit.sc`**: removed the `min(lightAmt, 1.0)` hard
+  clamp that stood in for "no tonemap pass exists yet" since Phase 5a --
+  lit color can now genuinely exceed 1.0 (this port's `ENV_PRESETS` sun/hemi
+  intensities were always calibrated assuming ACES tonemapping downstream,
+  same as JS's own light intensities) and this pass's ACES curve rolls it
+  off gracefully instead.
+
+  **A real bug found and root-caused, not just worked around**: with the
+  clamp removed, headless `xvfb-run` screenshots showed grass (and likely
+  other vertex-colored lit geometry) rendering with a visibly wrong hue --
+  a bright mint/cyan instead of green. Root-caused via a sequence of
+  isolating tests (bypassing the new offscreen FBO entirely, forcing
+  RGBA8 instead of RGBA16F, replacing `fs_lit.sc` with a raw
+  `v_color0`-passthrough, and finally feeding a hardcoded pure-red
+  `packColor(1,0,0)` through the ground plane) down to: **the
+  `PosNormalColorVertex`/`litLayout_`/`vs_lit.sc`/`fs_lit.sc` pipeline
+  displays pure red as pure blue** -- a clean R/B channel swap, with green
+  unaffected. This reproduces with zero lighting math involved (proven via
+  the raw-passthrough test) and is independent of the offscreen-FBO work
+  entirely (reproduces with world/sky rendering straight to the backbuffer,
+  Phase 5h's own redirect disabled) -- so it predates this sub-phase, it was
+  just invisible before now: the old clamp forced every bright pixel to
+  `min(..., 1.0)` per channel, and this project's per-track sun+hemi
+  intensities are bright enough that nearly every lit surface clamped to
+  pure white regardless of its true color, masking the swap completely.
+
+  **Confirmed to be a verification-environment-only artifact, not a real
+  defect**: the same grass pixel was compared between a native `xvfb-run`
+  screenshot (this sandbox's software `llvmpipe`/Mesa GL backend) and a real
+  headless-Chromium/WebGL2 screenshot of the WASM build (`tests/wasm_verify.js`,
+  Phase 7's own harness) at the identical world position. Native: `(84, 216,
+  169)`. Chromium/WebGL2: `(169, 216, 84)` -- an EXACT R/B mirror of each
+  other, green identical in both. Since the real shipped target is
+  WASM/WebGL2 in an actual browser (this project's whole reason for Phase 7),
+  and Chromium shows the objectively correct color (blue channel genuinely
+  lowest, matching `theme.grass`'s real `(0.176,0.314,0.086)` where B is the
+  smallest component), this is a `llvmpipe`-software-rasterizer-specific
+  vertex-attribute quirk in this sandboxed native build's GL backend, not a
+  bug in this port's own code -- no shader/vertex-layout change was made in
+  response to it. **Noted for future sessions**: native `xvfb-run`
+  screenshots in this sandbox are unreliable for exact-hue judgments on lit,
+  Normal-carrying vertex-colored geometry (`PosNormalColorVertex`) --
+  cross-check any hue-sensitive visual claim against a WASM/Chromium
+  screenshot (`tests/wasm_verify.js`) instead of trusting the native
+  screenshot alone. Flat/UI-pipeline geometry (`PosColorVertex`, no Normal
+  attribute -- the whole HUD/menu/results system) has never shown this
+  symptom and remains trustworthy natively.
+
+  **No new pure-logic unit tests** (a legitimate, plan-anticipated exception
+  -- this feature is inherently a GPU pixel pipeline, unlike every other
+  Phase 5 sub-phase).
+
+  **Verified**: `ctest` 23/23, no regressions. Native `xvfb-run`: a 200-frame
+  forced-race run completes without hanging/crashing; every screenshot shows
+  a clear corner vignette; a 3x-zoomed crop of the HUD text region shows
+  razor-sharp pixel-perfect font edges with no blur bleed, confirming the UI
+  view genuinely sits outside the bloom/grade/tonemap chain (checked
+  pixel-level, not just eyeballed). WASM/Chromium (`tests/wasm_verify.js`):
+  zero console/page errors, service worker + manifest + icons all OK, and
+  (per the color investigation above) the real-target render is confirmed
+  correct where the native screenshot alone would have been misleading.
+
+  **Next**: Phase 5 final integration + verification pass.

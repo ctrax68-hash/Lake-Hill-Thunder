@@ -157,8 +157,66 @@ bool Renderer::init(void* nativeDisplayHandle, void* nativeWindowHandle, int wid
     bgfx::ShaderHandle fshTexturedLit = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "fs_textured_lit");
     texturedLitProgram_ = bgfx::createProgram(vshTexturedLit, fshTexturedLit, true);
 
+    // Phase 5h (PORT_PROGRESS.md): the bloom+grade+tonemap postprocess
+    // chain's 3 programs, each pairing a *fresh* vs_sky shader handle (a
+    // second createEmbeddedShader() call, not the same handle skyProgram_
+    // already consumed -- createProgram(..., true) destroys its shaders
+    // when the program is destroyed, so each program needs its own vs_sky
+    // instance) with its own fragment shader.
+    bgfx::ShaderHandle vshBloomBright = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "vs_sky");
+    bgfx::ShaderHandle fshBloomBright = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "fs_bloom_bright");
+    bloomBrightProgram_ = bgfx::createProgram(vshBloomBright, fshBloomBright, true);
+    bgfx::ShaderHandle vshBloomBlur = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "vs_sky");
+    bgfx::ShaderHandle fshBloomBlur = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "fs_bloom_blur");
+    bloomBlurProgram_ = bgfx::createProgram(vshBloomBlur, fshBloomBlur, true);
+    bgfx::ShaderHandle vshGradeTonemap = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "vs_sky");
+    bgfx::ShaderHandle fshGradeTonemap = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "fs_grade_tonemap");
+    gradeTonemapProgram_ = bgfx::createProgram(vshGradeTonemap, fshGradeTonemap, true);
+    uTexBloom_ = bgfx::createUniform("s_texBloom", bgfx::UniformType::Sampler);
+    uBloomParams_ = bgfx::createUniform("u_bloomParams", bgfx::UniformType::Vec4);
+    uGradeParams1_ = bgfx::createUniform("u_gradeParams1", bgfx::UniformType::Vec4);
+    uGradeParams2_ = bgfx::createUniform("u_gradeParams2", bgfx::UniformType::Vec4);
+    createPostFxTargets(width, height);
+
     return bgfx::isValid(program_) && bgfx::isValid(litProgram_) && bgfx::isValid(skyProgram_) &&
-           bgfx::isValid(texturedLitProgram_);
+           bgfx::isValid(texturedLitProgram_) && bgfx::isValid(bloomBrightProgram_) &&
+           bgfx::isValid(bloomBlurProgram_) && bgfx::isValid(gradeTonemapProgram_) && bgfx::isValid(sceneFb_);
+}
+
+void Renderer::createPostFxTargets(int width, int height) {
+    if (bgfx::isValid(sceneFb_)) bgfx::destroy(sceneFb_);
+    if (bgfx::isValid(bloomBrightFb_)) bgfx::destroy(bloomBrightFb_);
+    if (bgfx::isValid(bloomBlurFb_)) bgfx::destroy(bloomBlurFb_);
+
+    // RGBA16F when the backend can use it as a render-target format (lets
+    // lit values exceed 1.0 without clipping before the tonemap pass sees
+    // them); RGBA8 otherwise. This port's lighting rarely produces values
+    // far above 1.0 anyway (no real HDR light sources), so RGBA8's
+    // precision loss here is a minor, honest fallback, not a real quality
+    // cliff -- exactly the "RGBA16F if available, else RGBA8" scope the
+    // plan called for.
+    const bgfx::Caps* caps = bgfx::getCaps();
+    const bool rgba16fOk =
+        (caps->formats[bgfx::TextureFormat::RGBA16F] & BGFX_CAPS_FORMAT_TEXTURE_FRAMEBUFFER) != 0;
+    const bgfx::TextureFormat::Enum sceneFormat = rgba16fOk ? bgfx::TextureFormat::RGBA16F : bgfx::TextureFormat::RGBA8;
+
+    const uint64_t colorFlags = BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
+    const uint16_t w = (uint16_t)std::max(1, width), h = (uint16_t)std::max(1, height);
+    const bgfx::TextureHandle sceneColor = bgfx::createTexture2D(w, h, false, 1, sceneFormat, colorFlags);
+    const bgfx::TextureHandle sceneDepth =
+        bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::D24S8, colorFlags);
+    bgfx::TextureHandle sceneAttachments[2] = {sceneColor, sceneDepth};
+    sceneFb_ = bgfx::createFrameBuffer(2, sceneAttachments, true);
+
+    // Half-res bright-pass + blur targets -- sampling the full-res scene
+    // texture at half-res destination coordinates lets the GPU's own
+    // bilinear filtering do the downsample for free (no explicit downsample
+    // shader pass needed).
+    const uint16_t bw = (uint16_t)std::max(1, width / 2), bh = (uint16_t)std::max(1, height / 2);
+    const bgfx::TextureHandle brightColor = bgfx::createTexture2D(bw, bh, false, 1, sceneFormat, colorFlags);
+    bloomBrightFb_ = bgfx::createFrameBuffer(1, &brightColor, true);
+    const bgfx::TextureHandle blurColor = bgfx::createTexture2D(bw, bh, false, 1, sceneFormat, colorFlags);
+    bloomBlurFb_ = bgfx::createFrameBuffer(1, &blurColor, true);
 }
 
 void Renderer::shutdown() {
@@ -182,6 +240,16 @@ void Renderer::shutdown() {
         if (bgfx::isValid(tex)) bgfx::destroy(tex);
     }
     carTextures_.clear();
+    if (bgfx::isValid(sceneFb_)) bgfx::destroy(sceneFb_);
+    if (bgfx::isValid(bloomBrightFb_)) bgfx::destroy(bloomBrightFb_);
+    if (bgfx::isValid(bloomBlurFb_)) bgfx::destroy(bloomBlurFb_);
+    if (bgfx::isValid(bloomBrightProgram_)) bgfx::destroy(bloomBrightProgram_);
+    if (bgfx::isValid(bloomBlurProgram_)) bgfx::destroy(bloomBlurProgram_);
+    if (bgfx::isValid(gradeTonemapProgram_)) bgfx::destroy(gradeTonemapProgram_);
+    if (bgfx::isValid(uTexBloom_)) bgfx::destroy(uTexBloom_);
+    if (bgfx::isValid(uBloomParams_)) bgfx::destroy(uBloomParams_);
+    if (bgfx::isValid(uGradeParams1_)) bgfx::destroy(uGradeParams1_);
+    if (bgfx::isValid(uGradeParams2_)) bgfx::destroy(uGradeParams2_);
     bgfx::shutdown();
     delete callback_;
     callback_ = nullptr;
@@ -469,6 +537,12 @@ void Renderer::resize(int width, int height) {
     width_ = width;
     height_ = height;
     bgfx::reset((uint32_t)width, (uint32_t)height, BGFX_RESET_VSYNC);
+    // Phase 5h (PORT_PROGRESS.md): bgfx::reset() resizes the real backbuffer
+    // automatically, but the offscreen postfx targets are ordinary
+    // fixed-size framebuffers -- they need an explicit rebuild here or
+    // they'd stay stuck at the old resolution (and eventually mismatch the
+    // world view's viewport rect entirely).
+    createPostFxTargets(width, height);
 }
 
 void Renderer::requestScreenshot(const char* path) {
@@ -477,6 +551,14 @@ void Renderer::requestScreenshot(const char* path) {
 
 void Renderer::renderBlockedFrame() {
     const bgfx::ViewId kView = 0;
+    // Phase 5h (PORT_PROGRESS.md): view 0 is renderFrame()'s kSkyView, which
+    // that function points at the offscreen sceneFb_ whenever the sky
+    // paints -- a view's frame buffer assignment persists across frames
+    // until changed, so this MUST be reset to the real backbuffer
+    // explicitly, or a renderBlockedFrame() call right after a renderFrame()
+    // call would silently render this black screen into sceneFb_ instead
+    // (never reaching the display).
+    bgfx::setViewFrameBuffer(kView, BGFX_INVALID_HANDLE);
     bgfx::setViewRect(kView, 0, 0, (uint16_t)width_, (uint16_t)height_);
     // index.html:144's #rotate background is var(--c-black) -- opaque
     // black, no depth buffer needed since nothing else draws this frame.
@@ -524,6 +606,12 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     // layering.
     bgfx::setViewMode(kView, bgfx::ViewMode::Sequential);
     bgfx::setViewRect(kView, 0, 0, (uint16_t)width_, (uint16_t)height_);
+    // Phase 5h (PORT_PROGRESS.md): sky+world now render into the offscreen
+    // sceneFb_ instead of the real backbuffer -- the bloom/grade/tonemap
+    // chain below reads this as its input and writes the graded result to
+    // the actual backbuffer. Set explicitly every frame (bgfx view state,
+    // unlike the backbuffer itself, persists across frames until changed).
+    bgfx::setViewFrameBuffer(kView, sceneFb_);
     // Phase 5c (PORT_PROGRESS.md): when the sky view already painted this
     // frame's color buffer, the world view must NOT clear color -- a
     // view's clear touches its ENTIRE viewport regardless of what that
@@ -544,6 +632,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     // Sky draws only when the world does (skipped during the results
     // screen, same as the ribbon/cars below it).
     if (skyPaintedThisFrame) {
+        bgfx::setViewFrameBuffer(kSkyView, sceneFb_);
         bgfx::setViewRect(kSkyView, 0, 0, (uint16_t)width_, (uint16_t)height_);
         bgfx::setViewClear(kSkyView, BGFX_CLEAR_NONE);
         float skyIdentity[16];
@@ -805,6 +894,86 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     }
     } // !showResults
 
+    // Phase 5h (PORT_PROGRESS.md): bloom + grade/tonemap postprocess chain.
+    // sky/world (views 0/1, set up above) already rendered into sceneFb_
+    // instead of the backbuffer; these 3 views composite that back onto
+    // the REAL backbuffer through a bright-pass + fixed-radius blur +
+    // final grade/tonemap fullscreen pass (reusing skyVb_'s fullscreen NDC
+    // quad and uSkyTexColor_'s "generic single-sampler" convention, same as
+    // every other fullscreen-quad draw in this renderer). Runs every frame
+    // regardless of mode -- results/menu included, matching JS's own
+    // EffectComposer, which has no "skip postfx this mode" branch either; a
+    // black-cleared results scene simply stays black (plus a barely-visible
+    // corner vignette) after the chain, no different in effect from before.
+    {
+        const bgfx::ViewId kBloomBrightView = 2;
+        const bgfx::ViewId kBloomBlurView = 3;
+        const bgfx::ViewId kGradeTonemapView = 4;
+        const bgfx::TextureHandle sceneColorTex = bgfx::getTexture(sceneFb_);
+        const uint16_t bloomW = (uint16_t)std::max(1, width_ / 2);
+        const uint16_t bloomH = (uint16_t)std::max(1, height_ / 2);
+
+        // Bright-pass: threshold=0.85 (JS's own UnrealBloomPass threshold,
+        // index.html:1563), sampled from the full-res scene into a half-res
+        // target -- the GPU's own bilinear filtering does the downsample.
+        bgfx::setViewFrameBuffer(kBloomBrightView, bloomBrightFb_);
+        bgfx::setViewRect(kBloomBrightView, 0, 0, bloomW, bloomH);
+        bgfx::setViewClear(kBloomBrightView, BGFX_CLEAR_NONE);
+        bgfx::setViewTransform(kBloomBrightView, identity, identity);
+        {
+            const float bloomParams[4] = {0.85f, 0.0f, 0.0f, 0.0f};
+            bgfx::setUniform(uBloomParams_, bloomParams);
+            bgfx::setTransform(identity);
+            bgfx::setVertexBuffer(0, skyVb_, 0, 6);
+            bgfx::setTexture(0, uSkyTexColor_, sceneColorTex);
+            bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+            bgfx::submit(kBloomBrightView, bloomBrightProgram_);
+        }
+
+        // Fixed-radius blur (fs_bloom_blur.sc's own comment): a 3x3
+        // binomial tap at 1.5 texels of the half-res bright buffer.
+        bgfx::setViewFrameBuffer(kBloomBlurView, bloomBlurFb_);
+        bgfx::setViewRect(kBloomBlurView, 0, 0, bloomW, bloomH);
+        bgfx::setViewClear(kBloomBlurView, BGFX_CLEAR_NONE);
+        bgfx::setViewTransform(kBloomBlurView, identity, identity);
+        {
+            const float bloomParams[4] = {0.0f, 1.0f / (float)bloomW, 1.0f / (float)bloomH, 1.5f};
+            bgfx::setUniform(uBloomParams_, bloomParams);
+            bgfx::setTransform(identity);
+            bgfx::setVertexBuffer(0, skyVb_, 0, 6);
+            bgfx::setTexture(0, uSkyTexColor_, bgfx::getTexture(bloomBrightFb_));
+            bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+            bgfx::submit(kBloomBlurView, bloomBlurProgram_);
+        }
+
+        // Grade + tonemap: additive bloom combine, JS's own GradeShader math
+        // (index.html:1533-1551: lift/gain/gamma, saturation, vignette),
+        // then an ACES filmic curve applied LAST (matching JS's
+        // RenderPass->Bloom->Grade->OutputPass ordering). Writes to the
+        // REAL backbuffer (explicit BGFX_INVALID_HANDLE -- a view's own
+        // frame buffer persists across frames until changed, so this must
+        // be set every frame now that other views use custom targets).
+        bgfx::setViewFrameBuffer(kGradeTonemapView, BGFX_INVALID_HANDLE);
+        bgfx::setViewRect(kGradeTonemapView, 0, 0, (uint16_t)width_, (uint16_t)height_);
+        bgfx::setViewClear(kGradeTonemapView, BGFX_CLEAR_NONE);
+        bgfx::setViewTransform(kGradeTonemapView, identity, identity);
+        {
+            // bloomStrength/gain/lift/gamma, then saturation/vignetteInner/
+            // vignetteOuter -- JS's own GradeShader defaults (index.html:
+            // 1534-1535) and UnrealBloomPass strength (index.html:1563).
+            const float gradeParams1[4] = {0.32f, 1.04f, 0.0f, 0.94f};
+            const float gradeParams2[4] = {1.10f, 0.55f, 0.95f, 0.0f};
+            bgfx::setUniform(uGradeParams1_, gradeParams1);
+            bgfx::setUniform(uGradeParams2_, gradeParams2);
+            bgfx::setTransform(identity);
+            bgfx::setVertexBuffer(0, skyVb_, 0, 6);
+            bgfx::setTexture(0, uSkyTexColor_, sceneColorTex);
+            bgfx::setTexture(1, uTexBloom_, bgfx::getTexture(bloomBlurFb_));
+            bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+            bgfx::submit(kGradeTonemapView, gradeTonemapProgram_);
+        }
+    }
+
     // Phase 4a (PORT_PROGRESS.md): first functional slice of drawHUD()
     // (index.html:3927), drawn via bgfx's debug-text overlay -- see
     // hud.cpp for exactly what's ported vs. deferred.
@@ -833,17 +1002,23 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     // flat-color vertex layout/shader/program as the world-space geometry
     // above -- just a different view transform, no new shader. bgfx submits
     // views in ascending ID order by default, so this draws after the sky
-    // (view 0) and world (view 1) views; bgfx's own debug-text overlay
-    // always draws on top of every view regardless of ID (confirmed
-    // empirically in every screenshot this project has taken), so the
-    // resulting layering is sky -> world geometry -> UI quads -> HUD/menu
-    // text, which is what's wanted (numbers legible over bars, not chips
-    // over text). Skipped entirely when empty (e.g. mode=="menu", where
-    // drawHud() early-returns before adding anything) -- same "nothing
-    // submitted this frame -> nothing drawn" precedent the world view's
-    // own `if (!cars.empty())` guard above relies on.
+    // (view 0), world (view 1), and Phase 5h's bloom/grade/tonemap chain
+    // (views 2-4) -- deliberately renumbered up from 2 to 5 so it stays the
+    // LAST view every frame, drawing straight onto the already-graded real
+    // backbuffer, untouched by bloom/grade/tonemap (matching JS, whose HUD
+    // is a separate DOM/CSS overlay entirely outside its EffectComposer
+    // chain). bgfx's own debug-text overlay always draws on top of every
+    // view regardless of ID (confirmed empirically in every screenshot this
+    // project has taken -- unaffected by any of this view's renumbering),
+    // so the resulting layering is sky -> world -> bloom/grade/tonemap ->
+    // UI quads -> HUD/menu text, which is what's wanted (numbers legible
+    // over bars, not chips over text). Skipped entirely when empty (e.g.
+    // mode=="menu", where drawHud() early-returns before adding anything)
+    // -- same "nothing submitted this frame -> nothing drawn" precedent the
+    // world view's own `if (!cars.empty())` guard above relies on.
     if (!uiVerts.empty()) {
-        const bgfx::ViewId kUiView = 2;
+        const bgfx::ViewId kUiView = 5;
+        bgfx::setViewFrameBuffer(kUiView, BGFX_INVALID_HANDLE);
         bgfx::setViewRect(kUiView, 0, 0, (uint16_t)width_, (uint16_t)height_);
         float uiViewMtx[16], uiProj[16];
         bx::mtxIdentity(uiViewMtx);
