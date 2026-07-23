@@ -529,6 +529,17 @@ int main(int argc, char** argv)
         seedForceDoneState(S);
     }
 
+    // Debug-only: Phase 6b's spotter-message conditions are otherwise
+    // timing/RNG-gated (laps-to-go, a nearby AI car, a tire blowout) --
+    // this seeds state.spotTxt/spotT directly, the same "seeded state, not
+    // a physics bypass" philosophy as LHT_FORCE_RACE/LHT_FORCE_DONE, purely
+    // so headless screenshot verification can reliably show Phase 6d's HUD
+    // caption without waiting on a real trigger to happen to fire.
+    if (std::getenv("LHT_FORCE_SPOTTER")) {
+        S.state.spotTxt = "INSIDE!";
+        S.state.spotT = 2.2;
+    }
+
     // Phase 3b (PORT_PROGRESS.md): tilt-steer via SDL_Sensor, feeding
     // state.tilt/state.tiltG the same way JS's `deviceorientation` listener
     // feeds S.tilt/S.tiltG (index.html:1260-1264) -- stepCar()'s player

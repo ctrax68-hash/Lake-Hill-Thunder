@@ -646,7 +646,7 @@ correctly together, including confirming Phase 5h's own color-swap finding
 (the WASM screenshot's grass hue is correct where the native one is a
 known sandbox-only artifact). **Phase 5 is closed.**
 
-### Phase 6 — Polish & platform packaging — AUDIO PORT IN PROGRESS (Session 8), Android/iOS + device-perf-pass OUT OF SCOPE
+### Phase 6 — Polish & platform packaging — AUDIO PORT DONE (Session 8), Android/iOS + device-perf-pass OUT OF SCOPE, phase closed
 The user explicitly clarified (Session 3, same session Phase 7 below started): no App Store,
 no native Android/iOS distribution wanted at all -- they want to play from Safari, ideally
 installed as a home-screen PWA. This phase (native Android/iOS builds) is **not deleted**, just
@@ -662,7 +662,10 @@ therefore explicitly deprioritized/out of scope for this phase going forward, no
 - [x] Audio port (JS has a real Web Audio graph: multi-voice opponent engines, a
       4-bus mixer, crowd/spotter/impact one-shots — check `index.html`'s audio
       section for current scope, it has grown since the original master prompt was written)
-      -- **6a done (Session 8)**, 6b/6c/6d in progress/pending, see session log.
+      -- **6a/6b/6c/6d all done (Session 8)**, see session log entries below.
+      Full audio pipeline (DSP primitives -> sim-side trigger logic -> mixer
+      graph + SDL2 device -> HUD spotter caption for sandbox-verifiability)
+      is in place and wired into both the native and WASM builds.
 - [ ] ~~Android build (Gradle/NDK) and iOS build (Xcode project)~~ -- **out of scope**,
       user wants Safari/PWA only (Session 3 decision, reconfirmed Session 8).
 - [ ] ~~Device performance pass on real mid-tier hardware~~ -- **out of scope**, no
@@ -691,6 +694,19 @@ SDL2-touching audio code, opens a float-stereo device and wires the
 callback; wired into `main.cpp`'s per-frame loop and `MenuSelection::sound`/
 `volume`; `tests/mixer_test.cpp` verifies the parameter updates and sample
 synthesis, bgfx/SDL2-free).
+
+**Phase 6d done (Session 8), Phase 6 closed**: minimal HUD spotter caption
++ full native/WASM verification sweep -- see this session's log entry
+below (`hud.cpp` draws `state.spotTxt` at dbgText row 0 whenever
+`state.spotT>0`; a new `LHT_FORCE_SPOTTER` debug env var seeds a message
+for screenshot verification, same seeded-state philosophy as
+`LHT_FORCE_RACE`/`LHT_FORCE_DONE`). Native `ctest` 26/26, headless
+`xvfb-run` runs clean both with and without `SDL_AUDIODRIVER=dummy`, and a
+full WASM rebuild + `tests/wasm_verify.js` Playwright pass reports zero
+console/page errors with manifest/icons/service-worker all OK. **Phase 6
+is closed** (audio port only, per this session's own scope decision --
+Android/iOS native builds and the real-device performance pass remain
+deliberately out of scope).
 
 ### Phase 7 — WebAssembly/browser build — DONE, first pass (Session 3)
 - [x] Get `lht_port` compiling to WebAssembly via Emscripten and running inside a real
@@ -3712,3 +3728,68 @@ elsewhere in the same run.
 
   **Next**: Phase 6d (minimal HUD spotter caption, full native+WASM
   verification sweep, close out Phase 6, commit/push).
+
+- **Session 8 -- Phase 6d: HUD spotter caption + full verification sweep,
+  closing Phase 6.** The last piece of the audio port -- and the only
+  reason this sandbox (no audio hardware) can visually confirm Phase 6b's
+  spotter-message trigger logic actually fires and Phase 6c's audio engine
+  actually reads it back, without literally being able to listen.
+
+  **`hud.cpp`**: one new line -- `if (state.spotT>0 && !state.spotTxt.empty())`
+  draws `state.spotTxt` via `bgfx::dbgTextPrintf()`, matching JS's own
+  `spotOn = S.spotT>0 && S.spotTxt` gate (index.html:4040) exactly. First
+  attempt used dbgText row 8, which turned out to already be
+  `status_bars.cpp`'s own `TIRE` row (its own header comment says so
+  explicitly: "Rows 8-10, right below hud.cpp's own rows 1-7") -- a
+  screenshot showed the two literally overlapping into garbled text
+  (`TIREDE!`). Every row 1-10 is spoken for (1-7 by `hud.cpp` itself, 8-10
+  by the status bars) and the leaderboard/minimap boxes below that use
+  pixel coordinates starting at y=190px, so row 0 -- directly above the
+  LAP/POS readout -- was the one genuinely free row; moved the caption
+  there and reverified cleanly with no overlap.
+
+  **`main.cpp`**: a new `LHT_FORCE_SPOTTER` debug-only env var seeds
+  `state.spotTxt`/`spotT` directly after `LHT_FORCE_RACE` starts a race --
+  the real trigger conditions (laps-to-go, a nearby AI car, an RNG-gated
+  blowout) are exactly the kind of timing/RNG-dependent state this
+  project's existing `LHT_FORCE_RACE`/`LHT_FORCE_DONE` debug hooks already
+  exist to bypass for screenshot verification, so this follows the same
+  established "seeded state, not a physics bypass" pattern rather than
+  inventing a new one.
+
+  **Verified, in order**:
+  - Native `ctest`: **26/26**, unchanged from Phase 6c (this sub-phase adds
+    a rendering line and a debug env var, no new pure-logic test target).
+  - Headless `xvfb-run` screenshots: `LHT_FORCE_SPOTTER=1` shows `INSIDE!`
+    cleanly at the top of the HUD with no overlap; a matching run without
+    it confirms the caption stays hidden the rest of the time, proving the
+    `spotT>0` gate itself (not just "text always draws").
+  - Native `xvfb-run`, both audio paths again after this sub-phase's
+    changes: a 300-frame run with `SDL_AUDIODRIVER=dummy` and a 200-frame
+    run with no audio driver override both complete without crashing.
+  - Full WASM rebuild (`emcmake cmake -B build-web && emmake cmake --build
+    build-web`) succeeded clean with the new `src/audio/*` sources linked
+    in. `tests/wasm_verify.js` (Playwright/headless Chromium) against a
+    locally served `build-web/`: manifest.json and all 3 icon PNGs fetch
+    200 with correct fields/signatures, the service worker reaches `ready`,
+    **zero console errors, zero page errors**, and the menu -> race
+    screenshot shows the whole stack (per-track lighting/stands/livery/
+    HUD/leaderboard/minimap from Phase 5, all still rendering correctly
+    together) with no spotter caption visible (none was triggered in this
+    particular run, expected -- confirms the gate doesn't false-positive
+    in the real target either).
+
+  **Phase 6 is closed.** Per this session's own scope decision (the
+  `AskUserQuestion` at the very start of this session, answered "Audio
+  port only"): the audio port (6a-6d) is done -- DSP primitives, sim-side
+  trigger logic (`hitFx`/spotter messages), the full mixer graph + SDL2
+  device + `audioTick()` equivalent, and a minimal HUD caption for
+  sandbox-verifiability. Android/iOS native builds and the real-device
+  performance pass remain explicitly, deliberately out of scope -- not
+  "not started yet," a real decision this session made and reconfirmed,
+  matching the user's own long-standing Session 3 "Safari/PWA only"
+  preference. Remaining open items across the whole project: the
+  alternate-camera-mode suite (helmet/tower/blimp/victory-orbit/pit-stop/
+  caution-TV-montage/menu-establishing-shot) and the real hands-on Safari/
+  iOS PWA verification (Phase 7b's own open item) -- both untouched by
+  this session, still deferred for a future one.

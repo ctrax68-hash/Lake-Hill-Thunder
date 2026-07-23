@@ -86,6 +86,22 @@ void drawHud(const RaceState& state, const std::vector<Car>& cars, std::vector<P
     const GearRpm gr = gearRpm(player->v);
     bgfx::dbgTextPrintf(1, 7, attr(kWhite, kBlack), "GEAR %d  RPM %3d%%", gr.gear, (int)(gr.rpm * 100));
 
+    // Phase 6d (PORT_PROGRESS.md): a minimal spotter caption -- index.html:
+    // 4040-4046's `spotOn = S.spotT>0 && S.spotTxt` gate, ported verbatim.
+    // Not JS's own fading/merged DRAFT-chip presentation (that's a real
+    // canvas-drawn UI element this port's dbgText-only HUD has no
+    // equivalent of), just enough to make Phase 6b's spotter-message
+    // trigger logic visually verifiable (this sandbox has no audio
+    // hardware to listen for the matching spotterBlip() with). Row 0 --
+    // every other row this function/status_bars.cpp/leaderboard.cpp use is
+    // already spoken for (rows 1-7 above, 8-10 by drawStatusBars(), and the
+    // leaderboard/minimap boxes cascade in pixel space starting at y=190px
+    // right below that), so this is the one still-free row, directly above
+    // the LAP/POS readout.
+    if (state.spotT > 0 && !state.spotTxt.empty()) {
+        bgfx::dbgTextPrintf(1, 0, attr(kWhite, kBlack), "%s", state.spotTxt.c_str());
+    }
+
     // Phase 4e (PORT_PROGRESS.md): index.html:3999-4020's segmented TIRE/
     // FUEL/CAR status strip -- the first HUD feature needing real quad
     // geometry (drawStatusBars() appends into `uiOut`; Renderer submits it
