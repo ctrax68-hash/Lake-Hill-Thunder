@@ -538,10 +538,10 @@ port; it's the reference the C++ port must match).
       capability before this and bgfx already ships one.
       **Explicitly NOT ported** (deferred to future Phase 4 sub-tasks, all noted in
       `hud.h`'s own header comment): the per-driver leaderboard panel (names, car-color
-      chips, live broadcast-style gaps), the last/best lap time strip, the minimap
-      (player wedge + trouble-pulse rings), the segmented tire/fuel/car bars, and the
-      gear/RPM readout -- this is deliberately just the three-item literal brief, not
-      the JS side's much bigger current HUD surface.
+      chips, live broadcast-style gaps), the minimap (player wedge + trouble-pulse
+      rings), the segmented tire/fuel/car bars, and the gear/RPM readout -- this is
+      deliberately just the three-item literal brief, not the JS side's much bigger
+      current HUD surface.
       **Verified**: full `ctest` suite unaffected, 7/7. `lht_port` rebuilds clean.
       Captured a headless `xvfb-run` screenshot, corrected for the capture's `yflip`
       metadata (a mistake caught mid-verification -- an early flip-less crop showed
@@ -554,6 +554,8 @@ port; it's the reference the C++ port must match).
       Also reconfirmed the Phase 3c portrait-block path still shows zero HUD text
       (pure black, `(0,0,0)` extrema) since `renderBlockedFrame()` clears the debug
       text buffer too.
+      **Phase 4c done (Session 6)**: LAST/BEST lap time strip added, see this file's
+      own Session 6 log entry below for the full writeup.
 - [ ] Results screen
 
 ### Phase 5 — Full render fidelity — NOT STARTED
@@ -2250,3 +2252,40 @@ elsewhere in the same run.
   visually-marked stubs pending their own sim-core/audio-system work
   (Phase 4's HUD leaderboard/minimap/tire-fuel-bars/gear-RPM items and the
   Results screen also remain, per this file's own Phase 4 checklist).
+
+- **Session 6 -- completing Phase 4.** The user asked to finish Phase 4
+  entirely. Two Explore agents plus a Plan agent scoped the six remaining
+  checklist items up front (last/best lap strip, gear/RPM, segmented
+  tire/fuel/car bars, minimap, leaderboard, results screen), cross-checked
+  directly against `index.html` before committing to an approach -- see
+  the plan's own writeup for the full research (confirmed e.g. that
+  `gearRpm()` is a pure display-time function of speed with no stored car
+  state at all, that `#results`' CSS is opaque unlike `#menu`'s deliberate
+  semi-transparency, and that `gridStart()` doesn't clear `finishOrder`
+  the way JS's does -- a real latent bug surfaced by tracing the restart
+  flow, not something guessed at).
+
+  **Phase 4c -- last/best lap time strip**: `fmtT()` (index.html:3769-
+  3771) ported verbatim into a new, bgfx-free `src/render/fmt_time.h/.cpp`
+  (`fmtLapTime(double t)`) specifically so it could get a fast unit test
+  with zero link dependency on a live rendering context -- same
+  isolation-of-pure-logic precedent `touch_controls.h`/`menu.cpp`'s region
+  math already established. `hud.cpp` gained two new dbgText rows reading
+  `Car::lastLapT`/`bestLapT`, both already correctly maintained by
+  `step_car.cpp` since Phase 1 -- a pure rendering addition, no sim-core
+  change.
+
+  **New `tests/fmt_time_test.cpp`** (ctest now 9/9): placeholder cases
+  (zero, negative, NaN -- `fmtT`'s `!t` check catches NaN specifically,
+  ported as `!(t > 0)`), zero-padding below 10 seconds, and the minutes
+  component appearing past 60 seconds, all against hand-computed values.
+
+  **Verified**: `ctest` 9/9. Headless `xvfb-run` screenshot
+  (`LHT_FORCE_RACE=1`) confirms `LAST`/`BEST` rows render in the expected
+  position with the `--:--.--` placeholder correctly showing (the player
+  car sits stationary for the whole run without real keyboard input --
+  same known synthetic-input limitation as ever, see Phase 2e/3b -- so no
+  completed lap was observed natively; the placeholder path is the one
+  this screenshot actually exercises, and the formatting logic itself is
+  exhaustively covered by the new unit test instead of chasing a live
+  completed-lap screenshot for its own sake).

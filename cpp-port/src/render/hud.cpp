@@ -1,4 +1,5 @@
 #include "hud.h"
+#include "fmt_time.h"
 
 #include <bgfx/bgfx.h>
 
@@ -52,4 +53,12 @@ void drawHud(const RaceState& state, const std::vector<Car>& cars) {
                         yellow ? "CAUTION" : "GREEN  ");
 
     bgfx::dbgTextPrintf(1, 4, attr(kWhite, kBlack), "SPD %3d", (int)player->v);
+
+    // Phase 4c (PORT_PROGRESS.md): index.html:3990-3996's LAST/BEST lap
+    // time strip, ported via fmtLapTime() (fmt_time.h -- a direct port of
+    // JS's fmtT()). Car::lastLapT/bestLapT are already set correctly by
+    // step_car.cpp (Phase 1's ported physics), so this is purely a
+    // rendering addition.
+    bgfx::dbgTextPrintf(1, 5, attr(kWhite, kBlack), "LAST %s", fmtLapTime(player->lastLapT).c_str());
+    bgfx::dbgTextPrintf(1, 6, attr(kWhite, kBlack), "BEST %s", fmtLapTime(player->bestLapT).c_str());
 }

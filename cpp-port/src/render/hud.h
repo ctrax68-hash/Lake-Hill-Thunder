@@ -12,11 +12,15 @@
 // text buffer) rather than a custom font atlas, since this port has no
 // other text-rendering capability yet and bgfx already ships one.
 //
-// Deliberately NOT a port of JS's actual HUD visuals or full information
-// surface: no per-driver leaderboard panel (names, car-color chips, live
-// gaps), no last/best lap strip, no minimap (player wedge, trouble-pulse
-// rings), no segmented tire/fuel/car bars, no gear/RPM readout. Those are
-// all left for future Phase 4 sub-tasks -- see PORT_PROGRESS.md.
+// Phase 4c added the LAST/BEST lap time strip (Car::lastLapT/bestLapT,
+// already correctly maintained by the ported physics core -- this was a
+// pure rendering addition, no sim-core change).
+//
+// Still NOT a port of JS's full HUD information surface: no per-driver
+// leaderboard panel (names, car-color chips, live gaps), no minimap
+// (player wedge, trouble-pulse rings), no segmented tire/fuel/car bars, no
+// gear/RPM readout. Those are left for the remaining Phase 4 sub-tasks --
+// see PORT_PROGRESS.md.
 //
 // Caller is expected to have called bgfx::setDebug(BGFX_DEBUG_TEXT) once
 // at init and bgfx::dbgTextClear() once this frame before calling this.

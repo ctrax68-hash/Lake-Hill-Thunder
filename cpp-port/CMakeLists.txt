@@ -197,6 +197,7 @@ endif()
 add_executable(lht_port
   src/platform/main.cpp
   src/platform/tilt_input.cpp
+  src/render/fmt_time.cpp
   src/render/hud.cpp
   src/render/renderer.cpp
   src/ui/menu.cpp
@@ -300,6 +301,11 @@ target_include_directories(menu_test PRIVATE
   third_party/bgfx.cmake/bx/include
 )
 add_test(NAME menu_test COMMAND menu_test)
+
+# Phase 4c (PORT_PROGRESS.md): fmt_time_test exercises fmtLapTime()'s pure
+# formatting logic -- zero bgfx/SDL2 dependency at all, unlike menu_test.
+add_executable(fmt_time_test tests/fmt_time_test.cpp src/render/fmt_time.cpp)
+add_test(NAME fmt_time_test COMMAND fmt_time_test)
 
 add_executable(determinism_test tests/determinism_test.cpp tests/determinism/trace.cpp)
 add_test(NAME determinism_test COMMAND determinism_test)
