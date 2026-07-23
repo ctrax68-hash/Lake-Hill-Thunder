@@ -573,12 +573,12 @@ port; it's the reference the C++ port must match).
       Session 6 log entry for the full writeup. **Phase 4 ("UI overlay") is now
       fully DONE.**
 
-### Phase 5 — Full render fidelity — IN PROGRESS (Session 7)
-- [ ] Procedural stadium/stands/crowd-tile/livery-painting mesh generation (JS builds
+### Phase 5 — Full render fidelity — DONE (Session 7)
+- [x] Procedural stadium/stands/crowd-tile/livery-painting mesh generation (JS builds
       these via Three.js geometry helpers + canvas-drawn textures; needs raw vertex
       buffer construction in bgfx)
-- [ ] Sky/environment per track preset (JS: `ENV_PRESETS`)
-- [ ] Hand-rolled bloom (downsample→blur→combine, replacing `UnrealBloomPass`) +
+- [x] Sky/environment per track preset (JS: `ENV_PRESETS`)
+- [x] Hand-rolled bloom (downsample→blur→combine, replacing `UnrealBloomPass`) +
       tonemap (replacing `OutputPass`)
 
 Broken into 8 sub-phases (5a-5h), one commit each, same rhythm as Phase 4's
@@ -628,6 +628,23 @@ resolved (as a verification-environment-only finding, not a code fix) a
 real R/B color-swap investigation -- see the log entry for the full
 diagnosis and why native `xvfb-run` screenshots need a WASM/Chromium
 cross-check for hue-sensitive claims going forward.
+
+**Phase 5 final integration + verification pass (Session 7)**: a
+from-scratch native reconfigure (`rm -rf build && cmake -B build`) and
+full rebuild succeeded clean; `ctest` 23/23. An 8-screenshot sweep
+(`Chase` + `TopDown` x all 4 tracks) confirms every Phase 5 layer renders
+together coherently in the same frame -- sky, per-track lighting mood,
+banked track surface, stadium stands (flat + crowd-textured tiers), pit
+road, outer wall, car liveries, Big Sable's jumbotron/pylon, Cedar
+Valley's hill silhouette, and the bloom/vignette/tonemap chain all appear
+at once with no missing geometry, black frames, or crashes across any of
+the 8 renders. A WASM rebuild + `tests/wasm_verify.js` Playwright pass
+(menu -> start -> race -> results -> back-to-menu -> restart) reports
+zero console/page errors, manifest/icons/service-worker all OK, and the
+real-target (Chromium/WebGL2) screenshot shows the whole stack rendering
+correctly together, including confirming Phase 5h's own color-swap finding
+(the WASM screenshot's grass hue is correct where the native one is a
+known sandbox-only artifact). **Phase 5 is closed.**
 
 ### Phase 6 — Polish & platform packaging — NOT STARTED, DEPRIORITIZED
 The user explicitly clarified (Session 3, same session Phase 7 below started): no App Store,
