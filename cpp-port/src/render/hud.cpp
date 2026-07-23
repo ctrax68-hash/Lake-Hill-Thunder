@@ -1,6 +1,7 @@
 #include "hud.h"
 #include "fmt_time.h"
 #include "gear_rpm.h"
+#include "leaderboard.h"
 #include "minimap.h"
 #include "status_bars.h"
 
@@ -21,9 +22,21 @@ constexpr uint8_t attr(uint8_t fg, uint8_t bg) {
 
 } // namespace
 
+std::vector<const Car*> computeRaceOrder(const std::vector<Car>& cars) {
+    std::vector<const Car*> order;
+    order.reserve(cars.size());
+    for (auto& c : cars) order.push_back(&c);
+    std::stable_sort(order.begin(), order.end(), [](const Car* a, const Car* b) {
+        const double ra = a->done ? 1e6 - a->finishT : a->prog;
+        const double rb = b->done ? 1e6 - b->finishT : b->prog;
+        return ra > rb; // descending, matching race.cpp:339-343 exactly
+    });
+    return order;
+}
+
 void drawHud(const RaceState& state, const std::vector<Car>& cars, std::vector<PosColorVertex>& uiOut,
              const std::vector<std::pair<float, float>>& minimapOutline, float minimapBoundX,
-             float minimapBoundY) {
+             float minimapBoundY, double trackTotal) {
     if (state.mode == "menu" || state.mode == "menuwait") return; // index.html:3931
 
     const Car* player = nullptr;
@@ -79,12 +92,22 @@ void drawHud(const RaceState& state, const std::vector<Car>& cars, std::vector<P
     // as a separate UI-overlay view after this function returns).
     drawStatusBars(*player, uiOut);
 
-    // Phase 4f (PORT_PROGRESS.md): index.html:4059-4101's minimap, placed
-    // directly below the status bars above (rows 1-10 end at y=176px) --
-    // this port's own fixed layout, not JS's leaderboard-cascade
-    // (computeLayout() depends on the leaderboard panel's height, not yet
-    // ported as of this phase; revisit once Phase 4g's real leaderboard
-    // panel exists).
-    const MinimapBox minimapBox = {8.0f, 190.0f, 180.0f, 110.0f};
+    // Phase 4g (PORT_PROGRESS.md): index.html:3939-3978's leaderboard panel
+    // (rank, color chip, name/tag, live gap), placed directly below the
+    // status bars above (rows 1-10 end at y=176px) -- matching JS's own
+    // "minimap cascades below the leaderboard" ordering (computeLayout(),
+    // index.html:3822-3823), now that the leaderboard actually exists.
+    const std::vector<const Car*> order = computeRaceOrder(cars);
+    const std::vector<LeaderboardRow> lbRows =
+        buildLeaderboardRows(order, state.mode, state.flag, state.t, trackTotal);
+    const LeaderboardBox lbBox = {8.0f, 190.0f, 248.0f, 16.0f + 16.0f * (float)lbRows.size()};
+    drawLeaderboard(lbBox, lbRows, state.flag == "yellow", uiOut);
+
+    // Phase 4f (PORT_PROGRESS.md): index.html:4059-4101's minimap, now
+    // cascaded below the leaderboard above, matching JS's own layout
+    // ordering exactly (it previously sat directly under the status bars,
+    // before this phase's leaderboard existed).
+    const float minimapY = lbBox.y + lbBox.h + 8.0f;
+    const MinimapBox minimapBox = {8.0f, minimapY, 180.0f, 110.0f};
     drawMinimap(minimapBox, minimapOutline, minimapBoundX, minimapBoundY, cars, state.t, uiOut);
 }

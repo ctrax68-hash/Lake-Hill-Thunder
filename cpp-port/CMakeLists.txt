@@ -198,8 +198,10 @@ add_executable(lht_port
   src/platform/main.cpp
   src/platform/tilt_input.cpp
   src/render/fmt_time.cpp
+  src/render/gap_time.cpp
   src/render/gear_rpm.cpp
   src/render/hud.cpp
+  src/render/leaderboard.cpp
   src/render/minimap.cpp
   src/render/renderer.cpp
   src/render/status_bars.cpp
@@ -329,6 +331,20 @@ add_test(NAME ui_draw_test COMMAND ui_draw_test)
 # ui_draw_test.
 add_executable(minimap_test tests/minimap_test.cpp src/render/minimap.cpp src/render/ui_draw.cpp)
 add_test(NAME minimap_test COMMAND minimap_test)
+
+# Phase 4g (PORT_PROGRESS.md): leaderboard_test exercises
+# buildLeaderboardRows()'s pure row-building/tag-precedence/gap-
+# interpolation logic. Needs bgfx linked (like menu_test) because
+# leaderboard.cpp's drawLeaderboard() calls bgfx::dbgTextPrintf(), even
+# though this test never calls that function.
+add_executable(leaderboard_test tests/leaderboard_test.cpp src/render/leaderboard.cpp
+  src/render/gap_time.cpp src/render/ui_draw.cpp)
+target_link_libraries(leaderboard_test PRIVATE bgfx)
+target_include_directories(leaderboard_test PRIVATE
+  third_party/bgfx.cmake/bgfx/include
+  third_party/bgfx.cmake/bx/include
+)
+add_test(NAME leaderboard_test COMMAND leaderboard_test)
 
 add_executable(determinism_test tests/determinism_test.cpp tests/determinism/trace.cpp)
 add_test(NAME determinism_test COMMAND determinism_test)

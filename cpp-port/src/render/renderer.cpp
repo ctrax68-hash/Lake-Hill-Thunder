@@ -360,7 +360,8 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     // hud.cpp for exactly what's ported vs. deferred.
     bgfx::dbgTextClear();
     std::vector<PosColorVertex> uiVerts;
-    drawHud(raceState, cars, uiVerts, minimapOutline_, minimapBoundX_, minimapBoundY_);
+    drawHud(raceState, cars, uiVerts, minimapOutline_, minimapBoundX_, minimapBoundY_,
+            track_ ? track_->total() : 0.0);
     // Phase 4b (PORT_PROGRESS.md): drawHud() itself already early-returns
     // for mode=="menu" (hud.cpp:21), so both can unconditionally run here
     // without stepping on each other's dbgText rows.

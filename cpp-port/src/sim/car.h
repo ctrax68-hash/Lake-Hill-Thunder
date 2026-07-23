@@ -5,6 +5,7 @@
 #include "track.h"
 
 #include <array>
+#include <deque>
 #include <string>
 
 // Port of the JS car constants / roster / makeCar() (index.html:397-503).
@@ -62,11 +63,22 @@ struct RosterEntry {
 extern const std::array<RosterEntry, 19> ROSTER;
 inline constexpr int FIELD = 19 + 1;
 
+// {t, prog} rolling sample (index.html:1092-1093), Phase 4g's leaderboard
+// live-gap calculation only (see gap_time.h's gapTimeAt()) -- never read by
+// stepCar()'s driving/physics logic, confirmed by grepping every use site.
+struct ProgSample {
+    double t, prog;
+};
+
 // Car (the JS object shape built by makeCar(), index.html:453-503).
-// progHist/replayHist/histTick are intentionally NOT ported here -- they're
-// HUD telemetry / replay-camera bookkeeping only (added well after the
-// original physics core), never read by stepCar()'s driving/physics logic.
-// If Phase 2+ needs them for parity with the live HUD, add them then.
+// replayHist/histTick are intentionally NOT ported here -- they're a
+// replay-camera feasibility spike in the JS original (index.html:1096-
+// 1108, "build + measure the cost... not wired to any playback UI yet"),
+// never read by anything this port has ported so far. progHist WAS ported
+// (Phase 4g) once the leaderboard's live-gap feature needed it -- see this
+// file's own earlier history: it was originally deferred here alongside
+// replayHist/histTick until "Phase 2+ needs them for parity with the live
+// HUD," which Phase 4g's leaderboard now does.
 struct Car {
     bool isPlayer = false;
     int idx = 0;
@@ -81,6 +93,7 @@ struct Car {
     double prog = 0;
     bool done = false;
     double finishT = 0;
+    std::deque<ProgSample> progHist; // see ProgSample's own comment above
 
     double steer = 0, thr = 0, brk = 0;
 

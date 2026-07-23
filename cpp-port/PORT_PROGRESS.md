@@ -562,6 +562,9 @@ port; it's the reference the C++ port must match).
       Same log entry.
       **Phase 4f done (Session 6)**: minimap added (track outline, car dots, player
       wedge, pulsing trouble rings). Same log entry.
+      **Phase 4g done (Session 6)**: leaderboard panel added (rank, color chip,
+      name/tag, live time-gap), the last HUD sub-task -- this bullet is now fully
+      done. Same log entry.
 - [ ] Results screen
 
 ### Phase 5 — Full render fidelity — NOT STARTED
@@ -2491,3 +2494,85 @@ elsewhere in the same run.
   enum ordering (it can, and did, differ from the `BGRA8` assumed by an
   earlier session) rather than copy-pasted forward assuming it's always
   the same.
+
+  **Phase 4g -- leaderboard panel.** Ported `index.html:3939-3978`'s
+  leaderboard: top-5 rows plus, if the player isn't already in the top 5,
+  a 6th pinned row (divider line above it) showing their real rank --
+  matching JS's own `computeLayout()` list-building exactly.
+
+  **New sim-core field, confirmed display-only before adding it**: JS's
+  live gap-in-seconds needs a short rolling history of each car's race
+  progress (`progHist`/`gapTimeAt`, index.html:1092-1093,1118), which
+  `car.h` had explicitly deferred back in Phase 1 pending "if Phase 2+
+  needs this for parity with the live HUD, add it then." Grepped
+  `stepCar()`/`tick()`/`collide()`/`cautionController()` to confirm
+  nothing in the ported physics core reads this field before adding it --
+  it's purely a HUD display concern in JS too. Added `Car::progHist`
+  (`std::deque<ProgSample>`, `{t, prog}`), sampled in `step_car.cpp`
+  immediately after the existing `c.prog = ...` line, gated on
+  `state.mode=="race"` and trimmed to keep only samples spanning the
+  trailing 6 seconds, matching JS's own window exactly. Confirmed safe
+  for determinism: `tests/determinism/trace.h`'s `CarSnapshot` is a
+  hand-picked field list, not a raw struct copy, so adding a new `Car`
+  field can't perturb `determinism_test`/`race_sim_test` (both still
+  passed unchanged). Ported `gapTimeAt()` itself into
+  `src/render/gap_time.h/.cpp` as a pure function returning
+  `std::optional<double>` -- the same backward-scanning linear
+  interpolation JS uses, isolated from bgfx like every other Phase 4
+  sub-module's pure logic.
+
+  **New `computeRaceOrder()`** (`hud.h/.cpp`): the same descending
+  `done ? 1e6-finishT : prog` sort key `race.cpp:339-343` already uses for
+  `S.order`, recomputed here purely for display. Deliberately added as a
+  new function rather than refactoring `drawHud()`'s existing inline
+  `pos`-counting rank lambda to reuse it -- that lambda is already
+  verified/working, and the tie-break behavior of a `std::stable_sort`
+  over the whole field vs. a single "count cars ranked above me" loop
+  isn't provably identical in every edge case, so this avoided any risk
+  to already-correct code for a purely cosmetic simplification. Reused by
+  the new leaderboard and will be reused again by Phase 4h's results
+  screen.
+
+  **New `src/render/leaderboard.h/.cpp`**: `buildLeaderboardRows()` builds
+  the top-5-plus-pinned-player row list and resolves each row's tag with
+  JS's exact precedence -- `out` > `pit` > `spinT` > (gap-or-name, only
+  while `showGaps`) -- and JS's exact broadcast-style toggle
+  (`showGaps = mode=="race" && flag=="green" && floor(t/5)%2==1`,
+  alternating between live gaps and driver names every 5 sim-seconds).
+  Gap resolution: `dp<1` uses `gapTimeAt()`'s real interpolation from
+  `progHist`; `dp>=1` reads `-N LAP`; the no-history fallback path
+  (leader hasn't set a lap yet, or the trailing car has no samples yet)
+  uses `dp*lapEst` with JS's own `lapEst = TRACK.total/48` magic-number
+  fallback preserved as-is, logged rather than re-derived, per this
+  project's own ground rules for unexplained JS constants. `drawLeaderboard()`
+  draws the header + rank/color-chip (`pushQuad`)/tag rows via dbgText +
+  the Phase 4e UI-quad primitives, highlighting the player's own row.
+
+  **`hud.cpp` layout change**: the leaderboard is placed directly below
+  the Phase 4e status bars, and the minimap (Phase 4f) is now
+  repositioned to cascade below the leaderboard's own height
+  (`lbBox.y + lbBox.h + 8`) instead of its previous fixed position --
+  matching JS's own `computeLayout()` ordering now that a real
+  leaderboard panel exists to cascade under, a deliberate revision of
+  Phase 4f's placeholder position, noted there at the time as "worth
+  revisiting once Phase 4g's real leaderboard panel lands."
+
+  **New `tests/leaderboard_test.cpp`** (ctest now 13/13): top-5-only vs.
+  pinned-6th-row list building, divider placement, tag precedence holding
+  even while `showGaps` is true, the `showGaps` toggle itself (mode!=race
+  falls back to plain names), the no-history gap fallback's exact
+  `dp*lapEst` arithmetic, real `gapTimeAt()` interpolation against a
+  hand-computed `progHist`, the `-N LAP` full-lap-down case, and an empty-
+  order no-op.
+
+  **Verified**: `ctest` 13/13. Headless `xvfb-run` screenshot
+  (`LHT_FORCE_RACE=1`, captured at real sim time `t=7.1s` -- inside the
+  `floor(t/5)%2==1` showGaps window, confirmed via the run's own status
+  printf) shows the `LAKE HILL 400` header, ranks 1-5 with color chips and
+  live gaps (`LEADER`/`+0.1`/`+0.1`/`+0.0`/`+0.2`), and the pinned player
+  row (`20  #21  +5.3`) below a divider line with a highlighted
+  background -- confirming both the top-N list and the pinned-outside-
+  top-5 path render from real `Car::prog`/`progHist` state, not just the
+  unit test's synthetic scenarios. The minimap renders correctly cascaded
+  below it, and dbgText numbers stayed legible alongside the new rows with
+  no layout collisions.

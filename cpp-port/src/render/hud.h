@@ -38,8 +38,20 @@
 // renderer.h) -- passed in rather than pulling Renderer itself in as a
 // dependency, same rationale as `uiOut` above.
 //
+// Phase 4g added the leaderboard panel. `trackTotal` (Track::total()) is
+// used only for the leaderboard's lapEst fallback (index.html:3947) --
+// same "pass the one scalar needed, not the whole Track type" rationale
+// as the minimap's own parameters.
+//
 // Caller is expected to have called bgfx::setDebug(BGFX_DEBUG_TEXT) once
 // at init and bgfx::dbgTextClear() once this frame before calling this.
 void drawHud(const RaceState& state, const std::vector<Car>& cars, std::vector<PosColorVertex>& uiOut,
              const std::vector<std::pair<float, float>>& minimapOutline, float minimapBoundX,
-             float minimapBoundY);
+             float minimapBoundY, double trackTotal);
+
+// Phase 4g (PORT_PROGRESS.md): the same descending race-position sort key
+// tick() uses to build S.order (race.cpp:339-343, index.html:4192's own
+// `done ? finishT : prog` metric) -- recomputed here purely for display,
+// not a sim decision, so this doesn't touch race.cpp/tick() at all.
+// Reused by leaderboard.cpp (Phase 4g) and results.cpp (Phase 4h).
+std::vector<const Car*> computeRaceOrder(const std::vector<Car>& cars);

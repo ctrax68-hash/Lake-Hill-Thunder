@@ -371,6 +371,16 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         c.lapStartT = state.t;
     }
     c.prog = c.lap + rel / track.total();
-    // progHist/replayHist sampling (index.html:1091-1108) intentionally not
-    // ported -- HUD telemetry / replay-camera bookkeeping only, see car.h.
+    // Phase 4g (PORT_PROGRESS.md): progHist sampling (index.html:1090-1093),
+    // for the leaderboard's live-gap calculation (gap_time.h's
+    // gapTimeAt()) -- gated on mode=="race" exactly like JS, trimmed to a
+    // ~6s trailing window so this never grows unbounded over a long race.
+    // Pure display-only bookkeeping appended after this car's physics for
+    // the tick is already fully decided; replayHist/histTick remain NOT
+    // ported (see car.h's own comment -- an unwired replay-camera spike in
+    // the JS original).
+    if (state.mode == "race") {
+        c.progHist.push_back({state.t, c.prog});
+        while (c.progHist.size() > 2 && state.t - c.progHist.front().t > 6.0) c.progHist.pop_front();
+    }
 }
