@@ -12,8 +12,13 @@
 // the default [1..19,0] order if `gridOrder` is null/wrong-length, exactly
 // matching JS), then places them on the backstretch grid and sets up
 // `state`/`pace` for a rolling start. `cars` is cleared and repopulated.
+// `finishOrder` is cleared too (JS's `S.finishOrder=[]`, index.html:590) --
+// it holds `Car*` pointers into `cars`, so leaving stale entries around
+// would dangle the instant a second race is started (Phase 4h's restart
+// flow is what first makes gridStart() run more than once per process).
 void gridStart(const Track& track, Mulberry32& rng, RaceState& state, PaceCar& pace,
-                std::vector<Car>& cars, const std::vector<int>* gridOrder = nullptr);
+                std::vector<Car>& cars, std::vector<Car*>& finishOrder,
+                const std::vector<int>* gridOrder = nullptr);
 
 // stepPace() (index.html:599-626).
 void stepPace(PaceCar& pace, const RaceState& state, const Track& track);

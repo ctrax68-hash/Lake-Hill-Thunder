@@ -565,7 +565,13 @@ port; it's the reference the C++ port must match).
       **Phase 4g done (Session 6)**: leaderboard panel added (rank, color chip,
       name/tag, live time-gap), the last HUD sub-task -- this bullet is now fully
       done. Same log entry.
-- [ ] Results screen
+- [x] Results screen (finish order, best laps, DNFs, "back to menu" restart) --
+      **Phase 4h done (Session 6)**. `src/ui/results.h/.cpp` + a `gridStart()`
+      bugfix (`finishOrder` now cleared, matching JS's own `S.finishOrder=[]`).
+      Verified end to end, including a real restart, via headless native
+      screenshots and a WASM/Playwright click-through -- see this file's own
+      Session 6 log entry for the full writeup. **Phase 4 ("UI overlay") is now
+      fully DONE.**
 
 ### Phase 5 — Full render fidelity — NOT STARTED
 - [ ] Procedural stadium/stands/crowd-tile/livery-painting mesh generation (JS builds
@@ -2576,3 +2582,112 @@ elsewhere in the same run.
   unit test's synthetic scenarios. The minimap renders correctly cascaded
   below it, and dbgText numbers stayed legible alongside the new rows with
   no layout collisions.
+
+  **Phase 4h -- results screen + restart flow.** The final Phase 4 sub-task:
+  ports `index.html:4115-4131`'s `showResults()` (finish order, best laps,
+  DNFs, a "back to menu" restart) and wires up a real, repeatable
+  menu->race->results->menu->race-again loop.
+
+  **Step 1, a real latent bug found and fixed, not invented**: this port's
+  `gridStart()` never cleared `finishOrder` (JS's own `gridStart()` does,
+  `S.finishOrder=[]`, index.html:590) -- harmless while `gridStart()` only
+  ever ran once per process, but a real dangling-`Car*` risk the instant a
+  second race starts, since `cars` is cleared and repopulated on every
+  `gridStart()` call while `finishOrder` holds raw pointers into it. Added
+  `std::vector<Car*>& finishOrder` as a new `gridStart()` parameter (`race.h`/
+  `race.cpp`), cleared first thing alongside `cars.clear()`. Updated all 3
+  call sites (`main.cpp`'s `startRaceFromMenu()`, `race_sim_test.cpp`,
+  `determinism_check.cpp`). Extended `race_sim_test.cpp` with a dedicated
+  case: call `gridStart()` once, manually push two fake `Car*` entries into
+  `finishOrder` (simulating a finished race), call `gridStart()` again, and
+  assert `finishOrder` comes back empty -- a direct regression test for the
+  exact bug this fixes.
+
+  **Step 2, rendering**: confirmed via JS's own CSS (`.overlay` is opaque
+  black; `#menu` explicitly overrides to semi-transparent; `#results` has no
+  such override) that the results screen must fully replace the scene, not
+  draw on top of the still-rendering track/cars like the menu does. New
+  `src/ui/results.h/.cpp`, mirroring `menu.h/.cpp`'s structure:
+  `computeResultsRegions(numRows)` (one `backBtn` region, positioned
+  directly below the ranked list -- variable-height, same rationale as
+  `leaderboard.h`'s own `LeaderboardBox`), `buildResultsOrder(finishOrder,
+  order)` (the exact 3-bucket order from index.html:4119-4121:
+  `finishOrder.concat(order.filter(!done&&!out)).concat(order.filter(!done&&out))`
+  -- finishers in crossing order, then still-racing cars, then DNFs last,
+  each bucket in `order`'s own race-position traversal), and
+  `drawResults()` (title -- `"YOU WIN THE LAKE HILL 400!"` if
+  `resultsOrder[0]->isPlayer` else `"RACE COMPLETE"`, matching
+  index.html:4129-4130 exactly -- then rank/color-chip/car-number/name/
+  best-lap-or-DNF rows, then the "BACK TO MENU" row). `Renderer::renderFrame()`
+  gained an optional `finishOrder` parameter; while `mode=="done"`, view 0's
+  clear color switches to opaque black (matching `renderBlockedFrame()`'s own
+  precedent) and track/car submission is skipped entirely (wrapped in an
+  `if (!showResults)` block), and `drawResults()` runs in place of
+  `drawHud()`/`drawMenu()`.
+
+  **Step 3, restart wiring**: new `handleResultsClick()` in `main.cpp`,
+  matching JS's own `#againBtn` handler (index.html:4692-4696) exactly --
+  the only interactive element is "BACK TO MENU", which just flips
+  `state.mode` back to `"menu"`. Wired into the existing
+  `SDL_MOUSEBUTTONDOWN`/`SDL_FINGERDOWN` blocks alongside the `mode=="menu"`
+  branch, and into the render call site. `startRaceFromMenu()` (Phase 4b)
+  already resets everything else a second `gridStart()` needs and now
+  generalizes to a second race for free, now that Step 1's bugfix is in
+  place.
+
+  **New `tests/results_test.cpp`** (ctest now 14/14): `computeResultsRegions()`'s
+  row-position math (the back button moves down as the row count grows, its
+  column doesn't), `buildResultsOrder()`'s 3-bucket ordering (deliberately
+  constructed with `order` in a different traversal order than
+  `finishOrder`'s own declaration order, to prove the function doesn't just
+  echo insertion order), the "`done` wins even if `out` is also set" edge
+  case (index.html's own comment on this exact point), and an empty-input
+  no-op.
+
+  **A real-time-simulation testing constraint, worked around rather than
+  ignored**: this sim runs in real time, not sped up (true of the original
+  JS too), and a caution can extend a race's finish indefinitely via
+  `race.cpp`'s green-white-checkered state machine (confirmed directly: an
+  `LHT_FORCE_LAPS=1` native run reached `t=165s`/20000 frames still mid-race,
+  `finishLaps` having grown past 1 from GWC extensions after an early
+  caution) -- waiting out a genuine multi-lap finish is impractical for
+  both native and WASM/Playwright verification. Rather than skip results-
+  screen verification entirely, added a second, more targeted debug hook
+  alongside the existing `LHT_FORCE_RACE`/`LHT_START_CHASE`: `main.cpp`'s
+  `seedForceDoneState()` seeds a plausible post-race field (3 finishers with
+  distinct `bestLapT`s, 1 DNF, the rest mid-race with a lap time) and jumps
+  straight to `mode=="done"`. It's reachable two ways -- an `LHT_FORCE_DONE`
+  env var read once at startup (native-only, mirrors the existing env-var
+  hooks), and a live `SDLK_k` debug keyboard shortcut (works at any time,
+  including via real Playwright keyboard input against the WASM build,
+  since env vars can't reach a page loaded over HTTP) -- both call the same
+  idempotent function, so there's exactly one seeding implementation to
+  keep correct.
+
+  **Verified**: `ctest` 14/14. Headless `xvfb-run` native screenshot
+  (`LHT_FORCE_DONE=1`) shows the results screen rendering correctly: "RACE
+  COMPLETE" title (the player isn't the winner in the seeded data), all 20
+  cars ranked with color chips, the player's row (rank 4, `#21 YOU 0:45.00`)
+  highlighted, the DNF car showing "DNF" instead of a time, and the "BACK TO
+  MENU" row -- opaque black background confirming no track/car geometry
+  renders underneath, matching the `.overlay`/`#results` CSS precedent.
+
+  **The full restart loop verified end to end via WASM/Playwright**
+  (`tests/wasm_verify.js`, extended -- real browser mouse clicks and a real
+  keypress, not synthetic X11/XTEST input, per this container's
+  already-established native-input-delivery limitation): loaded the page,
+  clicked Start (existing Phase 4b check), pressed `k` to reach the results
+  screen (screenshot confirms it renders), clicked "BACK TO MENU" at its
+  computed pixel coordinates (screenshot confirms the menu genuinely
+  reappears, not a stale results frame), then clicked Start again
+  (screenshot confirms a fresh second race is running: `LAP 1/5`,
+  `POS 20/20`, `GREEN` flag, live HUD/leaderboard/minimap all rendering
+  clean state) -- zero console or page errors throughout, confirming the
+  `gridStart()` `finishOrder` bugfix genuinely prevents the dangling-pointer
+  risk a restart would otherwise hit, not just in theory but in a real
+  second run.
+
+  **Phase 4 ("UI overlay") is now fully done**: every sub-task from the
+  original checklist (lap/position/flag/speed, menu, last/best lap time,
+  gear/RPM, segmented tire/fuel/car bars, minimap, leaderboard, results
+  screen + restart) is ported and verified.

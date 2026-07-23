@@ -207,6 +207,7 @@ add_executable(lht_port
   src/render/status_bars.cpp
   src/render/ui_draw.cpp
   src/ui/menu.cpp
+  src/ui/results.cpp
   src/ui/touch_controls.cpp
   ${SIM_SOURCES}
 )
@@ -345,6 +346,20 @@ target_include_directories(leaderboard_test PRIVATE
   third_party/bgfx.cmake/bx/include
 )
 add_test(NAME leaderboard_test COMMAND leaderboard_test)
+
+# Phase 4h (PORT_PROGRESS.md): results_test exercises computeResultsRegions()'s
+# row-position math and buildResultsOrder()'s 3-bucket ordering (finished ++
+# still-racing ++ DNF). Needs SDL2 (SDL_Rect) + bgfx linked (like menu_test)
+# because results.cpp's drawResults() calls bgfx::dbgTextPrintf(), even
+# though this test never calls that function.
+add_executable(results_test tests/results_test.cpp src/ui/results.cpp
+  src/render/fmt_time.cpp src/render/ui_draw.cpp)
+target_link_libraries(results_test PRIVATE SDL2::SDL2 bgfx)
+target_include_directories(results_test PRIVATE
+  third_party/bgfx.cmake/bgfx/include
+  third_party/bgfx.cmake/bx/include
+)
+add_test(NAME results_test COMMAND results_test)
 
 add_executable(determinism_test tests/determinism_test.cpp tests/determinism/trace.cpp)
 add_test(NAME determinism_test COMMAND determinism_test)

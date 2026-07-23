@@ -19,6 +19,7 @@
 #include <SDL_syswm.h>
 #endif
 
+#include "../render/hud.h"
 #include "../render/renderer.h"
 #include "../sim/car.h"
 #include "../sim/race.h"
@@ -26,6 +27,7 @@
 #include "../sim/tracks_data.h"
 #include "../ui/menu.h"
 #include "../ui/orientation.h"
+#include "../ui/results.h"
 #include "../ui/touch_controls.h"
 #include "tilt_input.h"
 
@@ -118,7 +120,7 @@ void togglePlayerPit(LoopState& S) {
 // written explicitly here, matching JS, rather than relying on both
 // defaulting to 5.
 void startRaceFromMenu(LoopState& S) {
-    gridStart(S.track, S.rng, S.state, S.pace, S.cars, nullptr);
+    gridStart(S.track, S.rng, S.state, S.pace, S.cars, S.finishOrder, nullptr);
     S.state.oneToGo = false;
     S.state.pitsOpen = true;
     S.state.cautionMaxSlot = -1;
@@ -136,6 +138,37 @@ void startRaceFromMenu(LoopState& S) {
     // mode-gated block that calls tick() (index.html:4144-4166), so it
     // never builds up backlog while sitting in the menu in the first place.
     S.simAcc = 0.0;
+}
+
+// Debug-only: seeds a plausible post-race field state (a few finishers,
+// one DNF, the rest still carrying a best lap) and jumps straight to
+// mode=="done" -- lets headless verification (native LHT_FORCE_DONE at
+// startup, or the SDLK_k debug hotkey below at any time, including via a
+// real Playwright browser click/keypress against the WASM build) reach the
+// Phase 4h results screen without waiting out a real multi-lap race, whose
+// finish can be delayed indefinitely by green-white-checkered extensions
+// after a caution (race.cpp's own gwcState machine). Idempotent (clears
+// finishOrder/done/out first) so repeated invocations don't accumulate
+// stale entries. Same seeded-state-not-a-physics-bypass philosophy as
+// LHT_FORCE_RACE.
+void seedForceDoneState(LoopState& S) {
+    S.finishOrder.clear();
+    for (size_t i = 0; i < S.cars.size(); ++i) {
+        Car& c = S.cars[i];
+        c.done = false;
+        c.out = false;
+        if (i < 3) {
+            c.done = true;
+            c.finishT = (double)i * 2.0;
+            c.bestLapT = 40.0 + (double)i * 1.5;
+            S.finishOrder.push_back(&c);
+        } else if (i == 3) {
+            c.out = true;
+        } else {
+            c.bestLapT = 45.0;
+        }
+    }
+    S.state.mode = "done";
 }
 
 // Menu row click/tap handling (Phase 4b, PORT_PROGRESS.md), matching
@@ -170,6 +203,21 @@ void handleMenuClick(LoopState& S, int x, int y) {
     }
 }
 
+// Results screen click/tap handling (Phase 4h, PORT_PROGRESS.md), matching
+// index.html's #againBtn handler (index.html:4692-4696): the only
+// interactive element on the results screen is "BACK TO MENU", which just
+// flips mode back to "menu" -- startRaceFromMenu() (above) already resets
+// everything else a second gridStart() needs, now that its own
+// finishOrder-clearing bugfix (race.h/.cpp) is in place.
+void handleResultsClick(LoopState& S, int x, int y) {
+    const std::vector<const Car*> order = computeRaceOrder(S.cars);
+    const std::vector<const Car*> resultsOrder = buildResultsOrder(S.finishOrder, order);
+    const ResultsRegions r = computeResultsRegions((int)resultsOrder.size());
+    if (pointInRect(x, y, r.backBtn)) {
+        S.state.mode = "menu";
+    }
+}
+
 void mainLoopTick(void* argPtr) {
     LoopState& S = *static_cast<LoopState*>(argPtr);
 
@@ -194,6 +242,19 @@ void mainLoopTick(void* argPtr) {
             // #tiltTog binding having no mode restriction either
             // (index.html:4703-4705).
             if (ev.key.keysym.sym == SDLK_t && !ev.key.repeat) S.state.tilt = !S.state.tilt;
+            // Debug-only: jumps straight to the Phase 4h results screen
+            // (seedForceDoneState()'s own comment above explains why) --
+            // unlike LHT_FORCE_DONE (an env var, read once at startup and
+            // unreachable from a page loaded over HTTP), this is real
+            // keyboard input, deliverable via Playwright against the WASM
+            // build too, so it's what tests/wasm_verify.js uses to reach
+            // and click through the results screen without waiting out a
+            // real race. Starts a race first if the menu hasn't yet (so
+            // `S.cars` is non-empty to seed).
+            if (ev.key.keysym.sym == SDLK_k && !ev.key.repeat) {
+                if (S.cars.empty()) startRaceFromMenu(S);
+                seedForceDoneState(S);
+            }
         }
         if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_RESIZED) {
             S.width = ev.window.data1;
@@ -216,6 +277,8 @@ void mainLoopTick(void* argPtr) {
             const int x = ev.button.x, y = ev.button.y;
             if (S.state.mode == "menu") {
                 handleMenuClick(S, x, y);
+            } else if (S.state.mode == "done") {
+                handleResultsClick(S, x, y);
             } else {
                 if (pointInRect(x, y, S.touchRegions.bL)) S.touchLeft = true;
                 if (pointInRect(x, y, S.touchRegions.bR)) S.touchRight = true;
@@ -231,6 +294,8 @@ void mainLoopTick(void* argPtr) {
             const int x = (int)(ev.tfinger.x * S.width), y = (int)(ev.tfinger.y * S.height);
             if (S.state.mode == "menu") {
                 handleMenuClick(S, x, y);
+            } else if (S.state.mode == "done") {
+                handleResultsClick(S, x, y);
             } else {
                 if (pointInRect(x, y, S.touchRegions.bL)) S.touchLeft = true;
                 if (pointInRect(x, y, S.touchRegions.bR)) S.touchRight = true;
@@ -276,6 +341,8 @@ void mainLoopTick(void* argPtr) {
         S.renderer.renderBlockedFrame();
     } else if (S.state.mode == "menu") {
         S.renderer.renderFrame(S.state, S.cars, &S.menu, &S.track.name());
+    } else if (S.state.mode == "done") {
+        S.renderer.renderFrame(S.state, S.cars, nullptr, nullptr, &S.finishOrder);
     } else {
         S.renderer.renderFrame(S.state, S.cars);
     }
@@ -423,6 +490,12 @@ int main(int argc, char** argv)
         startRaceFromMenu(S);
         S.state.mode = "race";
         S.state.flag = "green";
+    }
+
+    // Debug-only: see seedForceDoneState()'s own comment above.
+    if (std::getenv("LHT_FORCE_DONE")) {
+        startRaceFromMenu(S);
+        seedForceDoneState(S);
     }
 
     // Phase 3b (PORT_PROGRESS.md): tilt-steer via SDL_Sensor, feeding

@@ -14,8 +14,10 @@ double wrapMod(double s, double total) {
 
 // gridStart() (index.html:564-598)
 void gridStart(const Track& track, Mulberry32& rng, RaceState& state, PaceCar& pace,
-                std::vector<Car>& cars, const std::vector<int>* gridOrder) {
+                std::vector<Car>& cars, std::vector<Car*>& finishOrder,
+                const std::vector<int>* gridOrder) {
     cars.clear();
+    finishOrder.clear();
 
     std::vector<int> order;
     if (gridOrder && static_cast<int>(gridOrder->size()) == FIELD) {

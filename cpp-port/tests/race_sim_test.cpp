@@ -46,7 +46,8 @@ int main() {
         RaceState state;
         PaceCar pace;
         std::vector<Car> cars;
-        gridStart(track, rng, state, pace, cars, nullptr);
+        std::vector<Car*> finishOrder;
+        gridStart(track, rng, state, pace, cars, finishOrder, nullptr);
 
         expectEq("cars.size()", static_cast<int>(cars.size()), FIELD);
 
@@ -149,6 +150,37 @@ int main() {
         expectNear("collide[1].y", cars[1].y, 0.0);
         expectNear("collide[1].v", cars[1].v, 29.7);
         expectNear("collide[1].hdg", cars[1].hdg, 0.0);
+    }
+
+    // ---- gridStart() clears finishOrder (Phase 4h bugfix, PORT_PROGRESS.md)
+    // -- JS's own gridStart() does `S.finishOrder=[]` (index.html:590); this
+    // port's version hadn't, which was harmless while gridStart() only ever
+    // ran once per process but would dangle a Car* the instant a second race
+    // (restart) starts, since `cars` is cleared and repopulated too. ----
+    {
+        Mulberry32 rng(12345);
+        RaceState state;
+        PaceCar pace;
+        std::vector<Car> cars;
+        std::vector<Car*> finishOrder;
+        gridStart(track, rng, state, pace, cars, finishOrder, nullptr);
+
+        // Simulate a finished race leaving stale entries behind.
+        Car fake;
+        finishOrder.push_back(&fake);
+        finishOrder.push_back(&fake);
+        if (finishOrder.size() != 2) {
+            std::fprintf(stderr, "gridStart finishOrder setup: expected 2 entries before restart\n");
+            ++g_failures;
+        }
+
+        // A second gridStart() (restart) must clear the stale pointers.
+        gridStart(track, rng, state, pace, cars, finishOrder, nullptr);
+        if (!finishOrder.empty()) {
+            std::fprintf(stderr, "gridStart finishOrder: expected empty after a second gridStart(), got %zu\n",
+                         finishOrder.size());
+            ++g_failures;
+        }
     }
 
     if (g_failures == 0) {

@@ -171,12 +171,12 @@ int main(int argc, char** argv) {
     RaceState state;
     PaceCar pace;
     std::vector<Car> cars;
-    gridStart(track, rng, state, pace, cars, nullptr);
+    std::vector<Car*> finishOrder;
+    gridStart(track, rng, state, pace, cars, finishOrder, nullptr);
     state.mode = "pace";
     state.tilt = true; // matches dump_js_trace.js's `S.tilt = true;`
 
     PlayerInput input;
-    std::vector<Car*> finishOrder;
 
     std::vector<TickSnapshot> ours;
     ours.reserve(numTicks);

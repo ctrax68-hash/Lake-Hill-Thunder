@@ -4,6 +4,7 @@
 #include "shaders_embedded.h"
 #include "vertex.h"
 #include "../ui/menu.h"
+#include "../ui/results.h"
 
 #include "../sim/car.h"
 
@@ -215,8 +216,15 @@ void Renderer::renderBlockedFrame() {
 }
 
 void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& cars,
-                            const MenuSelection* menu, const std::string* menuTrackName) {
+                            const MenuSelection* menu, const std::string* menuTrackName,
+                            const std::vector<Car*>* finishOrder) {
     const bgfx::ViewId kView = 0;
+    // Phase 4h (PORT_PROGRESS.md): the results screen fully replaces the
+    // scene (opaque black clear, no track/car geometry underneath) rather
+    // than drawing on top of the still-rendering track like the menu does
+    // -- confirmed via JS's own CSS that `#results`, unlike `#menu`, has no
+    // semi-transparent override.
+    const bool showResults = raceState.mode == "done";
     // Sequential: draw calls execute in submission order, not bgfx's default
     // sort-by-key order -- this Phase 2 scene has no depth buffer (see the
     // BGFX_STATE_* flags below), so "track first, cars on top" relies
@@ -224,8 +232,19 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     // layering.
     bgfx::setViewMode(kView, bgfx::ViewMode::Sequential);
     bgfx::setViewRect(kView, 0, 0, (uint16_t)width_, (uint16_t)height_);
-    bgfx::setViewClear(kView, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x1a2e1aff, 1.0f, 0);
+    bgfx::setViewClear(kView, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH,
+                        showResults ? 0x000000ff : 0x1a2e1aff, 1.0f, 0);
 
+    const bool homogeneousDepth = bgfx::getCaps()->homogeneousDepth;
+    float identity[16];
+    bx::mtxIdentity(identity);
+
+    if (showResults) {
+        // Nothing else draws to view 0 this frame -- same "force the clear
+        // with no geometry submitted" precedent as renderBlockedFrame()'s
+        // own bgfx::touch(kView) call.
+        bgfx::touch(kView);
+    } else {
     float cx = topCx_, cy = topCy_;
     float halfW = topHalfW_, halfH = topHalfH_;
     if (cameraMode_ == CameraMode::Chase) {
@@ -299,12 +318,8 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     const bx::Vec3 at = {cx, cy, 0.0f};
     const bx::Vec3 up = {0.0f, 1.0f, 0.0f};
     bx::mtxLookAt(view, eye, at, up);
-    const bool homogeneousDepth = bgfx::getCaps()->homogeneousDepth;
     bx::mtxOrtho(proj, -halfW, halfW, -halfH, halfH, 0.1f, 1000.0f, 0.0f, homogeneousDepth);
     bgfx::setViewTransform(kView, view, proj);
-
-    float identity[16];
-    bx::mtxIdentity(identity);
 
     const uint64_t state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A;
 
@@ -354,19 +369,28 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             bgfx::submit(kView, program_);
         }
     }
+    } // !showResults
 
     // Phase 4a (PORT_PROGRESS.md): first functional slice of drawHUD()
     // (index.html:3927), drawn via bgfx's debug-text overlay -- see
     // hud.cpp for exactly what's ported vs. deferred.
     bgfx::dbgTextClear();
     std::vector<PosColorVertex> uiVerts;
-    drawHud(raceState, cars, uiVerts, minimapOutline_, minimapBoundX_, minimapBoundY_,
-            track_ ? track_->total() : 0.0);
-    // Phase 4b (PORT_PROGRESS.md): drawHud() itself already early-returns
-    // for mode=="menu" (hud.cpp:21), so both can unconditionally run here
-    // without stepping on each other's dbgText rows.
-    if (raceState.mode == "menu" && menu && menuTrackName) {
-        drawMenu(*menu, raceState.laps, raceState.tilt, *menuTrackName);
+    if (showResults && finishOrder) {
+        // Phase 4h (PORT_PROGRESS.md): results replaces the HUD entirely,
+        // same "mode-exclusive branches" precedent as the menu branch below.
+        const std::vector<const Car*> order = computeRaceOrder(cars);
+        const std::vector<const Car*> resultsOrder = buildResultsOrder(*finishOrder, order);
+        drawResults(resultsOrder, uiVerts);
+    } else {
+        drawHud(raceState, cars, uiVerts, minimapOutline_, minimapBoundX_, minimapBoundY_,
+                track_ ? track_->total() : 0.0);
+        // Phase 4b (PORT_PROGRESS.md): drawHud() itself already early-returns
+        // for mode=="menu" (hud.cpp:21), so both can unconditionally run here
+        // without stepping on each other's dbgText rows.
+        if (raceState.mode == "menu" && menu && menuTrackName) {
+            drawMenu(*menu, raceState.laps, raceState.tilt, *menuTrackName);
+        }
     }
 
     // Phase 4e (PORT_PROGRESS.md): a second, pixel-space orthographic view

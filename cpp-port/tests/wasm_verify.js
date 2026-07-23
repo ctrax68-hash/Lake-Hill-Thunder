@@ -41,6 +41,23 @@
 //   9. Two more screenshots a few seconds after the click (the original
 //      frame-advances regression check, now performed post-click since
 //      that's where gameplay actually renders).
+// Phase 4h added the results screen + restart flow. A full natural race
+// finish is impractical to wait out here (this sim runs in real time, not
+// sped up -- true of the original JS too -- and a caution can extend the
+// finish indefinitely via race.cpp's green-white-checkered state machine),
+// so this uses the same debug-only SDLK_k hotkey main.cpp exposes for
+// exactly this purpose (seedForceDoneState(), see its own comment) --
+// pressed via Playwright's real keyboard-input pipeline, not synthetic
+// X11/XTEST input, so it's a genuine end-to-end exercise of:
+//   10. Press 'k' -> mode=="done" -> screenshot the results screen.
+//   11. Click "BACK TO MENU" at its known pixel coordinates
+//       (computeResultsRegions(20)'s backBtn center, 20 cars in the seeded
+//       field) -> screenshot confirming the menu reappears.
+//   12. Click Start again (same coordinates as the first click) ->
+//       screenshot confirming a second race is running -- proving
+//       gridStart()'s finishOrder-clearing bugfix (race.h/.cpp) actually
+//       prevents the dangling-pointer risk a restart would otherwise hit.
+//
 // This script only captures screenshots + basic console/error checks --
 // actual pixel-level verification (non-blank extrema, frame-diff) is done
 // as a separate manual PIL pass over the written PNGs, same division of
@@ -167,17 +184,41 @@ async function main() {
   await page.waitForTimeout(2000);
   const shot2 = await page.screenshot();
 
+  // Phase 4h restart-flow exercise (see this file's own header comment):
+  // debug hotkey 'k' -> results screen -> click Back -> menu -> click
+  // Start again -> a second race running.
+  await page.keyboard.press('k');
+  await page.waitForTimeout(500);
+  const resultsShot = await page.screenshot();
+
+  // computeResultsRegions(20)'s backBtn center: kCol=1, kCellW=8, kCellH=16,
+  // kRowListStart=3, 20 seeded cars -> backRow = 3+20+1 = 24 -> y in
+  // [24*16, 24*16+16) = [384,400); backBtn is 24 cols wide -> x in
+  // [8, 8+24*8) = [8,200). Center: (104, 392).
+  await page.mouse.click(104, 392);
+  await page.waitForTimeout(500);
+  const menuAgainShot = await page.screenshot();
+
+  // Same Start button coordinates as the first click above.
+  await page.mouse.click(104, 184);
+  await page.waitForTimeout(4000);
+  const secondRaceShot = await page.screenshot();
+
   await browser.close();
 
   fs.writeFileSync(path.join(outDir, 'wasm_shot1.png'), shot1);
   fs.writeFileSync(path.join(outDir, 'wasm_shot2.png'), shot2);
+  fs.writeFileSync(path.join(outDir, 'wasm_results.png'), resultsShot);
+  fs.writeFileSync(path.join(outDir, 'wasm_menu_again.png'), menuAgainShot);
+  fs.writeFileSync(path.join(outDir, 'wasm_second_race.png'), secondRaceShot);
 
   console.log(`Console errors: ${consoleErrors.length}`);
   consoleErrors.forEach((e) => console.log('  console error:', e));
   console.log(`Page errors: ${pageErrors.length}`);
   pageErrors.forEach((e) => console.log('  page error:', e));
   console.log('Screenshots written to', outDir,
-              '(wasm_menu.png before the click, wasm_shot1.png/wasm_shot2.png after)');
+              '(wasm_menu.png before the click, wasm_shot1.png/wasm_shot2.png after; ' +
+              'wasm_results.png/wasm_menu_again.png/wasm_second_race.png for the Phase 4h restart flow)');
 
   if (consoleErrors.length > 0 || pageErrors.length > 0) {
     fail('console/page errors occurred during load+run (see above)');

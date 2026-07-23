@@ -60,8 +60,17 @@ public:
     // `menuTrackName` (both must be non-null in that case) drive a menu
     // overlay drawn in place of the HUD -- see menu.h's drawMenu(). Ignored
     // whenever mode != "menu" (may be null then).
+    //
+    // Phase 4h (PORT_PROGRESS.md): while raceState.mode=="done", track/car
+    // submission is skipped entirely (opaque black clear, matching
+    // renderBlockedFrame()'s precedent -- confirmed via JS's own CSS that
+    // `#results`, unlike `#menu`, has no semi-transparent override) and
+    // `finishOrder` (must be non-null then) drives the results screen drawn
+    // in place of the HUD -- see results.h's drawResults(). Ignored whenever
+    // mode != "done" (may be null then).
     void renderFrame(const RaceState& raceState, const std::vector<Car>& cars,
-                      const MenuSelection* menu = nullptr, const std::string* menuTrackName = nullptr);
+                      const MenuSelection* menu = nullptr, const std::string* menuTrackName = nullptr,
+                      const std::vector<Car*>* finishOrder = nullptr);
 
     // Phase 3c (PORT_PROGRESS.md): stand-in for the CSS `#rotate` prompt
     // (index.html:140-147,203) shown whenever the viewport is portrait --
