@@ -614,6 +614,12 @@ log entry below (livery.h/.cpp CPU rasterizer, per-car texture cache keyed
 by car number, car quads switched to the textured-lit shader with UVs,
 7-segment digit rasterizer standing in for real font-based number decals).
 
+**Phase 5g done (Session 7)**: Big Sable jumbotron/pylon + Cedar Valley hill
+silhouette -- see this session's log entry below (digit_mesh.h/.cpp 7-segment
+LED-digit geometry, pylon_mesh.h/.cpp scoring-pylon/jumbotron builders gated
+on `stadium.pylon`/`.jumbotron`, hill_silhouette.h/.cpp's ring-of-quads
+backdrop gated on `sky.silhouette=='hills'`).
+
 ### Phase 6 — Polish & platform packaging — NOT STARTED, DEPRIORITIZED
 The user explicitly clarified (Session 3, same session Phase 7 below started): no App Store,
 no native Android/iOS distribution wanted at all -- they want to play from Safari, ideally
@@ -3204,3 +3210,72 @@ elsewhere in the same run.
 
   **Next**: Phase 5g (Big Sable jumbotron/pylon + Cedar Valley hill
   silhouette).
+
+- **Session 7 -- Phase 5g: Big Sable jumbotron/pylon + Cedar Valley hill
+  silhouette.** The last two per-track special cases flagged as deferred
+  back in 5d/5e's own header comments -- both real 3D geometry, no new
+  texture plumbing needed.
+
+  **New `src/render/digit_mesh.h/.cpp`** (bgfx-free): `addDigitQuads()`/
+  `addNumber()`, a direct port of JS's 7-segment LED-digit geometry
+  (index.html:2177-2201) -- one flat quad per lit segment, positioned via
+  a caller-supplied `PutFn put(x,y)` projection (the same closure-over-
+  tanX/tanZ/latX/latZ idiom JS uses at each of its two call sites, kept as
+  a `std::function` here so this header has no Track/pos3() dependency of
+  its own). `tests/digit_mesh_test.cpp`: each digit emits exactly one quad
+  per lit segment bit (cross-checked against an independently-written copy
+  of the segment table, not just re-running the same lookup), out-of-range
+  digits emit nothing, and multi-digit numbers sum their digits' own
+  vertex counts.
+
+  **New `src/render/pylon_mesh.h/.cpp`** (bgfx-free): `buildPylonMesh()`/
+  `buildJumbotronMesh()` port index.html:2116-2153's scoring-pylon (a tall
+  chrome pole, 6 rows of the first 6 `ROSTER` car numbers) and jumbotron
+  (an infield screen centered between the front/back straights, 5 rows of
+  numbers) -- both gated on `stadium.pylon`/`stadium.jumbotron` (true only
+  for Big Sable in `tracks_data.h`), returning an empty mesh otherwise so
+  callers can invoke both unconditionally on every track. Numeric content
+  is a static first-N-ROSTER-entries snapshot, not a live leaderboard feed
+  -- the same simplification JS itself already made (its own comment:
+  "a static build-time snapshot, not a per-frame texture repaint").
+  `tests/pylon_mesh_test.cpp`: both builders emit nothing on a non-pylon/
+  non-jumbotron track (Thunder Oval) and real geometry on Big Sable, with
+  unit-length normals and at least some geometry above ground level.
+
+  **New `src/render/hill_silhouette.h/.cpp`** (bgfx-free):
+  `buildHillSilhouette()` ports index.html:1910-1919's `addHillSilhouette()`
+  -- a 48-quad ring at R=1400 (well past the grass extent) with randomized
+  per-quad corner heights, colored with JS's own fixed sky/grass-ish blend
+  (independent of any per-track theme data, matching JS exactly, which
+  hardcodes this color rather than deriving it from `TRACK.theme`).
+  Consumes the same shared scenery-only `Mulberry32(777)` stream the stand/
+  atlas/sky-cloud geometry already uses (called just ahead of the stand
+  builds in `renderer.cpp::setTrack()`, mirroring JS's own call order in
+  `buildWorld()` even though this port's "safe to diverge" scenery-RNG
+  precedent doesn't strictly require matching that order).
+  `tests/hill_silhouette_test.cpp`: exactly 48 quads (288 verts), every
+  vertex sitting on the R=1400 ring, heights within JS's own 50-140 range,
+  deterministic given the same seed.
+
+  **`renderer.cpp`**: `setTrack()` now calls `buildHillSilhouette()` when
+  `stadium.sky.silhouette=="hills"` (appended to the flat stadium buffer,
+  ahead of the stand builds) and unconditionally appends
+  `buildPylonMesh()`/`buildJumbotronMesh()` after the outer wall (both
+  return empty on every track but Big Sable, so no per-track branching is
+  needed at the call site).
+
+  **Verified**: `ctest` 23/23 (3 new test binaries: `digit_mesh_test`,
+  `pylon_mesh_test`, `hill_silhouette_test`). Headless `xvfb-run`
+  screenshots: Big Sable's top-down view shows the jumbotron/pillar as a
+  thin dark bar at the infield center (the correct edge-on silhouette of a
+  thin vertical screen viewed from directly overhead -- confirmed via a 4x
+  zoomed crop, not just eyeballed at full scale); a side-by-side crop of
+  matching sky regions from Big Sable vs. Cedar Valley's `Chase`-mode
+  screenshots confirms the differential the plan called for -- Cedar
+  Valley alone shows a jagged gray hill silhouette rising behind its
+  grandstands, absent from Big Sable's otherwise-identical-composition
+  shot. Both new features render without artifacts or crashes across a
+  30-frame `Chase`-mode run on each track; no regression to sky/ground/
+  stand/livery/HUD rendering from 5a-5f.
+
+  **Next**: Phase 5h (hand-rolled bloom + tonemap postprocessing).

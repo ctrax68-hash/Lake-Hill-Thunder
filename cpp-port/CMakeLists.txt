@@ -270,13 +270,16 @@ add_executable(lht_port
   src/platform/main.cpp
   src/platform/tilt_input.cpp
   src/render/atlas_texture.cpp
+  src/render/digit_mesh.cpp
   src/render/fmt_time.cpp
   src/render/gap_time.cpp
   src/render/gear_rpm.cpp
+  src/render/hill_silhouette.cpp
   src/render/hud.cpp
   src/render/leaderboard.cpp
   src/render/livery.cpp
   src/render/minimap.cpp
+  src/render/pylon_mesh.cpp
   src/render/renderer.cpp
   src/render/sky_texture.cpp
   src/render/stadium_mesh.cpp
@@ -392,6 +395,27 @@ add_test(NAME atlas_texture_test COMMAND atlas_texture_test)
 # pure pixel math, bgfx-free (links track.cpp/car.cpp for ROSTER data).
 add_executable(livery_test tests/livery_test.cpp src/sim/track.cpp src/sim/car.cpp src/render/livery.cpp)
 add_test(NAME livery_test COMMAND livery_test)
+
+# Phase 5g (PORT_PROGRESS.md): digit_mesh_test exercises addDigitQuads()/
+# addNumber()'s pure geometry (segment lookup, quad count, multi-digit
+# layout), bgfx-free. Vec3/MeshVertex/Track are all just header types here
+# (no Track object is ever constructed), so no sim/track.cpp link is needed.
+add_executable(digit_mesh_test tests/digit_mesh_test.cpp src/render/digit_mesh.cpp)
+add_test(NAME digit_mesh_test COMMAND digit_mesh_test)
+
+# Phase 5g (PORT_PROGRESS.md): pylon_mesh_test exercises buildPylonMesh()/
+# buildJumbotronMesh()'s per-track gating (empty mesh unless
+# stadium.pylon/.jumbotron is set) and non-empty geometry for Big Sable.
+add_executable(pylon_mesh_test tests/pylon_mesh_test.cpp src/sim/track.cpp src/sim/car.cpp
+  src/render/track_surface.cpp src/render/digit_mesh.cpp src/render/pylon_mesh.cpp)
+add_test(NAME pylon_mesh_test COMMAND pylon_mesh_test)
+
+# Phase 5g (PORT_PROGRESS.md): hill_silhouette_test exercises
+# buildHillSilhouette()'s pure geometry (vertex count, ring radius, height
+# range), bgfx-free. No Track object is ever constructed, so no
+# sim/track.cpp link is needed.
+add_executable(hill_silhouette_test tests/hill_silhouette_test.cpp src/render/hill_silhouette.cpp)
+add_test(NAME hill_silhouette_test COMMAND hill_silhouette_test)
 
 add_executable(car_test tests/car_test.cpp src/sim/track.cpp src/sim/car.cpp)
 add_test(NAME car_test COMMAND car_test)

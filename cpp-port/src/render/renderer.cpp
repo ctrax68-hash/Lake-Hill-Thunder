@@ -6,6 +6,8 @@
 #include "livery.h"
 #include "shaders_embedded.h"
 #include "sky_texture.h"
+#include "hill_silhouette.h"
+#include "pylon_mesh.h"
 #include "stadium_mesh.h"
 #include "track_surface.h"
 #include "vertex.h"
@@ -376,6 +378,14 @@ void Renderer::setTrack(const Track& track) {
         const Seg& seg1 = track.segs()[1];
         const Seg& seg2 = track.segs()[2];
         const Seg& seg3 = track.segs()[3];
+        // Phase 5g (PORT_PROGRESS.md): Cedar Valley's hill silhouette
+        // (`sky.silhouette=='hills'`) -- a no-op empty mesh for every other
+        // track. Called here, ahead of the stand builds, mirroring JS's own
+        // buildWorld() call order (index.html:2056, before the grandstand
+        // block) even though this port's shared scenery-RNG stream doesn't
+        // require matching call order (see stadium_mesh.h's own "safe to
+        // diverge" precedent).
+        if (st.sky.silhouette == "hills") append(buildHillSilhouette(sceneryRng));
         appendStand(buildStandMesh(track, seg0.s0 + seg0.len * 0.12, seg0.s0 + seg0.len * 0.88, st.standTier.front,
                                     st.crowdTiers, st.standDensity, st.standScale.tierD, st.standScale.tierH,
                                     st.crowdPalette, crowdUV, sceneryRng));
@@ -397,6 +407,11 @@ void Renderer::setTrack(const Track& track) {
         // (moving lane at lat=-8.4, stall lane at lat=-10.5).
         append(buildPitRoadMesh(track, -7.2, -11.8));
         append(buildOuterWallMesh(track));
+        // Phase 5g (PORT_PROGRESS.md): Big Sable's scoring pylon + jumbotron
+        // (`stadium.pylon`/`stadium.jumbotron`) -- both no-op empty meshes on
+        // every other track, so safe to call unconditionally.
+        append(buildPylonMesh(track));
+        append(buildJumbotronMesh(track));
 
         std::vector<PosNormalColorVertex> stadiumVerts;
         stadiumVerts.reserve(mesh.size());
