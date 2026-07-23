@@ -1,5 +1,6 @@
 #include "renderer.h"
 #include "color.h"
+#include "env_presets.h"
 #include "hud.h"
 #include "shaders_embedded.h"
 #include "track_surface.h"
@@ -119,6 +120,7 @@ bool Renderer::init(void* nativeDisplayHandle, void* nativeWindowHandle, int wid
 
 void Renderer::shutdown() {
     if (bgfx::isValid(trackVb_)) bgfx::destroy(trackVb_);
+    if (bgfx::isValid(groundVb_)) bgfx::destroy(groundVb_);
     if (bgfx::isValid(program_)) bgfx::destroy(program_);
     if (bgfx::isValid(litProgram_)) bgfx::destroy(litProgram_);
     if (bgfx::isValid(uSunDir_)) bgfx::destroy(uSunDir_);
@@ -133,6 +135,32 @@ void Renderer::shutdown() {
 void Renderer::setTrack(const Track& track) {
     track_ = &track;
     if (bgfx::isValid(trackVb_)) bgfx::destroy(trackVb_);
+    if (bgfx::isValid(groundVb_)) bgfx::destroy(groundVb_);
+
+    // Phase 5b (PORT_PROGRESS.md): resolve this track's ENV_PRESETS entry
+    // (env_presets.h, a port of index.html:3520-3530's applyEnvPreset())
+    // once here rather than per frame -- lighting is per-track data, not
+    // per-frame. Replaces Phase 5a's hardcoded 'noon-grass' constants.
+    {
+        const EnvPreset& preset = resolveEnvPreset(track.stadium().env.preset);
+        const Vec3d dir = envSunDirection(preset);
+        sunDir_[0] = (float)dir.x;
+        sunDir_[1] = (float)dir.y;
+        sunDir_[2] = (float)dir.z;
+        sunDir_[3] = 0.0f;
+        sunColor_[0] = (float)(preset.sunColor[0] * preset.sunIntensity);
+        sunColor_[1] = (float)(preset.sunColor[1] * preset.sunIntensity);
+        sunColor_[2] = (float)(preset.sunColor[2] * preset.sunIntensity);
+        sunColor_[3] = 0.0f;
+        hemiSky_[0] = (float)(preset.hemiSky[0] * preset.hemiIntensity);
+        hemiSky_[1] = (float)(preset.hemiSky[1] * preset.hemiIntensity);
+        hemiSky_[2] = (float)(preset.hemiSky[2] * preset.hemiIntensity);
+        hemiSky_[3] = 0.0f;
+        hemiGround_[0] = (float)(preset.hemiGround[0] * preset.hemiIntensity);
+        hemiGround_[1] = (float)(preset.hemiGround[1] * preset.hemiIntensity);
+        hemiGround_[2] = (float)(preset.hemiGround[2] * preset.hemiIntensity);
+        hemiGround_[3] = 0.0f;
+    }
 
     const double halfW = track.halfW();
     const double total = track.total();
@@ -226,6 +254,30 @@ void Renderer::setTrack(const Track& track) {
     topHalfW_ = std::max((maxx - minx) / 2.0f * 1.1f, 10.0f);
     topHalfH_ = std::max((maxz - minz) / 2.0f * 1.1f, 10.0f);
 
+    // Phase 5b (PORT_PROGRESS.md): a large flat ground plane colored by
+    // this track's theme.grass (index.html's per-track `theme:{grass:...}}`)
+    // -- the first real use of per-track color data, and something for the
+    // new lighting model to shade besides the ribbon itself. Sized well
+    // past the track's own extent (6x the top-down framing half-size) so
+    // it fills the frame in both TopDown and Chase views; sits a hair below
+    // the ribbon's own lowest point (apron height, always >= 0.02, see
+    // surfH()) to avoid z-fighting at the ribbon's edges.
+    {
+        const auto& grass = track.theme().grass;
+        const uint32_t grassColor = packColor((float)grass[0], (float)grass[1], (float)grass[2]);
+        const float half = std::max(topHalfW_, topHalfH_) * 3.0f;
+        const float gx0 = topCx_ - half, gx1 = topCx_ + half;
+        const float gz0 = topCy_ - half, gz1 = topCy_ + half;
+        const float gy = -0.05f;
+        const PosNormalColorVertex v00{gx0, gy, gz0, 0, 1, 0, grassColor};
+        const PosNormalColorVertex v10{gx1, gy, gz0, 0, 1, 0, grassColor};
+        const PosNormalColorVertex v11{gx1, gy, gz1, 0, 1, 0, grassColor};
+        const PosNormalColorVertex v01{gx0, gy, gz1, 0, 1, 0, grassColor};
+        const PosNormalColorVertex groundVerts[6] = {v00, v10, v11, v00, v11, v01};
+        groundVb_ = bgfx::createVertexBuffer(bgfx::copy(groundVerts, sizeof(groundVerts)), litLayout_);
+        groundVertexCount_ = 6;
+    }
+
     // Phase 4f (PORT_PROGRESS.md): the minimap's outline, built eagerly
     // here (see this class's own header comment for why that's a
     // deliberate simplification over JS's lazy-cache approach) -- a
@@ -299,24 +351,14 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         // own bgfx::touch(kView) call.
         bgfx::touch(kView);
     } else {
-    // Phase 5a (PORT_PROGRESS.md): sun/hemisphere lighting uniforms --
-    // hardcoded to the 'noon-grass' ENV_PRESETS entry's values for now
-    // (index.html:3490-3491); Phase 5b makes these real per-track data
-    // selected in setTrack(). Sun direction is TOWARD the sun (matches
-    // fs_lit.sc's `dot(n, u_sunDir)`), from azimuth=35deg/elevation=55deg.
-    {
-        constexpr double az = 35.0 * 3.14159265358979323846 / 180.0;
-        constexpr double el = 55.0 * 3.14159265358979323846 / 180.0;
-        const float sunDir[4] = {(float)(std::cos(az) * std::cos(el)), (float)std::sin(el),
-                                  (float)(std::sin(az) * std::cos(el)), 0.0f};
-        const float sunColor[4] = {1.0f * 3.2f, 0.9569f * 3.2f, 0.8784f * 3.2f, 0.0f};
-        const float hemiSky[4] = {0.7490f * 1.1f, 0.8392f * 1.1f, 1.0f * 1.1f, 0.0f};
-        const float hemiGround[4] = {0.2f * 1.1f, 0.1843f * 1.1f, 0.1569f * 1.1f, 0.0f};
-        bgfx::setUniform(uSunDir_, sunDir);
-        bgfx::setUniform(uSunColor_, sunColor);
-        bgfx::setUniform(uHemiSky_, hemiSky);
-        bgfx::setUniform(uHemiGround_, hemiGround);
-    }
+    // Phase 5b (PORT_PROGRESS.md): sun/hemisphere lighting uniforms, now
+    // real per-track data resolved once in setTrack() (env_presets.h)
+    // instead of Phase 5a's hardcoded 'noon-grass' constants. Sun direction
+    // is TOWARD the sun (matches fs_lit.sc's `dot(n, u_sunDir)`).
+    bgfx::setUniform(uSunDir_, sunDir_);
+    bgfx::setUniform(uSunColor_, sunColor_);
+    bgfx::setUniform(uHemiSky_, hemiSky_);
+    bgfx::setUniform(uHemiGround_, hemiGround_);
 
     // Phase 5a (PORT_PROGRESS.md): real depth testing, now that world-space
     // geometry has genuine 3D extent (banked ribbon, and stadium/stands
@@ -457,6 +499,16 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         bx::mtxLookAt(view, eye, at, up);
         bx::mtxOrtho(proj, -halfW, halfW, -halfH, halfH, 0.1f, 1000.0f, 0.0f, homogeneousDepth);
         bgfx::setViewTransform(kView, view, proj);
+    }
+
+    // Phase 5b (PORT_PROGRESS.md): the ground plane draws first (painter's-
+    // algorithm ordering, though depth testing makes the exact order moot)
+    // so the ribbon and cars are never occluded by it.
+    if (groundVertexCount_ > 0) {
+        bgfx::setTransform(identity);
+        bgfx::setVertexBuffer(0, groundVb_, 0, groundVertexCount_);
+        bgfx::setState(state);
+        bgfx::submit(kView, litProgram_);
     }
 
     if (trackVertexCount_ > 0) {

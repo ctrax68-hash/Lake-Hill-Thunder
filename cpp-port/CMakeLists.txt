@@ -315,6 +315,12 @@ add_test(NAME track_test COMMAND track_test)
 add_executable(track_surface_test tests/track_surface_test.cpp src/sim/track.cpp src/render/track_surface.cpp)
 add_test(NAME track_surface_test COMMAND track_surface_test)
 
+# Phase 5b (PORT_PROGRESS.md): env_presets.h/tracks_data.h are both
+# header-only (TRACKS is an inline const array of aggregates, no Track
+# objects constructed), so this test needs no .cpp sources at all.
+add_executable(env_presets_test tests/env_presets_test.cpp)
+add_test(NAME env_presets_test COMMAND env_presets_test)
+
 add_executable(car_test tests/car_test.cpp src/sim/track.cpp src/sim/car.cpp)
 add_test(NAME car_test COMMAND car_test)
 

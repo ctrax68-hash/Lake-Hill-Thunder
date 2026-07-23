@@ -148,5 +148,20 @@ private:
     bgfx::UniformHandle uHemiSky_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uHemiGround_ = BGFX_INVALID_HANDLE;
 
+    // Phase 5b (PORT_PROGRESS.md): the resolved ENV_PRESETS values for the
+    // current track (env_presets.h), computed once in setTrack() rather
+    // than per frame -- these are per-track, not per-frame, data. Replaces
+    // Phase 5a's hardcoded 'noon-grass' constants in renderFrame().
+    float sunDir_[4] = {0, 1, 0, 0};
+    float sunColor_[4] = {0, 0, 0, 0};
+    float hemiSky_[4] = {0, 0, 0, 0};
+    float hemiGround_[4] = {0, 0, 0, 0};
+
+    // Phase 5b: a large flat ground plane colored by theme.grass -- the
+    // first real use of per-track color data, and something for the new
+    // lighting to shade besides the ribbon itself.
+    bgfx::VertexBufferHandle groundVb_ = BGFX_INVALID_HANDLE;
+    uint32_t groundVertexCount_ = 0;
+
     bgfx::CallbackI* callback_ = nullptr;
 };

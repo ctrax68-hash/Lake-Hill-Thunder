@@ -1,21 +1,75 @@
 #pragma once
 
+#include <array>
 #include <string>
 #include <vector>
 
 // Port of the JS track builder (index.html:242-374): two-center-oval
 // geometry built from a small per-track spec, with pointAt()/bankAt()/
-// project() as the physics-facing query API. Visual-only fields from the
-// JS TRACKS entries (theme colors, stadium dressing, sky/env presets) are
-// deliberately NOT ported here -- Phase 1 is physics/AI only, and that data
-// is lower priority per PORT_PROGRESS.md; it belongs in Phase 5 alongside
-// the renderer that actually draws it.
+// project() as the physics-facing query API. Phase 1 ported only the
+// physics-relevant fields; Phase 5b (PORT_PROGRESS.md) added the
+// visual-only Theme/Stadium data below (colors, stadium dressing,
+// sky/env preset name), straight from each JS TRACKS[] entry
+// (index.html:242-283) -- never read by sim/AI code, only by the renderer.
 
 struct Vec2 {
     double x = 0, y = 0;
 };
 
-// Physics-relevant fields only, straight from each JS TRACKS[] entry.
+// theme (index.html e.g. `theme:{wall:[1,.267,0],grass:[.176,.314,.086]}`).
+// Named TrackTheme, not Theme, to avoid colliding with render/color.h's
+// unrelated `namespace Theme` (that one is the UI chrome palette).
+struct TrackTheme {
+    std::array<double, 3> wall;
+    std::array<double, 3> grass;
+};
+
+// stadium.standTier (per-track grandstand row counts by zone).
+struct StandTier {
+    int front, back, corner;
+};
+
+// stadium.standScale (per-track riser depth/height in world units).
+struct StandScale {
+    double tierD, tierH;
+};
+
+// stadium.sky (per-track background gradient + optional silhouette).
+struct Sky {
+    std::array<double, 3> horizon;
+    std::array<double, 3> zenith;
+    std::string silhouette; // "none" | "hills"
+};
+
+// stadium.env (names an ENV_PRESETS entry -- see render/env_presets.h).
+struct Env {
+    std::string preset;
+};
+
+// stadium (index.html:246-252 etc.) -- all visual/dressing data for one
+// track. Only theme.grass + env.preset are consumed as of Phase 5b; the
+// rest (stands/crowd/sky/jumbotron/pylon) is ported now as data, matching
+// the JS source's own "one config object, one generic code path" layout,
+// and gets consumed incrementally by Phase 5d onward.
+struct Stadium {
+    StandTier standTier;
+    double standDensity;
+    std::string standReach; // "partial" | "full"
+    StandScale standScale;
+    double crowdFill;
+    int seamEvery;
+    int patches;
+    bool jumbotron;
+    bool pylon;
+    double sponsorDensity;
+    int crowdTiers = 2; // JS: `st.crowdTiers||2` (index.html:2062)
+    Sky sky;
+    Env env;
+    std::array<std::array<double, 3>, 6> crowdPalette;
+};
+
+// Straight from each JS TRACKS[] entry (index.html:242-283): physics fields
+// (Phase 1) plus visual dressing (Phase 5b).
 struct TrackSpec {
     std::string name;
     double RL, RR;     // corner radii (left end = T1/T2, right end = T3/T4)
@@ -23,6 +77,8 @@ struct TrackSpec {
     double D;           // center-to-center distance
     double sBank;        // straight banking, degrees
     double ramp;         // banking ramp-in/out distance
+    TrackTheme theme;
+    Stadium stadium;
 };
 
 struct Seg {
@@ -61,6 +117,8 @@ public:
     double sFinish() const { return sFinish_; }
     const std::vector<Seg>& segs() const { return segs_; }
     const std::string& name() const { return name_; }
+    const TrackTheme& theme() const { return theme_; }
+    const Stadium& stadium() const { return stadium_; }
 
 private:
     std::string name_;
@@ -70,4 +128,6 @@ private:
     double sFinish_ = 0;
     double sBankRad_ = 0;
     double ramp_ = 0;
+    TrackTheme theme_;
+    Stadium stadium_;
 };

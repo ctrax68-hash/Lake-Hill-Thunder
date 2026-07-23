@@ -589,6 +589,11 @@ below for what actually landed and any scope notes.
 log entry below for the full writeup (banked track mesh, real perspective
 camera, hemisphere+directional lighting, depth testing).
 
+**Phase 5b done (Session 7)**: per-track theme/stadium/ENV_PRESETS data +
+real per-track lighting -- see this session's log entry below (TrackTheme/
+Stadium data, env_presets.h, per-track sun/hemi uniforms, grass ground
+plane).
+
 ### Phase 6 — Polish & platform packaging — NOT STARTED, DEPRIORITIZED
 The user explicitly clarified (Session 3, same session Phase 7 below started): no App Store,
 no native Android/iOS distribution wanted at all -- they want to play from Safari, ideally
@@ -2822,3 +2827,76 @@ elsewhere in the same run.
   today's uniforms to `noon-grass`'s values), and any stadium/sky/livery
   geometry (5b onward). **Next**: Phase 5b (per-track theme/stadium/
   `ENV_PRESETS` data + real per-track lighting).
+
+- **Session 7 -- Phase 5b: per-track theme/stadium/ENV_PRESETS data + real
+  lighting.** Ports the visual-only fields from each JS `TRACKS[]` entry
+  (index.html:242-283) that Phase 1 deliberately skipped, plus JS's
+  `ENV_PRESETS` table + `applyEnvPreset()` (index.html:3490-3530), and wires
+  both into the renderer so each track finally looks different, not just
+  drives different.
+
+  **`src/sim/track.h`** gained `TrackTheme` (`wall`/`grass` colors),
+  `StandTier`/`StandScale`/`Sky`/`Env`/`Stadium` (all the per-track stadium
+  dressing fields -- tier counts, density, crowd fill, sky gradient +
+  silhouette, env preset name, 6-color crowd palette), and `TrackSpec`
+  gained `theme`/`stadium` members. **Named `TrackTheme`, not `Theme`**:
+  a plain `Theme` collided with `render/color.h`'s existing `namespace
+  Theme` (the unrelated UI chrome palette) -- caught immediately by the
+  build (`'namespace Theme {}' redeclared as different kind of entity`),
+  fixed by renaming rather than touching the older, unrelated code.
+  `Track` now exposes `theme()`/`stadium()` accessors; `Track::Track()`
+  copies both from the spec. `tracks_data.h`'s `TRACKS` table gained the
+  full transcribed literal data for all 4 tracks (theme colors, stadium
+  tiers/density/crowd-fill/sky/env/palette), matching index.html:243-282
+  field-for-field. Only `theme.grass` and `stadium.env.preset` are
+  actually consumed as of this sub-phase -- the rest (stand tiers, crowd
+  palette, sky gradient, jumbotron/pylon flags) is ported now as data,
+  matching the JS source's own "one config object, one generic code path"
+  layout, and gets consumed incrementally starting Phase 5d.
+
+  **New `src/render/env_presets.h`** (bgfx-free): the 4 `ENV_PRESETS`
+  entries (`noon-grass`/`sunset`/`hazy-noon`/`dusk-lights`, index.html:
+  3491-3508) transcribed via a `hexRgb()` helper so each 0xRRGGBB literal
+  reads exactly as it does in the JS source, plus `resolveEnvPreset(name)`
+  (falls back to `noon-grass` for an unrecognized name, matching
+  index.html:3522's `|| ENV_PRESETS['noon-grass']`) and
+  `envSunDirection(preset)` (azimuth/elevation -> unit direction TOWARD the
+  sun, matching `THREE.DirectionalLight`'s own position-as-direction
+  convention since the light targets the origin, index.html:3524).
+  New `tests/env_presets_test.cpp`: direction math at known angles
+  (straight-up, horizon), unit-length check for all 4 presets, the
+  unknown-name fallback, and -- a typo guard on the transcribed data --
+  confirms each real track's `stadium().env.preset` string resolves to a
+  genuinely distinct preset from its neighbors, not an accidental shared
+  fallback.
+
+  **`renderer.cpp`**: `setTrack()` now resolves the track's env preset once
+  (not per frame -- this is per-track data) and stores the sun direction/
+  color and hemisphere sky/ground values (each pre-multiplied by the
+  preset's own intensity) as new `Renderer` members, replacing Phase 5a's
+  hardcoded `noon-grass` constants in `renderFrame()`. Also builds a large
+  flat ground plane (6x the top-down framing half-size, so it fills the
+  frame in both camera modes) colored by `theme.grass` and lit through the
+  same `vs_lit`/`fs_lit` path as the ribbon -- the first real use of
+  per-track color data, and something for the lighting model to shade
+  besides the ribbon itself. Sits at y=-0.05, a hair below the ribbon's own
+  lowest point (apron height, always >= 0.02 per `surfH()`) to avoid
+  z-fighting at the ribbon's edges.
+
+  **New `tests/env_presets_test.cpp`** target added to CMakeLists.txt;
+  needs no `.cpp` sources at all since both `env_presets.h` and
+  `tracks_data.h` are header-only (`TRACKS` is an inline const array of
+  aggregates, no `Track` objects constructed to read it).
+
+  **Verified**: `ctest` 16/16 (env_presets_test added). Headless
+  `xvfb-run` Chase-mode screenshots on all 4 tracks confirm the ground
+  plane renders as the correct grass color everywhere and the per-track
+  lighting mood is genuinely distinguishable, not just theoretically
+  different data: sampling a HUD-clear strip of pure grass on each
+  screenshot gave average RGB (45,80,22) Thunder Oval, (38,69,20)
+  Milltown, (51,84,26) Cedar Valley, (20,39,16) Big Sable -- Big Sable
+  reads distinctly darkest, matching `dusk-lights`' very low 6-degree sun
+  elevation, exactly the differentiation this sub-phase's own verification
+  bar called for. No regression in either camera mode.
+
+  **Next**: Phase 5c (sky background).

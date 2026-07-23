@@ -19,7 +19,7 @@ double cwDelta(double a0, double a1) {
 }
 } // namespace
 
-Track::Track(const TrackSpec& spec) : name_(spec.name) {
+Track::Track(const TrackSpec& spec) : name_(spec.name), theme_(spec.theme), stadium_(spec.stadium) {
     const double RL = spec.RL, bankL = spec.bankL * PI / 180;
     const double RR = spec.RR, bankR = spec.bankR * PI / 180;
     const double D = spec.D;
