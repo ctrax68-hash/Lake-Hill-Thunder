@@ -37,13 +37,49 @@
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   canvas { display: block; width: 100vw; height: 100vh; outline: none; }
+  #lht-fatal {
+    display: none; position: fixed; inset: 0; z-index: 10;
+    background: #000; color: #f55; font: 14px/1.5 monospace;
+    padding: 24px; box-sizing: border-box; overflow: auto; white-space: pre-wrap;
+  }
 </style>
 </head>
 <body>
 <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+<div id="lht-fatal"></div>
 <script>
+  // Without this, a failure before/during WASM init (WebGL2 context
+  // creation failing, bgfx::init() returning false, an uncaught JS
+  // exception) leaves the canvas exactly as blank as a normal loading
+  // frame -- indistinguishable from "still loading" to whoever's holding
+  // the device, and with no console visible on a phone there's no way to
+  // learn why. This surfaces the actual reason on-screen instead.
+  function lhtShowFatal(msg) {
+    var el = document.getElementById('lht-fatal');
+    if (el.style.display === 'block') return; // first error wins, don't overwrite it
+    el.textContent = 'Lake Hill Thunder failed to start:\n\n' + msg;
+    el.style.display = 'block';
+  }
+
+  var canvas = document.getElementById('canvas');
+  if (!canvas.getContext('webgl2')) {
+    lhtShowFatal(
+      'This browser/device does not support WebGL2, which this game requires.\n' +
+      'Try updating your browser, or use a recent desktop browser instead.'
+    );
+  }
+
+  window.addEventListener('error', function (e) {
+    lhtShowFatal((e.message || String(e.error || e)) +
+      (e.filename ? '\n(' + e.filename + ':' + e.lineno + ')' : ''));
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    lhtShowFatal(String((e.reason && e.reason.message) || e.reason));
+  });
+
   var Module = {
-    canvas: document.getElementById('canvas')
+    canvas: canvas,
+    onAbort: function (what) { lhtShowFatal(String(what)); },
   };
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js');
