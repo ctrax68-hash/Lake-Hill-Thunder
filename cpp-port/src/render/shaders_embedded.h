@@ -50,6 +50,15 @@
 #include "essl/vs_sky.sc.bin.h"
 #include "essl/fs_sky.sc.bin.h"
 
+// Phase 5e (PORT_PROGRESS.md): vs_textured_lit/fs_textured_lit, the
+// crowd-tile-textured front stand tiers (same lighting as vs_lit/fs_lit).
+#include "spirv/vs_textured_lit.sc.bin.h"
+#include "spirv/fs_textured_lit.sc.bin.h"
+#include "glsl/vs_textured_lit.sc.bin.h"
+#include "glsl/fs_textured_lit.sc.bin.h"
+#include "essl/vs_textured_lit.sc.bin.h"
+#include "essl/fs_textured_lit.sc.bin.h"
+
 static const bgfx::EmbeddedShader s_embeddedShaders[] = {
     BGFX_EMBEDDED_SHADER(vs_flat),
     BGFX_EMBEDDED_SHADER(fs_flat),
@@ -57,5 +66,7 @@ static const bgfx::EmbeddedShader s_embeddedShaders[] = {
     BGFX_EMBEDDED_SHADER(fs_lit),
     BGFX_EMBEDDED_SHADER(vs_sky),
     BGFX_EMBEDDED_SHADER(fs_sky),
+    BGFX_EMBEDDED_SHADER(vs_textured_lit),
+    BGFX_EMBEDDED_SHADER(fs_textured_lit),
     BGFX_EMBEDDED_SHADER_END()
 };

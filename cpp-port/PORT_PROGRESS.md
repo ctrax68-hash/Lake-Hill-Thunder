@@ -604,6 +604,11 @@ colors -- see this session's log entry below (stadium_mesh.h/.cpp,
 addStand()/addPitRoad()/outer-wall port, crowd/wall/fence textures and
 digit geometry all deferred to 5e-5g).
 
+**Phase 5e done (Session 7)**: texture infrastructure + crowd-tile atlas --
+see this session's log entry below (atlas_texture.h/.cpp CPU rasterizer,
+vs_textured_lit/fs_textured_lit shader path, front-tier stand seats now
+genuinely crowd-textured instead of flat-colored).
+
 ### Phase 6 — Polish & platform packaging — NOT STARTED, DEPRIORITIZED
 The user explicitly clarified (Session 3, same session Phase 7 below started): no App Store,
 no native Android/iOS distribution wanted at all -- they want to play from Safari, ideally
@@ -3054,3 +3059,75 @@ elsewhere in the same run.
   No regression in either camera mode.
 
   **Next**: Phase 5e (texture infrastructure + crowd-tile atlas).
+
+- **Session 7 -- Phase 5e: texture infrastructure + crowd-tile atlas.**
+  Ports JS's `paintWorldAtlas()` + region helpers (index.html:2890-3024) and
+  wires a new textured-lit shader path so the front-tier stand seats built
+  in Phase 5d finally show a real crowd instead of a flat color block.
+
+  **New `src/render/atlas_texture.h/.cpp`** (bgfx-free, a tiny CPU
+  rasterizer): `buildAtlasPixels()` paints wall/fence/crowd/crew/sponsor
+  regions into one RGBA8 buffer. **Logged simplifications** (all in the
+  header's own comment, matching this sub-phase's explicitly-anticipated
+  tolerance for non-pixel-exact fidelity): a 512x512 atlas instead of JS's
+  2048x2048 with an entirely new (non-pixel-matching) region layout; the
+  wall's 45-degree diamond pattern and the fence's crosshatch are computed
+  analytically per-pixel (closed-form rotated-checkerboard / diagonal-
+  stripe math) rather than simulating canvas transform+fillRect/stroke
+  calls; sponsor panels are flat alternating light/dark panels with a
+  border and no sponsor-name text (JS's `drawWord()` is a full custom
+  bitmap-font renderer, well outside this item's scope); JS's post-paint
+  gutter blur is skipped since this port's `atlasUV()` inset already
+  avoids the seam-bleed problem it exists to hide; JS's "white texel"
+  workaround (for Three.js's single-material-per-mesh limitation) has no
+  equivalent since this port's flat-colored geometry uses a completely
+  separate non-textured shader already. `paintCrowdTile()` itself --
+  the actual sub-phase namesake -- is an exact port: 8px grid, empty-seat
+  base color, per-cell random fill gated by `crowdFill`, brightness
+  jitter, from the track's own `crowdPalette`. New
+  `tests/atlas_texture_test.cpp`: fill-proportion statistics at
+  `crowdFill=0` and `1`, the 8px grid-cell pitch (a whole cell is one
+  solid color), and that the 5 fixed regions never overlap.
+
+  **New textured-lit shader path**: `vs_textured_lit.sc`/`fs_textured_lit.sc`
+  + `PosNormalUVVertex` (`vertex_textured.h`) -- identical hemisphere+
+  directional lighting math to `fs_lit.sc`, but the base color comes from
+  a sampled atlas texel instead of a per-vertex color. Reuses the
+  existing `uSunDir_`/`uSunColor_`/`uHemiSky_`/`uHemiGround_` uniforms
+  (bgfx uniforms are looked up by name per draw call, not tied to one
+  program, and empirically already persist across the multiple submit()
+  calls Phase 5d's ground/ribbon/stadium draws rely on) and the existing
+  `s_texColor` sampler uniform first created for the sky (Phase 5c) --
+  a different texture bound per draw call, since textures (unlike named
+  uniforms) are submit-scoped.
+
+  **`stadium_mesh.h/.cpp`**: `buildStandMesh()` now returns a
+  `StandMeshResult{flat, textured}` pair instead of one flat vector.
+  `MeshVertex` gained unused-by-default `u,v` fields rather than
+  introducing a second parallel vertex struct. Risers stay flat-colored
+  always (JS never textures them); seats split by `t < crowdTiers`: front
+  tiers emit `addQuadUV()`-equivalent UV'd geometry into the crowd atlas
+  region (passed in as a `crowdUV` rect so this header stays free of any
+  `atlas_texture.h` dependency), the rest keep Phase 5d's flat palette
+  path. Extended `tests/stadium_mesh_test.cpp` with a `crowdTiers=2`-of-4
+  case verifying the textured/flat vertex-count split and that every
+  textured vertex's UV falls inside the given crowd rect.
+
+  **`renderer.cpp`**: builds the atlas once per `setTrack()` (own
+  independent `Mulberry32(777)` stream, separate from the stand-building
+  scenery RNG -- no cross-feature consistency requirement to preserve),
+  uploads it, and now collects `buildStandMesh()`'s `textured` output
+  across all 4 stand zones into a second static vertex buffer, drawn via
+  the new textured-lit program right after the flat stadium buffer.
+
+  **Verified**: `ctest` 19/19 (atlas_texture_test added). Headless
+  `xvfb-run` Chase-mode screenshots on Big Sable (`crowdFill=0.97`) and
+  Cedar Valley (`crowdFill=0.55`) both show a genuinely speckled, per-seat
+  color-varying crowd texture on the front tiers -- a dramatic visual
+  improvement over Phase 5d's flat solid-color mass -- with the upper
+  flat-colored tiers still rendering correctly in the same frame right
+  alongside the textured ones (confirmed via a zoomed crop showing riser/
+  flat-tier/textured-tier bands all distinct). No regression in ground/
+  sky/track/HUD rendering.
+
+  **Next**: Phase 5f (livery texture painting).

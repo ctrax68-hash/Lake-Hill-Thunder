@@ -159,14 +159,16 @@ if(EMSCRIPTEN)
   set(LHT_NATIVE_GENERATED_SHADERS ${CMAKE_CURRENT_SOURCE_DIR}/build/generated_shaders)
   if(NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_flat.sc.bin.h
      OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_lit.sc.bin.h
-     OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_sky.sc.bin.h)
+     OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_sky.sc.bin.h
+     OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_textured_lit.sc.bin.h)
     message(FATAL_ERROR
       "Phase 7 web build reuses the native build's already-compiled shader "
       "headers (see this file's own comment) instead of cross-compiling "
       "shaderc -- run `cmake --build build` (the native target) at least "
       "once first so ${LHT_NATIVE_GENERATED_SHADERS} exists (Phase 5a added "
-      "vs_lit/fs_lit and Phase 5c added vs_sky/fs_sky, so a stale native "
-      "build missing those will also hit this guard).")
+      "vs_lit/fs_lit, Phase 5c added vs_sky/fs_sky, and Phase 5e added "
+      "vs_textured_lit/fs_textured_lit, so a stale native build missing "
+      "those will also hit this guard).")
   endif()
   set(LHT_GENERATED_SHADERS_DIR ${LHT_NATIVE_GENERATED_SHADERS})
   add_custom_target(lht_shaders) # nothing to build, just a no-op dependency target
@@ -232,8 +234,30 @@ else()
     AS_HEADERS
     OUT_FILES_VAR LHT_FS_SKY_OUTPUTS
   )
+  # Phase 5e (PORT_PROGRESS.md): vs_textured_lit/fs_textured_lit -- the
+  # crowd-tile-textured front stand tiers (same lighting as vs_lit/fs_lit,
+  # plus a UV-sampled texture in place of the vertex color).
+  bgfx_compile_shaders(
+    TYPE VERTEX
+    SHADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/vs_textured_lit.sc
+    VARYING_DEF ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/varying_textured_lit.def.sc
+    OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders
+    INCLUDE_DIRS ${LHT_SHADER_INCLUDE_DIRS}
+    AS_HEADERS
+    OUT_FILES_VAR LHT_VS_TEXTURED_LIT_OUTPUTS
+  )
+  bgfx_compile_shaders(
+    TYPE FRAGMENT
+    SHADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/fs_textured_lit.sc
+    VARYING_DEF ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/varying_textured_lit.def.sc
+    OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders
+    INCLUDE_DIRS ${LHT_SHADER_INCLUDE_DIRS}
+    AS_HEADERS
+    OUT_FILES_VAR LHT_FS_TEXTURED_LIT_OUTPUTS
+  )
   add_custom_target(lht_shaders DEPENDS ${LHT_VS_FLAT_OUTPUTS} ${LHT_FS_FLAT_OUTPUTS}
-    ${LHT_VS_LIT_OUTPUTS} ${LHT_FS_LIT_OUTPUTS} ${LHT_VS_SKY_OUTPUTS} ${LHT_FS_SKY_OUTPUTS})
+    ${LHT_VS_LIT_OUTPUTS} ${LHT_FS_LIT_OUTPUTS} ${LHT_VS_SKY_OUTPUTS} ${LHT_FS_SKY_OUTPUTS}
+    ${LHT_VS_TEXTURED_LIT_OUTPUTS} ${LHT_FS_TEXTURED_LIT_OUTPUTS})
   set(LHT_GENERATED_SHADERS_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders)
 endif()
 
@@ -245,6 +269,7 @@ endif()
 add_executable(lht_port
   src/platform/main.cpp
   src/platform/tilt_input.cpp
+  src/render/atlas_texture.cpp
   src/render/fmt_time.cpp
   src/render/gap_time.cpp
   src/render/gear_rpm.cpp
@@ -356,6 +381,11 @@ add_test(NAME sky_texture_test COMMAND sky_texture_test)
 add_executable(stadium_mesh_test tests/stadium_mesh_test.cpp src/sim/track.cpp src/sim/car.cpp
   src/render/track_surface.cpp src/render/stadium_mesh.cpp)
 add_test(NAME stadium_mesh_test COMMAND stadium_mesh_test)
+
+# Phase 5e (PORT_PROGRESS.md): atlas_texture_test exercises buildAtlasPixels()'s
+# pure pixel math, bgfx-free.
+add_executable(atlas_texture_test tests/atlas_texture_test.cpp src/render/atlas_texture.cpp)
+add_test(NAME atlas_texture_test COMMAND atlas_texture_test)
 
 add_executable(car_test tests/car_test.cpp src/sim/track.cpp src/sim/car.cpp)
 add_test(NAME car_test COMMAND car_test)

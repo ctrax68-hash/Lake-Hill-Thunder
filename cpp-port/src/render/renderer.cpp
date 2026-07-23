@@ -1,4 +1,5 @@
 #include "renderer.h"
+#include "atlas_texture.h"
 #include "color.h"
 #include "env_presets.h"
 #include "hud.h"
@@ -8,6 +9,7 @@
 #include "track_surface.h"
 #include "vertex.h"
 #include "vertex_lit.h"
+#include "vertex_textured.h"
 #include "vertex_uv.h"
 #include "../ui/menu.h"
 #include "../ui/results.h"
@@ -138,7 +140,22 @@ bool Renderer::init(void* nativeDisplayHandle, void* nativeWindowHandle, int wid
     };
     skyVb_ = bgfx::createVertexBuffer(bgfx::copy(skyVerts, sizeof(skyVerts)), skyLayout_);
 
-    return bgfx::isValid(program_) && bgfx::isValid(litProgram_) && bgfx::isValid(skyProgram_);
+    // Phase 5e (PORT_PROGRESS.md): textured-lit program for the crowd-
+    // atlas-textured front stand tiers -- shares the sun/hemi lighting
+    // uniforms above (bgfx uniforms are looked up by name per-draw, not
+    // tied to one program, and already-set values persist across
+    // submit() calls, confirmed empirically since Phase 5d's ground/
+    // ribbon/stadium draws already share these same handles) and reuses
+    // uSkyTexColor_ as its sampler uniform (same name/type, a different
+    // texture bound per draw call -- textures, unlike named uniforms, are
+    // submit-scoped, so binding a different one per draw is the norm).
+    texturedLitLayout_ = PosNormalUVVertex::layout();
+    bgfx::ShaderHandle vshTexturedLit = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "vs_textured_lit");
+    bgfx::ShaderHandle fshTexturedLit = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "fs_textured_lit");
+    texturedLitProgram_ = bgfx::createProgram(vshTexturedLit, fshTexturedLit, true);
+
+    return bgfx::isValid(program_) && bgfx::isValid(litProgram_) && bgfx::isValid(skyProgram_) &&
+           bgfx::isValid(texturedLitProgram_);
 }
 
 void Renderer::shutdown() {
@@ -155,6 +172,9 @@ void Renderer::shutdown() {
     if (bgfx::isValid(skyVb_)) bgfx::destroy(skyVb_);
     if (bgfx::isValid(skyTexture_)) bgfx::destroy(skyTexture_);
     if (bgfx::isValid(stadiumVb_)) bgfx::destroy(stadiumVb_);
+    if (bgfx::isValid(texturedLitProgram_)) bgfx::destroy(texturedLitProgram_);
+    if (bgfx::isValid(atlasTexture_)) bgfx::destroy(atlasTexture_);
+    if (bgfx::isValid(stadiumTexturedVb_)) bgfx::destroy(stadiumTexturedVb_);
     bgfx::shutdown();
     delete callback_;
     callback_ = nullptr;
@@ -320,42 +340,54 @@ void Renderer::setTrack(const Track& track) {
         groundVertexCount_ = 6;
     }
 
-    // Phase 5d (PORT_PROGRESS.md): stands (front/back/corner x2) + pit road
-    // + the outer wall, combined into one static buffer alongside the
-    // ribbon/ground. Flat colors only (stadium_mesh.h's own header comment
-    // explains what's deferred to Phase 5e). One shared Mulberry32(777)
-    // scenery-RNG stream across all 4 stand calls, matching JS's own rng2
-    // consumption order (front, back, corner, corner) -- cosmetic only, see
-    // stadium_mesh.h for why this doesn't affect gameplay determinism.
+    // Phase 5d/5e (PORT_PROGRESS.md): stands (front/back/corner x2) + pit
+    // road + the outer wall, combined into one static flat-colored buffer,
+    // plus a second static buffer for the front-tier crowd-textured stand
+    // seats (Phase 5e). One shared Mulberry32(777) scenery-RNG stream
+    // across all 4 stand calls, matching JS's own rng2 consumption order
+    // (front, back, corner, corner) -- cosmetic only, see stadium_mesh.h
+    // for why this doesn't affect gameplay determinism. The atlas texture
+    // gets its own independent Mulberry32(777) stream (paintCrowdTile()'s
+    // own rng2 use in JS runs at a different, unrelated call site --
+    // there's no cross-feature visual consistency requirement to preserve
+    // here, only "safe to diverge" scenery randomness).
     if (bgfx::isValid(stadiumVb_)) bgfx::destroy(stadiumVb_);
+    if (bgfx::isValid(stadiumTexturedVb_)) bgfx::destroy(stadiumTexturedVb_);
+    if (bgfx::isValid(atlasTexture_)) bgfx::destroy(atlasTexture_);
     {
         const Stadium& st = track.stadium();
         Mulberry32 sceneryRng(777);
         std::vector<MeshVertex> mesh;
+        std::vector<MeshVertex> texturedMesh;
         auto append = [&](std::vector<MeshVertex>&& v) {
             mesh.insert(mesh.end(), v.begin(), v.end());
         };
+        auto appendStand = [&](StandMeshResult&& r) {
+            mesh.insert(mesh.end(), r.flat.begin(), r.flat.end());
+            texturedMesh.insert(texturedMesh.end(), r.textured.begin(), r.textured.end());
+        };
+        const std::array<double, 4> crowdUV = atlasUV(kAtlasCrowd);
         const Seg& seg0 = track.segs()[0];
         const Seg& seg1 = track.segs()[1];
         const Seg& seg2 = track.segs()[2];
         const Seg& seg3 = track.segs()[3];
-        append(buildStandMesh(track, seg0.s0 + seg0.len * 0.12, seg0.s0 + seg0.len * 0.88, st.standTier.front,
-                               st.standDensity, st.standScale.tierD, st.standScale.tierH, st.crowdPalette,
-                               sceneryRng));
-        append(buildStandMesh(track, seg2.s0 + seg2.len * 0.12, seg2.s0 + seg2.len * 0.88, st.standTier.back,
-                               st.standDensity, st.standScale.tierD, st.standScale.tierH, st.crowdPalette,
-                               sceneryRng));
+        appendStand(buildStandMesh(track, seg0.s0 + seg0.len * 0.12, seg0.s0 + seg0.len * 0.88, st.standTier.front,
+                                    st.crowdTiers, st.standDensity, st.standScale.tierD, st.standScale.tierH,
+                                    st.crowdPalette, crowdUV, sceneryRng));
+        appendStand(buildStandMesh(track, seg2.s0 + seg2.len * 0.12, seg2.s0 + seg2.len * 0.88, st.standTier.back,
+                                    st.crowdTiers, st.standDensity, st.standScale.tierD, st.standScale.tierH,
+                                    st.crowdPalette, crowdUV, sceneryRng));
         // Every track gets corner seating (index.html:2067-2075's own
         // comment on this): coverage fraction depends on standReach, not
         // whether it's "full" only.
         const double cornerCov = st.standReach == "full" ? 0.94 : 0.55;
         const double pad = (1.0 - cornerCov) / 2.0;
-        append(buildStandMesh(track, seg1.s0 + seg1.len * pad, seg1.s0 + seg1.len * (1 - pad),
-                               st.standTier.corner, st.standDensity, st.standScale.tierD, st.standScale.tierH,
-                               st.crowdPalette, sceneryRng));
-        append(buildStandMesh(track, seg3.s0 + seg3.len * pad, seg3.s0 + seg3.len * (1 - pad),
-                               st.standTier.corner, st.standDensity, st.standScale.tierD, st.standScale.tierH,
-                               st.crowdPalette, sceneryRng));
+        appendStand(buildStandMesh(track, seg1.s0 + seg1.len * pad, seg1.s0 + seg1.len * (1 - pad),
+                                    st.standTier.corner, st.crowdTiers, st.standDensity, st.standScale.tierD,
+                                    st.standScale.tierH, st.crowdPalette, crowdUV, sceneryRng));
+        appendStand(buildStandMesh(track, seg3.s0 + seg3.len * pad, seg3.s0 + seg3.len * (1 - pad),
+                                    st.standTier.corner, st.crowdTiers, st.standDensity, st.standScale.tierD,
+                                    st.standScale.tierH, st.crowdPalette, crowdUV, sceneryRng));
         // PIT_OUT/PIT_IN (index.html:1937): sized to hold both pit AI lanes
         // (moving lane at lat=-8.4, stall lane at lat=-10.5).
         append(buildPitRoadMesh(track, -7.2, -11.8));
@@ -371,6 +403,26 @@ void Renderer::setTrack(const Track& track) {
             bgfx::copy(stadiumVerts.data(), (uint32_t)(stadiumVerts.size() * sizeof(PosNormalColorVertex))),
             litLayout_);
         stadiumVertexCount_ = (uint32_t)stadiumVerts.size();
+
+        std::vector<PosNormalUVVertex> texturedVerts;
+        texturedVerts.reserve(texturedMesh.size());
+        for (const MeshVertex& v : texturedMesh) {
+            texturedVerts.push_back({(float)v.x, (float)v.y, (float)v.z, (float)v.nx, (float)v.ny, (float)v.nz,
+                                      (float)v.u, (float)v.v});
+        }
+        if (!texturedVerts.empty()) {
+            stadiumTexturedVb_ = bgfx::createVertexBuffer(
+                bgfx::copy(texturedVerts.data(), (uint32_t)(texturedVerts.size() * sizeof(PosNormalUVVertex))),
+                texturedLitLayout_);
+        }
+        stadiumTexturedVertexCount_ = (uint32_t)texturedVerts.size();
+
+        Mulberry32 atlasRng(777);
+        const std::vector<uint8_t> atlasPixels =
+            buildAtlasPixels(track.theme().wall, st.crowdPalette, st.crowdFill, atlasRng);
+        atlasTexture_ = bgfx::createTexture2D((uint16_t)kAtlasSize, (uint16_t)kAtlasSize, false, 1,
+                                               bgfx::TextureFormat::RGBA8, 0,
+                                               bgfx::copy(atlasPixels.data(), (uint32_t)atlasPixels.size()));
     }
 
     // Phase 4f (PORT_PROGRESS.md): the minimap's outline, built eagerly
@@ -658,6 +710,17 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         bgfx::setVertexBuffer(0, stadiumVb_, 0, stadiumVertexCount_);
         bgfx::setState(state);
         bgfx::submit(kView, litProgram_);
+    }
+
+    // Phase 5e (PORT_PROGRESS.md): front-tier stand seats, crowd-atlas
+    // textured -- same lit state as everything else in this view, just a
+    // different program/vertex layout/bound texture.
+    if (stadiumTexturedVertexCount_ > 0 && bgfx::isValid(atlasTexture_)) {
+        bgfx::setTransform(identity);
+        bgfx::setVertexBuffer(0, stadiumTexturedVb_, 0, stadiumTexturedVertexCount_);
+        bgfx::setTexture(0, uSkyTexColor_, atlasTexture_);
+        bgfx::setState(state);
+        bgfx::submit(kView, texturedLitProgram_);
     }
 
     if (!cars.empty() && track_) {

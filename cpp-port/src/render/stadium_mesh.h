@@ -29,6 +29,21 @@ struct MeshVertex {
     double x, y, z;
     double nx, ny, nz;
     std::array<double, 3> color;
+    // Phase 5e (PORT_PROGRESS.md): unused (0,0) by every flat-colored
+    // caller; only buildStandMesh()'s `textured` output sets these to
+    // real crowd-atlas UVs. Kept on the one shared vertex type rather than
+    // introducing a second struct, matching this sub-phase's own "reuse
+    // over parallel-struct sprawl" call.
+    double u = 0.0, v = 0.0;
+};
+
+// buildStandMesh()'s two output meshes: `flat` (risers + upper-tier seats,
+// vertex-colored, drawn through the existing lit/flat-color pipeline) and
+// `textured` (front `crowdTiers` seats, UV'd into the crowd atlas region,
+// drawn through Phase 5e's new textured-lit pipeline).
+struct StandMeshResult {
+    std::vector<MeshVertex> flat;
+    std::vector<MeshVertex> textured;
 };
 
 // addStand() (index.html:1787-1830): riser + seat quads per tier, tessellated
@@ -37,10 +52,17 @@ struct MeshVertex {
 // across all stand-zone calls for one track, matching JS's own call order
 // (front, back, corner, corner) -- cosmetic only, doesn't affect gameplay
 // determinism (see PORT_PROGRESS.md's existing "safe to diverge" precedent
-// for scenery RNG).
-std::vector<MeshVertex> buildStandMesh(const Track& track, double sStart, double sEnd, int tiers,
-                                        double density, double tierD, double tierH,
-                                        const std::array<std::array<double, 3>, 6>& palette, Mulberry32& rng);
+// for scenery RNG). `crowdTiers` selects how many of the front tiers (t <
+// crowdTiers) get the textured crowd-atlas path vs. the flat palette path
+// (index.html:1816-1821) -- Phase 5d always used the flat path for every
+// tier since the atlas didn't exist yet; Phase 5e is what makes this
+// parameter meaningful. `crowdUV` is the crowd region's UV rect
+// (atlasUV(kAtlasCrowd), atlas_texture.h) -- passed in rather than computed
+// here so this header stays free of any atlas_texture.h dependency.
+StandMeshResult buildStandMesh(const Track& track, double sStart, double sEnd, int tiers, int crowdTiers,
+                                double density, double tierD, double tierH,
+                                const std::array<std::array<double, 3>, 6>& palette,
+                                const std::array<double, 4>& crowdUV, Mulberry32& rng);
 
 // addPitRoad() (index.html:1836-1909): entry/exit lines, pit wall, numbered
 // stall box outlines (digits themselves deferred to Phase 5g alongside the

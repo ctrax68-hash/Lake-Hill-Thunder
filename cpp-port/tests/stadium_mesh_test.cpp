@@ -36,18 +36,21 @@ void expectTrue(const char* label, bool cond) {
 int main() {
     Track t(TRACKS[0]); // Thunder Oval
 
-    // buildStandMesh: with density=1.0 (no gap-gating), vertex count is
-    // exactly steps * tiers * 2 quads/tier * 6 verts/quad, where steps is
-    // the same clamp(round(zoneLen/12), 16, 40) buildStandMesh itself uses.
+    // buildStandMesh: with density=1.0 (no gap-gating) and crowdTiers=0 (so
+    // every tier stays on the flat-colored path), vertex count is exactly
+    // steps * tiers * 2 quads/tier * 6 verts/quad, where steps is the same
+    // clamp(round(zoneLen/12), 16, 40) buildStandMesh itself uses.
+    const std::array<double, 4> dummyCrowdUV{0.0, 0.0, 1.0, 1.0};
     {
         Mulberry32 rng(777);
         const double sStart = 0.0, sEnd = 200.0;
         const int tiers = 4;
         const int expectedSteps = std::min(40, std::max(16, (int)std::lround((sEnd - sStart) / 12.0)));
         const std::array<std::array<double, 3>, 6>& palette = TRACKS[0].stadium.crowdPalette;
-        const auto verts = buildStandMesh(t, sStart, sEnd, tiers, 1.0, 3.2, 2.1, palette, rng);
+        const auto result = buildStandMesh(t, sStart, sEnd, tiers, 0, 1.0, 3.2, 2.1, palette, dummyCrowdUV, rng);
+        expectTrue("buildStandMesh emits no textured verts when crowdTiers=0", result.textured.empty());
         expectTrue("buildStandMesh vertex count matches steps*tiers*2*6",
-                   verts.size() == (size_t)expectedSteps * tiers * 2 * 6);
+                   result.flat.size() == (size_t)expectedSteps * tiers * 2 * 6);
     }
 
     // buildStandMesh: density < 1 can only ever shrink the vertex count
@@ -56,9 +59,37 @@ int main() {
     {
         Mulberry32 rng(777);
         const std::array<std::array<double, 3>, 6>& palette = TRACKS[0].stadium.crowdPalette;
-        const auto verts = buildStandMesh(t, 0.0, 200.0, 4, 0.5, 3.2, 2.1, palette, rng);
+        const auto result = buildStandMesh(t, 0.0, 200.0, 4, 0, 0.5, 3.2, 2.1, palette, dummyCrowdUV, rng);
+        const auto& verts = result.flat;
         expectTrue("density<1 output is a whole number of slice-chunks", verts.size() % (4 * 2 * 6) == 0);
         expectTrue("density<1 output is no larger than density=1 output", verts.size() <= (size_t)16 * 4 * 2 * 6);
+    }
+
+    // buildStandMesh: with crowdTiers=2 of 4 tiers, exactly half the seat
+    // quads go textured (UV'd inside the given crowd rect) and half stay
+    // flat -- risers always stay flat regardless of crowdTiers.
+    {
+        Mulberry32 rng(777);
+        const std::array<double, 4> crowdUV{0.1, 0.2, 0.3, 0.4};
+        const std::array<std::array<double, 3>, 6>& palette = TRACKS[0].stadium.crowdPalette;
+        const int tiers = 4, crowdTiers = 2;
+        const double sStart = 0.0, sEnd = 200.0;
+        const int steps = std::min(40, std::max(16, (int)std::lround((sEnd - sStart) / 12.0)));
+        const auto result = buildStandMesh(t, sStart, sEnd, tiers, crowdTiers, 1.0, 3.2, 2.1, palette, crowdUV, rng);
+        // Textured: crowdTiers seat quads per slice, 6 verts/quad.
+        expectTrue("crowdTiers=2 textured vertex count matches steps*crowdTiers*6",
+                   result.textured.size() == (size_t)steps * crowdTiers * 6);
+        // Flat: all risers (tiers*6/slice) + the remaining (tiers-crowdTiers)
+        // flat seat quads per slice.
+        expectTrue("crowdTiers=2 flat vertex count matches risers + remaining flat seats",
+                   result.flat.size() == (size_t)steps * (tiers * 6 + (tiers - crowdTiers) * 6));
+        bool allUVInRect = true;
+        for (const auto& v : result.textured) {
+            if (v.u < crowdUV[0] - 1e-9 || v.u > crowdUV[2] + 1e-9 || v.v < crowdUV[1] - 1e-9 ||
+                v.v > crowdUV[3] + 1e-9)
+                allUVInRect = false;
+        }
+        expectTrue("all textured verts' UVs fall inside the given crowd rect", allUVInRect);
     }
 
     // buildPitRoadMesh: the first stall-outline quad's first vertex is the

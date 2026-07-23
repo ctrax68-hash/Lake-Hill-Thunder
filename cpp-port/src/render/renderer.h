@@ -170,6 +170,16 @@ private:
     bgfx::VertexBufferHandle stadiumVb_ = BGFX_INVALID_HANDLE;
     uint32_t stadiumVertexCount_ = 0;
 
+    // Phase 5e (PORT_PROGRESS.md): the crowd-tile atlas (atlas_texture.h)
+    // and the front-tier stand seats textured with it -- a separate static
+    // buffer/program from stadiumVb_'s flat-colored geometry (risers +
+    // upper-tier seats + pit road + wall all stay on the flat path).
+    bgfx::VertexLayout texturedLitLayout_;
+    bgfx::ProgramHandle texturedLitProgram_ = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle atlasTexture_ = BGFX_INVALID_HANDLE;
+    bgfx::VertexBufferHandle stadiumTexturedVb_ = BGFX_INVALID_HANDLE;
+    uint32_t stadiumTexturedVertexCount_ = 0;
+
     // Phase 5c (PORT_PROGRESS.md): the sky background -- a fullscreen
     // textured quad (own unlit program/vertex layout/static NDC-space
     // vertex buffer, built once in init()) sampling a per-track texture

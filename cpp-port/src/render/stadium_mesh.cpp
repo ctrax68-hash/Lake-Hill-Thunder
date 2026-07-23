@@ -54,6 +54,31 @@ void addQuad(std::vector<MeshVertex>& out, const Vec3& a, const Vec3& b, const V
     addTri(out, a, c, d, color);
 }
 
+// quadUV() (index.html:1692-1696): same two-triangle split, but each
+// vertex carries a UV instead of a baked color (Phase 5e's textured-lit
+// pipeline samples the atlas texture for color instead).
+void addQuadUV(std::vector<MeshVertex>& out, const Vec3& a, const Vec3& b, const Vec3& c, const Vec3& d,
+               const std::array<double, 2>& ua, const std::array<double, 2>& ub, const std::array<double, 2>& uc,
+               const std::array<double, 2>& ud) {
+    auto tri = [&](const Vec3& p0, const Vec3& p1, const Vec3& p2, const std::array<double, 2>& t0,
+                   const std::array<double, 2>& t1, const std::array<double, 2>& t2) {
+        const double ux = p1.x - p0.x, uy = p1.y - p0.y, uz = p1.z - p0.z;
+        const double vx = p2.x - p0.x, vy = p2.y - p0.y, vz = p2.z - p0.z;
+        double nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+        const double len = std::sqrt(nx * nx + ny * ny + nz * nz);
+        if (len > 1e-9) {
+            nx /= len;
+            ny /= len;
+            nz /= len;
+        }
+        out.push_back({p0.x, p0.y, p0.z, nx, ny, nz, {1, 1, 1}, t0[0], t0[1]});
+        out.push_back({p1.x, p1.y, p1.z, nx, ny, nz, {1, 1, 1}, t1[0], t1[1]});
+        out.push_back({p2.x, p2.y, p2.z, nx, ny, nz, {1, 1, 1}, t2[0], t2[1]});
+    };
+    tri(a, b, c, ua, ub, uc);
+    tri(a, c, d, ua, uc, ud);
+}
+
 // box() (index.html:1697-1705): 6 axis-aligned faces, each already wound to
 // face outward.
 void addBox(std::vector<MeshVertex>& out, double x0, double y0, double z0, double x1, double y1, double z1,
@@ -69,13 +94,16 @@ void addBox(std::vector<MeshVertex>& out, double x0, double y0, double z0, doubl
 
 } // namespace
 
-std::vector<MeshVertex> buildStandMesh(const Track& track, double sStart, double sEnd, int tiers,
-                                        double density, double tierD, double tierH,
-                                        const std::array<std::array<double, 3>, 6>& palette, Mulberry32& rng) {
-    std::vector<MeshVertex> out;
+StandMeshResult buildStandMesh(const Track& track, double sStart, double sEnd, int tiers, int crowdTiers,
+                                double density, double tierD, double tierH,
+                                const std::array<std::array<double, 3>, 6>& palette,
+                                const std::array<double, 4>& crowdUV, Mulberry32& rng) {
+    StandMeshResult result;
     const double zoneLen = sEnd - sStart;
     const int steps = std::min(40, std::max(16, (int)std::lround(zoneLen / 12.0)));
     const double baseLat = wallLat(track) + 6.0, baseH = 1.2;
+    const std::array<double, 2> uv00{crowdUV[0], crowdUV[3]}, uv10{crowdUV[2], crowdUV[3]};
+    const std::array<double, 2> uv11{crowdUV[2], crowdUV[1]}, uv01{crowdUV[0], crowdUV[1]};
 
     for (int i = 0; i < steps; ++i) {
         if (density < 1.0 && rng.next() > density) continue; // gaps/tunnels
@@ -86,20 +114,26 @@ std::vector<MeshVertex> buildStandMesh(const Track& track, double sStart, double
             const double riseH = hB + tierH * 0.28;
             // Riser (near-vertical, stepped): reversed vertex order (matches
             // JS's own already-fixed backface-culling winding for stands).
+            // Always flat-colored, even for textured front tiers -- JS's
+            // own addStand() only textures the seat quad, never the riser.
             const Vec3 ra = crossPt(track, sa, latB, hB), rb = crossPt(track, sb, latB, hB);
             const Vec3 rc = crossPt(track, sb, latB, riseH), rd = crossPt(track, sa, latB, riseH);
-            addQuad(out, rd, rc, rb, ra, mixC(palette[(size_t)(rng.next() * palette.size())], {0, 0, 0}, 0.3));
-            // Seat (sloped). Phase 5d simplification: always the flat
-            // palette path, regardless of crowdTiers -- that field only
-            // selects which tiers get the crowd-tile texture once Phase 5e's
-            // atlas exists; meaningless before then (see this file's own
-            // header comment).
+            addQuad(result.flat, rd, rc, rb, ra,
+                    mixC(palette[(size_t)(rng.next() * palette.size())], {0, 0, 0}, 0.3));
+            // Seat (sloped): front `crowdTiers` tiers get the textured
+            // crowd-atlas path (index.html:1816-1818); the rest keep the
+            // flat palette path (index.html:1819-1821, "fog hides banding
+            // up there").
             const Vec3 sA = crossPt(track, sa, latB, riseH), sB = crossPt(track, sb, latB, riseH);
             const Vec3 sC = crossPt(track, sb, latT, hT), sD = crossPt(track, sa, latT, hT);
-            addQuad(out, sD, sC, sB, sA, palette[(size_t)(rng.next() * palette.size())]);
+            if (t < crowdTiers) {
+                addQuadUV(result.textured, sD, sC, sB, sA, uv01, uv11, uv10, uv00);
+            } else {
+                addQuad(result.flat, sD, sC, sB, sA, palette[(size_t)(rng.next() * palette.size())]);
+            }
         }
     }
-    return out;
+    return result;
 }
 
 std::vector<MeshVertex> buildPitRoadMesh(const Track& track, double pitOut, double pitIn) {
