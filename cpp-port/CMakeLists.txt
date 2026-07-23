@@ -200,6 +200,7 @@ add_executable(lht_port
   src/render/fmt_time.cpp
   src/render/gear_rpm.cpp
   src/render/hud.cpp
+  src/render/minimap.cpp
   src/render/renderer.cpp
   src/render/status_bars.cpp
   src/render/ui_draw.cpp
@@ -320,6 +321,14 @@ add_test(NAME gear_rpm_test COMMAND gear_rpm_test)
 # gear_rpm_test (ui_draw.{h,cpp} itself has no bgfx dependency at all).
 add_executable(ui_draw_test tests/ui_draw_test.cpp src/render/ui_draw.cpp)
 add_test(NAME ui_draw_test COMMAND ui_draw_test)
+
+# Phase 4f (PORT_PROGRESS.md): minimap_test exercises minimap.cpp's wedge-
+# direction/world-transform/trouble-ring-predicate logic -- minimap.{h,cpp}
+# has no bgfx dependency either (unlike status_bars.cpp, which prints
+# dbgText labels), so this is the same zero-dependency category as
+# ui_draw_test.
+add_executable(minimap_test tests/minimap_test.cpp src/render/minimap.cpp src/render/ui_draw.cpp)
+add_test(NAME minimap_test COMMAND minimap_test)
 
 add_executable(determinism_test tests/determinism_test.cpp tests/determinism/trace.cpp)
 add_test(NAME determinism_test COMMAND determinism_test)

@@ -15,6 +15,7 @@
 #include <bgfx/bgfx.h>
 
 #include <chrono>
+#include <utility>
 #include <vector>
 
 class Renderer {
@@ -26,6 +27,15 @@ public:
     // framing for it. Call once, after init() and before the first
     // renderFrame().
     void setTrack(const Track& track);
+
+    // Phase 4f (PORT_PROGRESS.md): the minimap's cached track-outline
+    // polyline + bounding half-extents, built once in setTrack() -- see
+    // minimap.h's drawMinimap() for how these are consumed. Exposed so
+    // hud.cpp (which stays Renderer-independent) can be handed this data
+    // by renderFrame() rather than depending on Renderer itself.
+    const std::vector<std::pair<float, float>>& minimapOutline() const { return minimapOutline_; }
+    float minimapBoundX() const { return minimapBoundX_; }
+    float minimapBoundY() const { return minimapBoundY_; }
 
     void resize(int width, int height);
 
@@ -84,6 +94,14 @@ private:
     // Top-down framing, computed once in setTrack() from the ribbon's
     // bounding box.
     float topCx_ = 0, topCy_ = 0, topHalfW_ = 50, topHalfH_ = 50;
+
+    // Phase 4f (PORT_PROGRESS.md): the minimap's track-outline polyline,
+    // built once here alongside the ribbon mesh rather than JS's lazy-
+    // build-then-null-to-invalidate MMPTS pattern (index.html:4058) --
+    // this port already has a clean "track changed" hook (this function),
+    // so there's no need to replicate that workaround.
+    std::vector<std::pair<float, float>> minimapOutline_;
+    float minimapBoundX_ = 1.0f, minimapBoundY_ = 1.0f;
 
     // Chase-camera smoothing state (index.html:3451-3457's cam.pos/cam.look
     // self-init-then-exponentially-blend idiom, adapted to 2D -- see

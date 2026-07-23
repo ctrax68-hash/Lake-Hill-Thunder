@@ -170,6 +170,25 @@ void Renderer::setTrack(const Track& track) {
     topCy_ = (miny + maxy) / 2.0f;
     topHalfW_ = std::max((maxx - minx) / 2.0f * 1.1f, 10.0f);
     topHalfH_ = std::max((maxy - miny) / 2.0f * 1.1f, 10.0f);
+
+    // Phase 4f (PORT_PROGRESS.md): the minimap's outline, built eagerly
+    // here (see this class's own header comment for why that's a
+    // deliberate simplification over JS's lazy-cache approach) -- a
+    // 141-point centerline sample, matching index.html:4059-4062 exactly
+    // (not the inner/outer ribbon edges above; the minimap draws the
+    // track's centerline, not its width).
+    minimapOutline_.clear();
+    minimapOutline_.reserve(141);
+    float boundX = 1.0f, boundY = 1.0f;
+    for (int i = 0; i <= 140; ++i) {
+        PointResult p = track.pointAt((double)i / 140.0 * total);
+        const float px = (float)p.x, py = (float)p.y;
+        minimapOutline_.push_back({px, py});
+        boundX = std::max(boundX, std::abs(px));
+        boundY = std::max(boundY, std::abs(py));
+    }
+    minimapBoundX_ = boundX;
+    minimapBoundY_ = boundY;
 }
 
 void Renderer::resize(int width, int height) {
@@ -341,7 +360,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     // hud.cpp for exactly what's ported vs. deferred.
     bgfx::dbgTextClear();
     std::vector<PosColorVertex> uiVerts;
-    drawHud(raceState, cars, uiVerts);
+    drawHud(raceState, cars, uiVerts, minimapOutline_, minimapBoundX_, minimapBoundY_);
     // Phase 4b (PORT_PROGRESS.md): drawHud() itself already early-returns
     // for mode=="menu" (hud.cpp:21), so both can unconditionally run here
     // without stepping on each other's dbgText rows.

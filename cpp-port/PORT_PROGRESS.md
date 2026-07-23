@@ -560,6 +560,8 @@ port; it's the reference the C++ port must match).
       this port's first real quad/shape rendering (previously dbgText-only), a new
       reusable UI-overlay rendering path used by every remaining Phase 4 sub-task.
       Same log entry.
+      **Phase 4f done (Session 6)**: minimap added (track outline, car dots, player
+      wedge, pulsing trouble rings). Same log entry.
 - [ ] Results screen
 
 ### Phase 5 — Full render fidelity — NOT STARTED
@@ -2414,3 +2416,78 @@ elsewhere in the same run.
   not just "some color renders." dbgText numbers (`LAP`/`POS`/`GEAR`/etc.)
   remained crisp and correctly positioned alongside the new quads, with no
   interference between the two rendering paths.
+
+  **Phase 4f -- minimap.** Ported `drawMinimap()` (index.html:4059-4101):
+  a closed track-outline polyline (the centerline, not the ribbon's inner/
+  outer edges -- confirmed from JS's own `MMPTS` sampling, `TRACK.pointAt()`
+  with no lateral offset), per-car dots, a player directional wedge, and
+  pulsing trouble rings.
+
+  **A deliberate simplification over JS, not a behavior change**: JS lazily
+  builds its outline cache (`MMPTS`) once and explicitly nulls it whenever
+  the menu's track button changes track (`index.html:4714`) -- a
+  workaround for JS having no clean "track changed" hook anywhere else.
+  This port already has exactly that hook: `Renderer::setTrack()`, called
+  both at startup and on `handleMenuClick()`'s track-cycle branch. So the
+  141-point outline (plus its `MM_BX`/`MM_BY` bounding half-extents) is
+  built eagerly there instead, right alongside the existing ribbon-mesh
+  build -- same data, same trigger points, no lazy-cache/invalidate dance
+  needed. New `Renderer` members (`minimapOutline_`/`minimapBoundX_`/
+  `minimapBoundY_`) with public getters, since `hud.cpp` stays Renderer-
+  independent (same rationale as the `uiOut` vertex list) and needs this
+  data handed to it by `renderFrame()`.
+
+  **New `src/render/minimap.h/.cpp`**: `drawMinimap()` builds the closed
+  outline polyline (`pushPolyline`), a filled dot per AI car
+  (`pushFilledCircle`), the player's directional wedge
+  (`pushTriangle`, computed from `Car::hdg` with no extra rotation --
+  heading is already in the same world-space convention the outline uses,
+  matching JS exactly), and pulsing red trouble rings
+  (`pushRingOutline`) for any car with `spinT>0 || blown || dmg>0.6`.
+  Ported JS's exact two-term pulse formula
+  (`pulse=0.5+0.5*sin(t*6)`, then `alpha=0.35+0.35*pulse`) rather than
+  simplifying it to one term, since both terms are independently visible
+  in the final alpha curve. Placed at a fixed pixel box directly below
+  Phase 4e's status bars -- this port's own layout for now, not JS's
+  leaderboard-cascade (`computeLayout()`'s minimap position depends on the
+  leaderboard panel's height, which doesn't exist yet as of this phase;
+  worth revisiting once Phase 4g's real leaderboard panel lands).
+
+  **New `tests/minimap_test.cpp`** (ctest now 12/12, zero bgfx dependency
+  -- `minimap.cpp` itself never calls bgfx, unlike `status_bars.cpp`):
+  hand-computed wedge tip/back-left/back-right vertices for two headings
+  (0 and pi/2, confirming the wedge genuinely rotates rather than always
+  pointing one fixed direction), the world-to-minimap transform
+  (`ox+x*sc, oy+y*sc`) against a hand-computed scale factor, the trouble-
+  ring predicate firing independently for `spinT>0`/`blown`/`dmg>0.6` and
+  correctly NOT firing at `dmg=0.5`, and a safe no-op on an empty outline
+  (no track set yet).
+
+  **Verified**: `ctest` 12/12. Headless `xvfb-run` screenshot
+  (`LHT_FORCE_RACE=1`, a long-enough run that a caution actually got
+  thrown, `flag` reading `CAUTION` in the HUD) -- decoded correctly this
+  time (see the note below) -- shows the minimap's white-outlined panel,
+  gray closed track-outline matching the main view's own track shape, a
+  cluster of correctly-colored car dots sitting in the same relative
+  position as the main view's own car cluster, the yellow player wedge,
+  and (genuinely, not staged) a red pulsing ring around one car caught
+  mid-incident by this run's real caution -- confirming the trouble-ring
+  logic fires on actual sim state, not just the unit test's synthetic
+  cases.
+
+  **A verification-tooling mistake caught and fixed, not a renderer bug**:
+  Phase 4e's own screenshot looked color-channel-swapped at first glance
+  (see that section above) -- root-caused to this project's ad hoc
+  screenshot-to-PNG Python snippet hardcoding PIL's raw decode mode as
+  `'BGRA'`, when the screenshot callback's own `.meta` sidecar reports
+  format code `71` (`bgfx::TextureFormat::RGBA8`, confirmed by compiling a
+  two-line program against this project's vendored bgfx headers rather
+  than guessing). Every screenshot conversion this session onward
+  (including this one) uses the corrected `'RGBA'` mode. Worth a
+  standing note for future sessions: **this project has no committed
+  screenshot-to-PNG script** -- it's retyped ad hoc each session from the
+  `.meta` sidecar's `width height pitch format yflip` fields, and the
+  `format` field must be checked against `bgfx::TextureFormat`'s actual
+  enum ordering (it can, and did, differ from the `BGRA8` assumed by an
+  earlier session) rather than copy-pasted forward assuming it's always
+  the same.

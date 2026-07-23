@@ -4,6 +4,7 @@
 #include "../sim/race_state.h"
 #include "vertex.h"
 
+#include <utility>
 #include <vector>
 
 // Phase 4a (PORT_PROGRESS.md): a first, functional-only slice of JS's much
@@ -32,6 +33,13 @@
 // Renderer-independent, only appending vertex data, never touching bgfx
 // view/state calls itself for this part.
 //
+// Phase 4f added the minimap. `minimapOutline`/`minimapBoundX`/
+// `minimapBoundY` come from Renderer::setTrack()'s eager cache (see
+// renderer.h) -- passed in rather than pulling Renderer itself in as a
+// dependency, same rationale as `uiOut` above.
+//
 // Caller is expected to have called bgfx::setDebug(BGFX_DEBUG_TEXT) once
 // at init and bgfx::dbgTextClear() once this frame before calling this.
-void drawHud(const RaceState& state, const std::vector<Car>& cars, std::vector<PosColorVertex>& uiOut);
+void drawHud(const RaceState& state, const std::vector<Car>& cars, std::vector<PosColorVertex>& uiOut,
+             const std::vector<std::pair<float, float>>& minimapOutline, float minimapBoundX,
+             float minimapBoundY);

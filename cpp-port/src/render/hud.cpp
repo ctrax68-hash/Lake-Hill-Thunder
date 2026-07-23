@@ -1,6 +1,7 @@
 #include "hud.h"
 #include "fmt_time.h"
 #include "gear_rpm.h"
+#include "minimap.h"
 #include "status_bars.h"
 
 #include <bgfx/bgfx.h>
@@ -20,7 +21,9 @@ constexpr uint8_t attr(uint8_t fg, uint8_t bg) {
 
 } // namespace
 
-void drawHud(const RaceState& state, const std::vector<Car>& cars, std::vector<PosColorVertex>& uiOut) {
+void drawHud(const RaceState& state, const std::vector<Car>& cars, std::vector<PosColorVertex>& uiOut,
+             const std::vector<std::pair<float, float>>& minimapOutline, float minimapBoundX,
+             float minimapBoundY) {
     if (state.mode == "menu" || state.mode == "menuwait") return; // index.html:3931
 
     const Car* player = nullptr;
@@ -75,4 +78,13 @@ void drawHud(const RaceState& state, const std::vector<Car>& cars, std::vector<P
     // geometry (drawStatusBars() appends into `uiOut`; Renderer submits it
     // as a separate UI-overlay view after this function returns).
     drawStatusBars(*player, uiOut);
+
+    // Phase 4f (PORT_PROGRESS.md): index.html:4059-4101's minimap, placed
+    // directly below the status bars above (rows 1-10 end at y=176px) --
+    // this port's own fixed layout, not JS's leaderboard-cascade
+    // (computeLayout() depends on the leaderboard panel's height, not yet
+    // ported as of this phase; revisit once Phase 4g's real leaderboard
+    // panel exists).
+    const MinimapBox minimapBox = {8.0f, 190.0f, 180.0f, 110.0f};
+    drawMinimap(minimapBox, minimapOutline, minimapBoundX, minimapBoundY, cars, state.t, uiOut);
 }
