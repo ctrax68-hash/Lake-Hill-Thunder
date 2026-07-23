@@ -1,7 +1,7 @@
 {
   "name": "Lake Hill Thunder",
   "short_name": "LHT",
-  "start_url": "./lht_port.html",
+  "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "landscape",
