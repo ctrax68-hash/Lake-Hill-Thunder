@@ -3,9 +3,11 @@
 #include "env_presets.h"
 #include "hud.h"
 #include "shaders_embedded.h"
+#include "sky_texture.h"
 #include "track_surface.h"
 #include "vertex.h"
 #include "vertex_lit.h"
+#include "vertex_uv.h"
 #include "../ui/menu.h"
 #include "../ui/results.h"
 
@@ -115,7 +117,27 @@ bool Renderer::init(void* nativeDisplayHandle, void* nativeWindowHandle, int wid
     uHemiSky_ = bgfx::createUniform("u_hemiSky", bgfx::UniformType::Vec4);
     uHemiGround_ = bgfx::createUniform("u_hemiGround", bgfx::UniformType::Vec4);
 
-    return bgfx::isValid(program_) && bgfx::isValid(litProgram_);
+    // Phase 5c (PORT_PROGRESS.md): sky program for the fullscreen textured
+    // background quad.
+    skyLayout_ = PosUvVertex::layout();
+    bgfx::ShaderHandle vshSky = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "vs_sky");
+    bgfx::ShaderHandle fshSky = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "fs_sky");
+    skyProgram_ = bgfx::createProgram(vshSky, fshSky, true);
+    uSkyTexColor_ = bgfx::createUniform("s_texColor", bgfx::UniformType::Sampler);
+    // Two triangles covering the full screen in NDC (-1..1); drawn with
+    // identity view/proj, so these positions ARE clip space directly, no
+    // transform needed at runtime beyond the shader's own (identity) MVP
+    // multiply. v=0 at the top of the screen samples row 0 of the sky
+    // pixel buffer (zenith); v=1 at the bottom samples the last row
+    // (horizon/haze) -- matches buildSkyPixels()'s row-major top-to-bottom
+    // layout.
+    const PosUvVertex skyVerts[6] = {
+        {-1, 1, 1, 0, 0}, {1, 1, 1, 1, 0}, {1, -1, 1, 1, 1},
+        {-1, 1, 1, 0, 0}, {1, -1, 1, 1, 1}, {-1, -1, 1, 0, 1},
+    };
+    skyVb_ = bgfx::createVertexBuffer(bgfx::copy(skyVerts, sizeof(skyVerts)), skyLayout_);
+
+    return bgfx::isValid(program_) && bgfx::isValid(litProgram_) && bgfx::isValid(skyProgram_);
 }
 
 void Renderer::shutdown() {
@@ -127,6 +149,10 @@ void Renderer::shutdown() {
     if (bgfx::isValid(uSunColor_)) bgfx::destroy(uSunColor_);
     if (bgfx::isValid(uHemiSky_)) bgfx::destroy(uHemiSky_);
     if (bgfx::isValid(uHemiGround_)) bgfx::destroy(uHemiGround_);
+    if (bgfx::isValid(skyProgram_)) bgfx::destroy(skyProgram_);
+    if (bgfx::isValid(uSkyTexColor_)) bgfx::destroy(uSkyTexColor_);
+    if (bgfx::isValid(skyVb_)) bgfx::destroy(skyVb_);
+    if (bgfx::isValid(skyTexture_)) bgfx::destroy(skyTexture_);
     bgfx::shutdown();
     delete callback_;
     callback_ = nullptr;
@@ -160,6 +186,20 @@ void Renderer::setTrack(const Track& track) {
         hemiGround_[1] = (float)(preset.hemiGround[1] * preset.hemiIntensity);
         hemiGround_[2] = (float)(preset.hemiGround[2] * preset.hemiIntensity);
         hemiGround_[3] = 0.0f;
+
+        // Phase 5c (PORT_PROGRESS.md): rebuild the sky background texture
+        // for this track (sky_texture.h's buildSkyPixels(), a port of
+        // buildSkyTexture(), index.html:3724-3766) -- per-track data, not
+        // per-frame, same rationale as the lighting uniforms just above.
+        // Cedar Valley's `sky.silhouette=='hills'` hill silhouette is
+        // deferred to Phase 5g (grouped with the other track-specific
+        // special case, Big Sable's jumbotron/pylon) -- this sub-phase
+        // only does the gradient+glow+clouds backdrop every track gets.
+        if (bgfx::isValid(skyTexture_)) bgfx::destroy(skyTexture_);
+        const std::vector<uint8_t> skyPixels = buildSkyPixels(track.stadium().sky, &preset);
+        skyTexture_ = bgfx::createTexture2D((uint16_t)kSkyTextureWidth, (uint16_t)kSkyTextureHeight, false, 1,
+                                             bgfx::TextureFormat::RGBA8, 0,
+                                             bgfx::copy(skyPixels.data(), (uint32_t)skyPixels.size()));
     }
 
     const double halfW = track.halfW();
@@ -324,7 +364,15 @@ void Renderer::renderBlockedFrame() {
 void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& cars,
                             const MenuSelection* menu, const std::string* menuTrackName,
                             const std::vector<Car*>* finishOrder) {
-    const bgfx::ViewId kView = 0;
+    // Phase 5c (PORT_PROGRESS.md): a new view (id 0, numerically below the
+    // world view) for the sky background -- bgfx renders views in ascending
+    // ID order regardless of submission order, so this MUST be a lower ID
+    // than kView for the sky to end up behind the ribbon/cars. Shifted the
+    // world/UI views up by one (0->1, 1->2) to make room; renderBlockedFrame()
+    // is a separate, mutually-exclusive screen and keeps its own view 0
+    // unchanged.
+    const bgfx::ViewId kSkyView = 0;
+    const bgfx::ViewId kView = 1;
     // Phase 4h (PORT_PROGRESS.md): the results screen fully replaces the
     // scene (opaque black clear, no track/car geometry underneath) rather
     // than drawing on top of the still-rendering track like the menu does
@@ -338,17 +386,45 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     // layering.
     bgfx::setViewMode(kView, bgfx::ViewMode::Sequential);
     bgfx::setViewRect(kView, 0, 0, (uint16_t)width_, (uint16_t)height_);
-    bgfx::setViewClear(kView, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH,
+    // Phase 5c (PORT_PROGRESS.md): when the sky view already painted this
+    // frame's color buffer, the world view must NOT clear color -- a
+    // view's clear touches its ENTIRE viewport regardless of what that
+    // view goes on to draw, so a color clear here would immediately wipe
+    // out the sky everywhere the ribbon/ground/cars don't cover (this was
+    // a real bug hit and fixed this sub-phase: the sky was invisible
+    // behind the ground/track horizon until this clear was narrowed to
+    // depth-only). Results screen and the "no sky built yet" fallback both
+    // still want their own full color clear.
+    const bool skyPaintedThisFrame = !showResults && bgfx::isValid(skyTexture_);
+    bgfx::setViewClear(kView, skyPaintedThisFrame ? BGFX_CLEAR_DEPTH : (BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH),
                         showResults ? 0x000000ff : 0x1a2e1aff, 1.0f, 0);
 
     const bool homogeneousDepth = bgfx::getCaps()->homogeneousDepth;
     float identity[16];
     bx::mtxIdentity(identity);
 
+    // Sky draws only when the world does (skipped during the results
+    // screen, same as the ribbon/cars below it).
+    if (skyPaintedThisFrame) {
+        bgfx::setViewRect(kSkyView, 0, 0, (uint16_t)width_, (uint16_t)height_);
+        bgfx::setViewClear(kSkyView, BGFX_CLEAR_NONE);
+        float skyIdentity[16];
+        bx::mtxIdentity(skyIdentity);
+        bgfx::setViewTransform(kSkyView, skyIdentity, skyIdentity);
+        bgfx::setTransform(skyIdentity);
+        bgfx::setVertexBuffer(0, skyVb_, 0, 6);
+        bgfx::setTexture(0, uSkyTexColor_, skyTexture_);
+        // No depth write/test -- this is a flat backdrop drawn once, behind
+        // everything, in its own lower-numbered view; it doesn't need to
+        // participate in the world's depth buffer at all.
+        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+        bgfx::submit(kSkyView, skyProgram_);
+    }
+
     if (showResults) {
-        // Nothing else draws to view 0 this frame -- same "force the clear
-        // with no geometry submitted" precedent as renderBlockedFrame()'s
-        // own bgfx::touch(kView) call.
+        // Nothing else draws to the world view this frame -- same "force
+        // the clear with no geometry submitted" precedent as
+        // renderBlockedFrame()'s own bgfx::touch(kView) call.
         bgfx::touch(kView);
     } else {
     // Phase 5b (PORT_PROGRESS.md): sun/hemisphere lighting uniforms, now
@@ -597,18 +673,18 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     // results chips in later Phase 4 sub-tasks), reusing the exact same
     // flat-color vertex layout/shader/program as the world-space geometry
     // above -- just a different view transform, no new shader. bgfx submits
-    // views in ascending ID order by default, so this draws after view 0's
-    // track/cars; bgfx's own debug-text overlay always draws on top of
-    // every view regardless of ID (confirmed empirically in every
-    // screenshot this project has taken), so the resulting layering is
-    // world geometry -> UI quads -> HUD/menu text, which is what's wanted
-    // (numbers legible over bars, not chips over text). Skipped entirely
-    // when empty (e.g. mode=="menu", where drawHud() early-returns before
-    // adding anything) -- same "nothing submitted this frame -> nothing
-    // drawn" precedent view 0's own `if (!cars.empty())` guard above relies
-    // on.
+    // views in ascending ID order by default, so this draws after the sky
+    // (view 0) and world (view 1) views; bgfx's own debug-text overlay
+    // always draws on top of every view regardless of ID (confirmed
+    // empirically in every screenshot this project has taken), so the
+    // resulting layering is sky -> world geometry -> UI quads -> HUD/menu
+    // text, which is what's wanted (numbers legible over bars, not chips
+    // over text). Skipped entirely when empty (e.g. mode=="menu", where
+    // drawHud() early-returns before adding anything) -- same "nothing
+    // submitted this frame -> nothing drawn" precedent the world view's
+    // own `if (!cars.empty())` guard above relies on.
     if (!uiVerts.empty()) {
-        const bgfx::ViewId kUiView = 1;
+        const bgfx::ViewId kUiView = 2;
         bgfx::setViewRect(kUiView, 0, 0, (uint16_t)width_, (uint16_t)height_);
         float uiViewMtx[16], uiProj[16];
         bx::mtxIdentity(uiViewMtx);

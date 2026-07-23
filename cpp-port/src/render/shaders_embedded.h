@@ -41,10 +41,21 @@
 #include "essl/vs_lit.sc.bin.h"
 #include "essl/fs_lit.sc.bin.h"
 
+// Phase 5c (PORT_PROGRESS.md): vs_sky/fs_sky, the unlit fullscreen textured
+// quad for the sky background.
+#include "spirv/vs_sky.sc.bin.h"
+#include "spirv/fs_sky.sc.bin.h"
+#include "glsl/vs_sky.sc.bin.h"
+#include "glsl/fs_sky.sc.bin.h"
+#include "essl/vs_sky.sc.bin.h"
+#include "essl/fs_sky.sc.bin.h"
+
 static const bgfx::EmbeddedShader s_embeddedShaders[] = {
     BGFX_EMBEDDED_SHADER(vs_flat),
     BGFX_EMBEDDED_SHADER(fs_flat),
     BGFX_EMBEDDED_SHADER(vs_lit),
     BGFX_EMBEDDED_SHADER(fs_lit),
+    BGFX_EMBEDDED_SHADER(vs_sky),
+    BGFX_EMBEDDED_SHADER(fs_sky),
     BGFX_EMBEDDED_SHADER_END()
 };

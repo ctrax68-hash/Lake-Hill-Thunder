@@ -163,5 +163,17 @@ private:
     bgfx::VertexBufferHandle groundVb_ = BGFX_INVALID_HANDLE;
     uint32_t groundVertexCount_ = 0;
 
+    // Phase 5c (PORT_PROGRESS.md): the sky background -- a fullscreen
+    // textured quad (own unlit program/vertex layout/static NDC-space
+    // vertex buffer, built once in init()) sampling a per-track texture
+    // (sky_texture.h's buildSkyPixels(), rebuilt once per setTrack()).
+    // Drawn in its own view (id 0, lower than the world view) so it
+    // renders behind everything else regardless of submission order.
+    bgfx::VertexLayout skyLayout_;
+    bgfx::ProgramHandle skyProgram_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle uSkyTexColor_ = BGFX_INVALID_HANDLE;
+    bgfx::VertexBufferHandle skyVb_ = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle skyTexture_ = BGFX_INVALID_HANDLE;
+
     bgfx::CallbackI* callback_ = nullptr;
 };

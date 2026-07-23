@@ -594,6 +594,11 @@ real per-track lighting -- see this session's log entry below (TrackTheme/
 Stadium data, env_presets.h, per-track sun/hemi uniforms, grass ground
 plane).
 
+**Phase 5c done (Session 7)**: sky background -- see this session's log
+entry below (sky_texture.h/.cpp, vs_sky/fs_sky unlit textured-quad shader,
+new lowest-numbered background view, Cedar Valley's hill silhouette
+deferred to 5g).
+
 ### Phase 6 — Polish & platform packaging — NOT STARTED, DEPRIORITIZED
 The user explicitly clarified (Session 3, same session Phase 7 below started): no App Store,
 no native Android/iOS distribution wanted at all -- they want to play from Safari, ideally
@@ -2900,3 +2905,77 @@ elsewhere in the same run.
   bar called for. No regression in either camera mode.
 
   **Next**: Phase 5c (sky background).
+
+- **Session 7 -- Phase 5c: sky background.** Ports JS's `buildSkyTexture()`
+  (index.html:3724-3766) -- a small "painted backdrop" texture, not a real
+  per-direction sky (JS sets it as `scene.background`, a flat texture that
+  never rotates with the camera; this port matches that exactly).
+
+  **New `src/render/sky_texture.h/.cpp`** (bgfx-free): `buildSkyPixels(sky,
+  sunPreset)` builds a 128x256 RGBA8 buffer -- a 3-stop vertical gradient
+  (zenith -> horizon -> a slightly lightened horizon-haze band, faking
+  atmospheric-scattering brightening right at the horizon line) plus a
+  stylized sun-glow blob (radial falloff, positioned by the resolved
+  `EnvPreset`'s elevation) plus two faint cloud streaks using the same
+  `rng2` seed JS uses for scenery-only randomness (`mulberry32(777)`,
+  index.html:1737 -- reuses this port's existing `Mulberry32` class,
+  doesn't affect gameplay determinism, render-only data). **Logged
+  simplification**: JS applies a real 5px canvas blur to each cloud
+  streak; this port approximates it with a small hand-rolled vertical
+  alpha falloff instead of an actual Gaussian blur pass -- close enough
+  for a faint (alpha 0.09), small screen-space element. New
+  `tests/sky_texture_test.cpp`: gradient stops at known rows (zenith at
+  y=0, horizon at y=0.82*(H-1), a brighter haze band at the bottom), and a
+  detectable brightness bump at the sun-glow's computed position vs. the
+  same row far from it.
+
+  **New unlit textured-quad shader path** (5e's texture infrastructure
+  doesn't exist yet, so this is a minimal one-off per the plan's own
+  sequencing note, to be generalized/reused once 5e lands): `vs_sky.sc`/
+  `fs_sky.sc` + `varying_sky.def.sc` (Position+UV only, no normal/color0)
+  + `PosNormalColorVertex`'s sibling `PosUvVertex` (`vertex_uv.h`). New
+  CMakeLists.txt `bgfx_compile_shaders()` block mirroring the existing
+  vs_lit/fs_lit one; extended the Emscripten `FATAL_ERROR` guard and
+  `shaders_embedded.h` the same way Phase 5a did for vs_lit/fs_lit.
+
+  **`renderer.cpp`**: `setTrack()` rebuilds the sky texture once per track
+  (per-track data, not per-frame, same rationale as Phase 5b's lighting
+  uniforms) from `track.stadium().sky` + the already-resolved `EnvPreset`.
+  `renderFrame()` draws a static NDC-space fullscreen quad (built once in
+  `init()`, identity view/proj since its vertices are already in clip
+  space) with no depth write/test, in a **new view (id 0)** -- bgfx renders
+  views in ascending ID order regardless of submission order, so the sky
+  had to become the numerically-lowest view for it to end up behind
+  everything else; the world view shifted from id 0->1 and the UI overlay
+  from 1->2 to make room. Skipped during the results screen (same as the
+  ribbon/cars).
+
+  **One real bug found and fixed during verification**: the first Chase-
+  mode screenshot showed the sky as entirely invisible -- the exact same
+  dark-green clear color as before this sub-phase, everywhere above the
+  ground plane. Root cause: a bgfx view's `setViewClear` touches its
+  **entire** viewport regardless of what that view goes on to draw, so the
+  world view's own full-screen `BGFX_CLEAR_COLOR` was unconditionally
+  painting over the sky view's output before the world view's own geometry
+  (ribbon/ground/cars) got a chance to draw on top of it, everywhere those
+  didn't cover (i.e. exactly where the sky should show through). Fixed by
+  narrowing the world view's clear to depth-only whenever the sky actually
+  painted that frame (still clears color as before for the results screen
+  and the "no sky built yet" fallback, neither of which draws a sky).
+
+  **Deferred to Phase 5g** (grouped with Big Sable's jumbotron/pylon as the
+  other track-specific special case): Cedar Valley's `sky.silhouette==
+  'hills'` hill silhouette -- this sub-phase only implements the gradient/
+  glow/clouds backdrop every track gets.
+
+  **Verified**: `ctest` 17/17 (sky_texture_test added). Headless
+  `xvfb-run` Chase-mode screenshots on all 4 tracks confirm a real
+  gradient sky (dark blue zenith fading to a lighter horizon) now renders
+  behind the ground/track/cars with a visible horizon transition, and the
+  HUD/leaderboard/minimap overlay still renders crisply on top,
+  unaffected. `TopDown` mode re-verified unbroken: since that camera looks
+  straight down, the ground plane alone fills the entire ortho frustum
+  (correctly -- there's no horizon to see from directly overhead), exactly
+  as expected, not a regression.
+
+  **Next**: Phase 5d (stadium stands + pit road geometry, flat colors).
