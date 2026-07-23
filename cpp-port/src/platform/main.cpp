@@ -128,6 +128,13 @@ void startRaceFromMenu(LoopState& S) {
     S.state.gwcState = "none";
     S.state.gwcAttempts = 0;
     S.state.gwcMarkLap = -1;
+    S.state.spotT = 0;
+    S.state.spotTxt.clear();
+    S.state.spotState = "clear";
+    S.state.togoMsg = false;
+    S.state.fuelMsg = false;
+    S.state.tireMsg = false;
+    S.state.dmgMsg = false;
     S.state.mode = "pace";
     // The accumulator may hold an arbitrarily large backlog of real elapsed
     // time from however long the player sat on the menu (dt keeps

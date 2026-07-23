@@ -10,6 +10,18 @@ namespace {
 double wrapMod(double s, double total) {
     return std::fmod(std::fmod(s, total) + total, total);
 }
+
+// spotterSay() (index.html:1385-1388). JS sets the HUD caption fields AND
+// fires an audio blip synchronously in one call; this port only sets the
+// fields (S.spotTxt/S.spotT are the only physics-adjacent state a
+// bgfx/SDL2-free race.cpp should touch). Phase 6c's audio engine is
+// expected to edge-detect a fresh message the same way audioTick() already
+// edge-detects c.hitFx/c.blown -- see race_state.h's own comment on
+// spotTxt/spotT.
+void spotterSay(RaceState& state, const std::string& txt) {
+    state.spotTxt = txt;
+    state.spotT = 2.2;
+}
 } // namespace
 
 // gridStart() (index.html:564-598)
@@ -152,6 +164,7 @@ void collide(std::vector<Car>& cars, const RaceState& state, const Track& track,
                                 victim2.spinCd = 10;
                             }
                         }
+                        hitter.hitFx = std::min(1.0, hitter.hitFx + cv2 * 0.04); // index.html:1227
                     }
                 }
             }
@@ -388,13 +401,18 @@ void tick(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& 
             if (c.done || c.out || c.pit > 0) continue;
             if (c.wear > 0.92 && !c.blown && c.v > 25 && rngR.next() < 0.0004) {
                 c.blown = true;
+                c.hitFx = 1;
+                if (c.isPlayer) spotterSay(state, "FLAT TIRE — PIT NOW!");
                 if (state.flag == "green" && state.greenLockT <= 0) {
                     c.spinT = 1.8 + rngR.next() * 1.2;
                     c.spinDir = rngR.next() < 0.5 ? -1 : 1;
                     c.spinCd = 10;
                 }
             }
-            if (c.dmg >= 1 && !c.out) c.out = true;
+            if (c.dmg >= 1 && !c.out) {
+                c.out = true;
+                if (c.isPlayer) spotterSay(state, "TOO MUCH DAMAGE — WE’RE DONE");
+            }
         }
     }
 
@@ -448,6 +466,52 @@ void tick(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& 
     // index.html:4547: greenT is HUD/audio-only (crowd noise, banner flash)
     // but the field is real and already exists, so keep it in sync.
     if (state.greenT > 0) state.greenT -= DT;
+
+    // index.html:4549-4567: spotter -- alongside calls + laps-to-go/fuel/
+    // tire/damage one-shot messages. Player-relative (S.player == the sole
+    // isPlayer car); JS's S.msgT/S.msgTxt (a separate, unrelated broadcast-
+    // banner system) are NOT ported here -- see race.h's own "not ported"
+    // list.
+    if (state.spotT > 0) state.spotT -= DT;
+    if (state.mode == "race" && player && !player->done && player->pit == 0) {
+        bool inside = false, outside = false;
+        for (auto& o : cars) {
+            if (&o == player || o.done || o.pit > 0) continue;
+            double ds = o.s - player->s;
+            if (ds < -track.total() / 2) ds += track.total();
+            if (ds > track.total() / 2) ds -= track.total();
+            if (std::abs(ds) < 5.5 && std::abs(o.lat - player->lat) < 3.4) {
+                if (o.lat < player->lat) inside = true;
+                else outside = true;
+            }
+        }
+        if (inside && state.spotState != "in") {
+            spotterSay(state, outside ? "THREE WIDE!" : "INSIDE!");
+            state.spotState = "in";
+        } else if (outside && !inside && state.spotState != "out") {
+            spotterSay(state, "OUTSIDE!");
+            state.spotState = "out";
+        } else if (!inside && !outside && (state.spotState == "in" || state.spotState == "out")) {
+            spotterSay(state, "CLEAR");
+            state.spotState = "clear";
+        }
+        if (player->lap == state.laps - 3 && !state.togoMsg && state.laps >= 6) {
+            state.togoMsg = true;
+            spotterSay(state, "3 TO GO");
+        }
+        if (player->fuel < 0.15 && !state.fuelMsg) {
+            state.fuelMsg = true;
+            spotterSay(state, "FUEL LOW — PIT SOON");
+        }
+        if (player->wear > 0.85 && !state.tireMsg) {
+            state.tireMsg = true;
+            spotterSay(state, "TIRES ARE GONE");
+        }
+        if (player->dmg > 0.6 && !state.dmgMsg) {
+            state.dmgMsg = true;
+            spotterSay(state, "HEAVY DAMAGE — PIT FOR REPAIRS");
+        }
+    }
 
     // index.html:4581-4594: player finish -> victory/done, player DNF ->
     // done, and the victory-lap timeout back to done. setTimeout(showResults,

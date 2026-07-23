@@ -44,8 +44,11 @@ Car* activeLead(const std::vector<Car*>& order);
 // physical position), then manages the yellow-flag phase -- adaptive pace
 // speed, slot compaction, time-compressed straggler warping, the
 // bunched/one-to-go transition, and the green-flag restart trigger. HUD/
-// audio/render-only side effects (S.msgTxt/msgT, CAR_MAT_AMBER, cam.pos,
-// spotterSay) are NOT ported -- see PORT_PROGRESS.md's Phase 1g notes.
+// audio/render-only side effects (S.msgTxt/msgT, CAR_MAT_AMBER, cam.pos) are
+// NOT ported -- see PORT_PROGRESS.md's Phase 1g notes. (spotterSay() itself
+// IS ported, but its OWN trigger sites are elsewhere -- the blowout/damage-
+// DNF branches and the alongside/laps-to-go checks in tick(), not this
+// function -- see Phase 6b's PORT_PROGRESS.md entry.)
 // `order` must be race-position-sorted (see tick()'s own use of this same
 // data, matching JS's S.order) and non-empty.
 void cautionController(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& track,
@@ -61,12 +64,20 @@ void cautionController(RaceState& state, std::vector<Car>& cars, PaceCar& pace, 
 // `finishOrder` mirrors S.finishOrder (index.html:509) -- appended to in
 // crossing order as cars finish; caller owns its lifetime (cleared at the
 // start of a race, same as gridStart() clearing `cars`).
+// Also ported (Phase 6b): the spotter-message system (index.html:4549-4567)
+// -- alongside calls (INSIDE!/OUTSIDE!/THREE WIDE!/CLEAR) and the laps-to-
+// go/fuel/tire/damage one-shot warnings, all via the sim-side spotterSay()
+// helper (sets state.spotTxt/spotT only -- no audio dependency; Phase 6c's
+// audio engine and Phase 6d's HUD caption are expected to read those fields
+// back, not call spotterSay() themselves), plus the blowout/terminal-damage
+// DNF call sites and c.hitFx accumulation (index.html:1067,1227,4238).
 // NOT ported here (deliberately, still not needed): storing previous poses
-// for render interpolation (render-only), and every HUD/audio-only side
-// effect (S.msgTxt/msgT, spotterSay(), S.fastLap/halfMsg/whiteMsg,
-// S.greenT's crowd-noise/banner reads -- the greenT clock itself IS
-// decremented here since it's cheap and the field already exists, just
-// nothing reads it back yet). `finishQualifying()`'s grid-building (needs
+// for render interpolation (render-only), and every remaining HUD/audio-
+// only side effect (S.msgTxt/msgT -- a separate, unrelated broadcast-banner
+// system -- S.fastLap/halfMsg/whiteMsg, S.greenT's crowd-noise/banner reads
+// -- the greenT clock itself IS decremented here since it's cheap and the
+// field already exists, just nothing reads it back yet).
+// `finishQualifying()`'s grid-building (needs
 // rngR the same way makeCar() needs rng, plus the menu-flow setTimeout) is
 // also not ported -- that's a Phase 2+ menu-wiring concern, not physics;
 // this file only ports the mode='qual' -> 'menuwait' physics-state

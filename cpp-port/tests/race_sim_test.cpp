@@ -150,6 +150,12 @@ int main() {
         expectNear("collide[1].y", cars[1].y, 0.0);
         expectNear("collide[1].v", cars[1].v, 29.7);
         expectNear("collide[1].hdg", cars[1].hdg, 0.0);
+        // Phase 6b (PORT_PROGRESS.md): collide()'s hitter.hitFx accumulation
+        // (index.html:1227, `hitter.hitFx += cv2*0.04`) -- cv2 = |38.1-29.7|
+        // = 8.4, so cars[0] (the hitter: a.v>b.v) gains 8.4*0.04 = 0.336;
+        // cars[1] (the victim) gets no hitFx from this site.
+        expectNear("collide[0].hitFx", cars[0].hitFx, 0.336);
+        expectNear("collide[1].hitFx", cars[1].hitFx, 0.0);
     }
 
     // ---- gridStart() clears finishOrder (Phase 4h bugfix, PORT_PROGRESS.md)

@@ -49,6 +49,22 @@ struct RaceState {
     // Set by gridStart() (index.html:591), not part of S's initial literal.
     double paceV = 0;
     double greenT = 0;
+
+    // Spotter-message state (index.html:4548-4567), reset by startRace()
+    // (index.html:4608-4609, ported at startRaceFromMenu() in main.cpp).
+    // spotTxt/spotT double as the HUD caption's own state (index.html:4040-
+    // 4046) as well as the audio blip trigger -- spotterSay() sets both at
+    // once in JS, so Phase 6b ports the trigger conditions here and Phase
+    // 6d/6c consume spotTxt/spotT for the HUD caption and audio blip
+    // respectively, same "two consumers of the same field" shape as this
+    // struct's own greenT.
+    std::string spotTxt;
+    double spotT = 0;
+    std::string spotState = "clear"; // 'clear'|'in'|'out'
+    bool togoMsg = false;
+    bool fuelMsg = false;
+    bool tireMsg = false;
+    bool dmgMsg = false;
 };
 
 // PACE (index.html:562-563). px/py/phdg/ps/plat (render-interpolation only,

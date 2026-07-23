@@ -357,7 +357,7 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
             c.dmg = std::min(1.0, c.dmg + std::min(0.12, vLost * 0.005));
             c.dmgCd = 0.6;
         }
-        // c.hitFx (impact particle/audio hook) intentionally not ported -- cosmetic only.
+        c.hitFx = std::min(1.0, c.hitFx + vLost * 0.06); // particle/audio hook (index.html:1067)
         // S.shakeT (camera-shake trigger) intentionally not ported -- render only.
     }
 

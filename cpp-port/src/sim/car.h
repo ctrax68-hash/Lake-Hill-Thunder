@@ -100,6 +100,18 @@ struct Car {
     double wear = 0, draftF = 0;
     bool dirty = false;
 
+    // c.hitFx (index.html:1067,1227,4238): impact-severity accumulator,
+    // decayed by the renderer/audio layer, not stepCar()/collide()
+    // themselves (index.html:3150's `c.hitFx -= dt*2.5` lives in the
+    // particle-emission code, index.html:1457-1458's audioTick() reads it
+    // only to detect a rising edge past its own last-seen value). Cosmetic-
+    // only, same category as slipFx (never read by driving/AI logic) --
+    // unlike dmgCd/blown/spinRollCd above, this was originally left
+    // unported (see step_car.cpp/race.cpp's own "intentionally not ported"
+    // comments at its two accumulation sites), until Phase 6b's audio port
+    // needed a real trigger signal for impact-thump/blowout-bang sounds.
+    double hitFx = 0;
+
     double skill = 0, aggr = 0;
     double grooveBias = 0;
 

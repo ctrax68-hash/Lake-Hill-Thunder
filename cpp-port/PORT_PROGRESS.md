@@ -675,6 +675,14 @@ sawtooth/square `Oscillator`, a shared `NoiseBuffer`, and `ParamSmoother` matchi
 `AudioParam.setTargetAtTime()`; `tests/dsp_test.cpp` verifies frequency response/
 waveform shape/noise stats/smoother convergence, bgfx/SDL2-free).
 
+**Phase 6b done (Session 8)**: sim-side `Car::hitFx` + spotter-message trigger
+logic -- see this session's log entry below (`c.hitFx` accumulation at both
+its JS sites, the never-before-ported spotter-message system -- alongside
+calls, laps-to-go/fuel/tire/damage one-shots, blowout/terminal-damage-DNF
+triggers -- all ported into `race.cpp`'s `tick()`, bgfx/SDL2-free;
+`tests/spotter_test.cpp` exercises every trigger condition end-to-end
+through a real 20-car `gridStart()` field).
+
 ### Phase 7 — WebAssembly/browser build — DONE, first pass (Session 3)
 - [x] Get `lht_port` compiling to WebAssembly via Emscripten and running inside a real
       browser tab, verified headlessly. **Explicitly out of scope for this pass** (left
@@ -3497,3 +3505,93 @@ elsewhere in the same run.
   phase's research that the spotter-message system was never ported in any
   prior phase, confirmed via `race.h`'s own existing comment explicitly
   excluding it and a zero-match grep across `cpp-port/src`).
+
+- **Session 8 -- Phase 6b: sim-side hitFx + spotter-message trigger logic.**
+  Research during Phase 6a found that JS's spotter-message system
+  (`S.spotTxt`/`S.spotT`/`S.spotState`/`togoMsg`/`fuelMsg`/`tireMsg`/`dmgMsg`,
+  index.html:4549-4567, plus the blowout/terminal-damage call sites at
+  index.html:4238,4247) had never been ported in any prior phase --
+  `race.h`'s own comment explicitly excluded it, and a grep across
+  `cpp-port/src` for `hitFx`/`spotterSay`/`spotTxt` returned zero matches.
+  Since `spotterSay()`'s own trigger CONDITIONS are the audio blip's
+  trigger conditions (JS calls the audio blip and sets the HUD caption
+  fields from the exact same call site), this sub-phase ports the trigger
+  logic itself now (bgfx/SDL2-free, sim-only), leaving actually consuming
+  `spotTxt`/`spotT` for a HUD caption (6d) and an audio blip (6c) to later
+  sub-phases -- same "sim computes it, render/audio consume it" split this
+  port already uses for every other piece of state.
+
+  **`src/sim/car.h`**: added `Car::hitFx` (double, index.html:1067,1227,4238)
+  -- an impact-severity accumulator, decayed by the render/particle layer in
+  JS (not stepCar()/collide() themselves), cosmetic-only same as the
+  already-unported `slipFx` (never read by driving/AI logic), previously
+  left out alongside it. Needed now as the real trigger signal Phase 6c's
+  audio engine will edge-detect for impact-thump/blowout-bang sounds
+  (mirroring how JS's own `audioTick()` edge-detects it, rather than
+  triggering synchronously at the accumulation site).
+
+  **`src/sim/step_car.cpp`/`race.cpp`**: `c.hitFx` now accumulates at both
+  its JS sites -- the wall-contact damage branch (`vLost*0.06`,
+  index.html:1067) and `collide()`'s cross-car-impact branch (`cv2*0.04`,
+  index.html:1227, only for the hitter, matching JS) -- replacing the
+  "intentionally not ported" marker comments that had stood at both sites
+  since their original stepCar()/collide() ports.
+
+  **`src/sim/race_state.h`**: added `spotTxt`/`spotT`/`spotState`/
+  `togoMsg`/`fuelMsg`/`tireMsg`/`dmgMsg` to `RaceState`, reset by
+  `startRaceFromMenu()` in `main.cpp` (mirroring JS's own `startRace()`
+  reset, index.html:4608-4609).
+
+  **`src/sim/race.cpp`**: a local `spotterSay(state, txt)` helper (sets
+  `spotTxt`/`spotT` only -- deliberately NOT calling an audio blip
+  synchronously the way JS's own `spotterSay()` does, since this file has
+  no audio dependency; Phase 6c's audio engine is expected to edge-detect a
+  fresh message the same way `audioTick()` already edge-detects
+  `hitFx`/`blown`). Wired into `tick()` at three points, all mirroring JS
+  exactly: the blowout branch now sets `c.hitFx=1` and fires
+  `"FLAT TIRE — PIT NOW!"` for the player; the terminal-damage DNF branch
+  fires `"TOO MUCH DAMAGE — WE’RE DONE"` for the player; and a new block
+  right after `tick()`'s existing `greenT` decrement (matching JS's own
+  index.html:4549-4567 placement) ports the full alongside-call detection
+  (INSIDE!/OUTSIDE!/THREE WIDE!/CLEAR, based on nearby cars' `s`/`lat`) and
+  the four one-shot laps-to-go/fuel/tire/damage warnings, each latched by
+  its own bool so it never re-fires (matching JS's `S.togoMsg !== 1`-style
+  guards).
+
+  **New `tests/spotter_test.cpp`**: exercises every trigger condition
+  end-to-end through a real `gridStart()`-built 20-car field and the actual
+  `tick()` function (not an isolated helper, since the trigger logic is
+  inline in `tick()`) -- cars are placed via the same `pointAt()`+lateral-
+  offset convention `gridStart()` itself uses, at a track position far from
+  the real grid rows so the rest of the field can't interfere. Covers
+  INSIDE!/OUTSIDE!/THREE WIDE!/CLEAR transitions, all four one-shot
+  messages latching exactly once across repeated ticks, the blowout roll
+  (run for up to 200000 real ticks against a `Mulberry32`, since it's
+  genuinely RNG-gated -- expected around ~2500 iterations at its real
+  0.0004-per-tick probability), and the terminal-damage DNF message.
+  `race_sim_test.cpp`'s existing `collide()` unit test gained a `hitFx`
+  assertion (hitter gains `cv2*0.04`, victim gets none) alongside its
+  existing position/velocity checks.
+
+  Two real bugs were caught and fixed during this sub-phase's own test
+  development (not pre-existing bugs in already-shipped code -- both were
+  in the new test itself, found immediately by running it): a
+  `finishLaps` default of 5 was marking a test player with `lap=7`
+  falsely "done" before the one-shot spotter block's own `!done` gate
+  could run (fixed by setting `state.finishLaps = state.laps` in the
+  test, mirroring how `startRaceFromMenu()` itself keeps them in sync);
+  and a blowout-roll test with no steering input let the player drift off
+  the racing line and rack up real wall damage over enough of the 200000
+  synthetic ticks to hit a terminal DNF, which would have silently gated
+  the blowout roll off (its own guard skips `c.out` cars) -- fixed by
+  resetting the player's `dmg`/`out` every iteration so only the intended
+  wear/speed/RNG gate was being measured.
+
+  **Verified**: `ctest` **25/25** (up from 24/24, `spotter_test` added,
+  `race_sim_test`'s `collide()` check extended, zero regressions). Native
+  `xvfb-run`, `LHT_FORCE_RACE=1 LHT_MAX_FRAMES=120`: 120 frames render
+  without crashing (the new fields exist but nothing reads them back yet --
+  6c/6d's job -- so no visual change is expected at this sub-phase).
+
+  **Next**: Phase 6c (mixer graph + SDL2 audio device + `audioTick()`
+  equivalent, consuming `hitFx`/`blown`/`spotTxt`/`spotT` for real sound).
