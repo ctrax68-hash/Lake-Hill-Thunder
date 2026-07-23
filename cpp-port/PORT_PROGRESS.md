@@ -599,6 +599,11 @@ entry below (sky_texture.h/.cpp, vs_sky/fs_sky unlit textured-quad shader,
 new lowest-numbered background view, Cedar Valley's hill silhouette
 deferred to 5g).
 
+**Phase 5d done (Session 7)**: stadium stands + pit road geometry, flat
+colors -- see this session's log entry below (stadium_mesh.h/.cpp,
+addStand()/addPitRoad()/outer-wall port, crowd/wall/fence textures and
+digit geometry all deferred to 5e-5g).
+
 ### Phase 6 — Polish & platform packaging — NOT STARTED, DEPRIORITIZED
 The user explicitly clarified (Session 3, same session Phase 7 below started): no App Store,
 no native Android/iOS distribution wanted at all -- they want to play from Safari, ideally
@@ -2979,3 +2984,73 @@ elsewhere in the same run.
   as expected, not a regression.
 
   **Next**: Phase 5d (stadium stands + pit road geometry, flat colors).
+
+- **Session 7 -- Phase 5d: stadium stands + pit road geometry (flat
+  colors).** Ports JS's `addStand()`/`addPitRoad()` (index.html:1787-1909)
+  plus the outer wall's per-slice face loop from `buildWorld()`
+  (index.html:1986-2000). Explicitly flat-colored -- see this checklist's
+  own framing, matched by the plan: crowd-tile/wall-diamond/catch-fence
+  textures are all Phase 5e's job, since the atlas texture infrastructure
+  doesn't exist yet.
+
+  **New `src/render/stadium_mesh.h/.cpp`** (bgfx-free, same "pure logic"
+  split as track_surface.h/sky_texture.h -- outputs a plain `MeshVertex`
+  list, deliberately not bgfx's `PosNormalColorVertex`, so this stays
+  unit-testable without linking bgfx): `buildStandMesh()` (riser + seat
+  quads per tier, tessellated into density-gated along-track slices, using
+  a shared `Mulberry32(777)` scenery-RNG stream across all 4 stand-zone
+  calls -- matches JS's own `rng2` consumption order, front/back/corner/
+  corner, per `buildWorld()`'s call site), `buildPitRoadMesh()` (entry/
+  exit lines, low pit wall, numbered stall box *outlines* at the exact
+  `pitStallS()` positions the pit AI already drives to, war wagons, tire
+  stacks, a sign post, the small pit-control building), and
+  `buildOuterWallMesh()` (the wall's face + reversed-winding fix, colored
+  by `theme.wall`).
+
+  **Explicitly deferred to later sub-phases**, each noted at its call
+  site: crowd-tile texture on stand seats (flat palette color on *every*
+  tier regardless of `crowdTiers` for now -- that field only selects which
+  tiers get textured once Phase 5e's atlas exists, meaningless before
+  then); the wall's diamond/sponsor texture and the catch-fence band above
+  it (skipped entirely rather than drawn as a second flat wall -- a solid
+  quad wouldn't read as fencing at all without its crosshatch texture);
+  digit-segment numbers on the pit stalls/sign post and the crew-figure
+  billboards (need the crew atlas, deferred alongside Phase 5g's own LED-
+  digit geometry for the jumbotron/pylon); the flag stand, suite/pressbox
+  band, and infield grass tessellation (not on this sub-phase's checklist,
+  and the flat ground plane from Phase 5b already covers the grass need).
+
+  **New `tests/stadium_mesh_test.cpp`**: `buildStandMesh()`'s vertex-count
+  math (`steps * tiers * 2 quads * 6 verts` at density=1, and a "density<1
+  only ever shrinks the count, in whole slice-chunks" check), pit-stall
+  quad corners cross-checked against `pitStallS()` (car.cpp) at idx 0/1/
+  `FIELD-1` -- a regression guard against the paint ever drifting from
+  where the pit AI actually parks cars -- and the outer wall's normal
+  direction (must face back toward the track, the documented backface-
+  culling fix, not outward).
+
+  **`renderer.cpp`**: `setTrack()` builds one combined static stadium
+  vertex buffer (4 stand zones + pit road + outer wall) alongside the
+  ribbon/ground, uploaded through the same lit shader path so this is the
+  first geometry in the port with real per-triangle lighting variation
+  from riser/seat/wall slope angles (not just the ribbon's banking).
+
+  **Verified**: `ctest` 18/18 (stadium_mesh_test added). Headless
+  `xvfb-run` `TopDown` screenshots confirm a full ring of grandstands
+  around Big Sable (10/8/6-tier, full reach) clearly visibly denser/taller
+  than Cedar Valley's (3/2/1-tier, partial reach) -- exactly the
+  density/height differentiation this sub-phase's verification bar called
+  for. `Chase`-mode screenshots on Big Sable show a massive, close-up
+  grandstand wall dominating the frame; double-checked this wasn't a bug
+  by dumping the actual mesh bounding box (front stand: y in [2.8, 31.3],
+  matching `baseH=1.2` + `10*tierH(2.6)=26` plus the banked track surface's
+  own height at the stand's ~58-unit lateral offset, exactly the
+  `crossPt()=pos3()+raise` formula ported from JS) -- Big Sable's stands
+  really are that tall (a "flagship superspeedway" by design), and reading
+  as an undifferentiated solid-color mass at close range is the expected
+  look before Phase 5e's crowd-tile texture breaks it up, not a rendering
+  defect. Cedar Valley's `Chase` screenshot shows correctly small, distant
+  corner stands, confirming the per-track scale difference isn't a fluke.
+  No regression in either camera mode.
+
+  **Next**: Phase 5e (texture infrastructure + crowd-tile atlas).

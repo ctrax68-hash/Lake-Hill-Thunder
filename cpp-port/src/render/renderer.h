@@ -163,6 +163,13 @@ private:
     bgfx::VertexBufferHandle groundVb_ = BGFX_INVALID_HANDLE;
     uint32_t groundVertexCount_ = 0;
 
+    // Phase 5d (PORT_PROGRESS.md): one combined static buffer for stands
+    // (all 4 zones) + pit road + the outer wall, built once per setTrack()
+    // alongside the ribbon/ground (stadium_mesh.h). Flat colors only --
+    // crowd/wall/fence textures are Phase 5e's job.
+    bgfx::VertexBufferHandle stadiumVb_ = BGFX_INVALID_HANDLE;
+    uint32_t stadiumVertexCount_ = 0;
+
     // Phase 5c (PORT_PROGRESS.md): the sky background -- a fullscreen
     // textured quad (own unlit program/vertex layout/static NDC-space
     // vertex buffer, built once in init()) sampling a per-track texture

@@ -4,6 +4,7 @@
 #include "hud.h"
 #include "shaders_embedded.h"
 #include "sky_texture.h"
+#include "stadium_mesh.h"
 #include "track_surface.h"
 #include "vertex.h"
 #include "vertex_lit.h"
@@ -153,6 +154,7 @@ void Renderer::shutdown() {
     if (bgfx::isValid(uSkyTexColor_)) bgfx::destroy(uSkyTexColor_);
     if (bgfx::isValid(skyVb_)) bgfx::destroy(skyVb_);
     if (bgfx::isValid(skyTexture_)) bgfx::destroy(skyTexture_);
+    if (bgfx::isValid(stadiumVb_)) bgfx::destroy(stadiumVb_);
     bgfx::shutdown();
     delete callback_;
     callback_ = nullptr;
@@ -316,6 +318,59 @@ void Renderer::setTrack(const Track& track) {
         const PosNormalColorVertex groundVerts[6] = {v00, v10, v11, v00, v11, v01};
         groundVb_ = bgfx::createVertexBuffer(bgfx::copy(groundVerts, sizeof(groundVerts)), litLayout_);
         groundVertexCount_ = 6;
+    }
+
+    // Phase 5d (PORT_PROGRESS.md): stands (front/back/corner x2) + pit road
+    // + the outer wall, combined into one static buffer alongside the
+    // ribbon/ground. Flat colors only (stadium_mesh.h's own header comment
+    // explains what's deferred to Phase 5e). One shared Mulberry32(777)
+    // scenery-RNG stream across all 4 stand calls, matching JS's own rng2
+    // consumption order (front, back, corner, corner) -- cosmetic only, see
+    // stadium_mesh.h for why this doesn't affect gameplay determinism.
+    if (bgfx::isValid(stadiumVb_)) bgfx::destroy(stadiumVb_);
+    {
+        const Stadium& st = track.stadium();
+        Mulberry32 sceneryRng(777);
+        std::vector<MeshVertex> mesh;
+        auto append = [&](std::vector<MeshVertex>&& v) {
+            mesh.insert(mesh.end(), v.begin(), v.end());
+        };
+        const Seg& seg0 = track.segs()[0];
+        const Seg& seg1 = track.segs()[1];
+        const Seg& seg2 = track.segs()[2];
+        const Seg& seg3 = track.segs()[3];
+        append(buildStandMesh(track, seg0.s0 + seg0.len * 0.12, seg0.s0 + seg0.len * 0.88, st.standTier.front,
+                               st.standDensity, st.standScale.tierD, st.standScale.tierH, st.crowdPalette,
+                               sceneryRng));
+        append(buildStandMesh(track, seg2.s0 + seg2.len * 0.12, seg2.s0 + seg2.len * 0.88, st.standTier.back,
+                               st.standDensity, st.standScale.tierD, st.standScale.tierH, st.crowdPalette,
+                               sceneryRng));
+        // Every track gets corner seating (index.html:2067-2075's own
+        // comment on this): coverage fraction depends on standReach, not
+        // whether it's "full" only.
+        const double cornerCov = st.standReach == "full" ? 0.94 : 0.55;
+        const double pad = (1.0 - cornerCov) / 2.0;
+        append(buildStandMesh(track, seg1.s0 + seg1.len * pad, seg1.s0 + seg1.len * (1 - pad),
+                               st.standTier.corner, st.standDensity, st.standScale.tierD, st.standScale.tierH,
+                               st.crowdPalette, sceneryRng));
+        append(buildStandMesh(track, seg3.s0 + seg3.len * pad, seg3.s0 + seg3.len * (1 - pad),
+                               st.standTier.corner, st.standDensity, st.standScale.tierD, st.standScale.tierH,
+                               st.crowdPalette, sceneryRng));
+        // PIT_OUT/PIT_IN (index.html:1937): sized to hold both pit AI lanes
+        // (moving lane at lat=-8.4, stall lane at lat=-10.5).
+        append(buildPitRoadMesh(track, -7.2, -11.8));
+        append(buildOuterWallMesh(track));
+
+        std::vector<PosNormalColorVertex> stadiumVerts;
+        stadiumVerts.reserve(mesh.size());
+        for (const MeshVertex& v : mesh) {
+            stadiumVerts.push_back({(float)v.x, (float)v.y, (float)v.z, (float)v.nx, (float)v.ny, (float)v.nz,
+                                     packColor((float)v.color[0], (float)v.color[1], (float)v.color[2])});
+        }
+        stadiumVb_ = bgfx::createVertexBuffer(
+            bgfx::copy(stadiumVerts.data(), (uint32_t)(stadiumVerts.size() * sizeof(PosNormalColorVertex))),
+            litLayout_);
+        stadiumVertexCount_ = (uint32_t)stadiumVerts.size();
     }
 
     // Phase 4f (PORT_PROGRESS.md): the minimap's outline, built eagerly
@@ -590,6 +645,17 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     if (trackVertexCount_ > 0) {
         bgfx::setTransform(identity);
         bgfx::setVertexBuffer(0, trackVb_, 0, trackVertexCount_);
+        bgfx::setState(state);
+        bgfx::submit(kView, litProgram_);
+    }
+
+    // Phase 5d (PORT_PROGRESS.md): stands + pit road + outer wall, drawn
+    // after the ribbon (real per-triangle lighting from riser/seat slope
+    // angles is the first geometry in this port to actually vary with
+    // normal direction beyond the ribbon's own banking).
+    if (stadiumVertexCount_ > 0) {
+        bgfx::setTransform(identity);
+        bgfx::setVertexBuffer(0, stadiumVb_, 0, stadiumVertexCount_);
         bgfx::setState(state);
         bgfx::submit(kView, litProgram_);
     }

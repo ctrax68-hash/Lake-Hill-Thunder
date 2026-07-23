@@ -253,6 +253,7 @@ add_executable(lht_port
   src/render/minimap.cpp
   src/render/renderer.cpp
   src/render/sky_texture.cpp
+  src/render/stadium_mesh.cpp
   src/render/status_bars.cpp
   src/render/track_surface.cpp
   src/render/ui_draw.cpp
@@ -348,6 +349,13 @@ add_test(NAME env_presets_test COMMAND env_presets_test)
 # pure pixel math, bgfx-free.
 add_executable(sky_texture_test tests/sky_texture_test.cpp src/render/sky_texture.cpp)
 add_test(NAME sky_texture_test COMMAND sky_texture_test)
+
+# Phase 5d (PORT_PROGRESS.md): stadium_mesh_test exercises buildStandMesh()/
+# buildPitRoadMesh()/buildOuterWallMesh()'s pure geometry, bgfx-free (links
+# track.cpp + track_surface.cpp + car.cpp for pitStallS()/FIELD).
+add_executable(stadium_mesh_test tests/stadium_mesh_test.cpp src/sim/track.cpp src/sim/car.cpp
+  src/render/track_surface.cpp src/render/stadium_mesh.cpp)
+add_test(NAME stadium_mesh_test COMMAND stadium_mesh_test)
 
 add_executable(car_test tests/car_test.cpp src/sim/track.cpp src/sim/car.cpp)
 add_test(NAME car_test COMMAND car_test)
