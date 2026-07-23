@@ -3,12 +3,18 @@
   Phase 7 (PORT_PROGRESS.md): minimal Emscripten shell for lht_port's
   WebAssembly build. Deliberately bare -- Emscripten's own default
   --shell-file bundles a progress bar / status text box that's irrelevant
-  here, and better left out until a later session's PWA polish pass.
+  here.
 
-  No manifest.json / service worker / apple-touch-icon / theme-color meta
-  tags here either -- this session's scope is "does the WASM build actually
-  run in a browser," not the installable-PWA wrapper, which is explicitly
-  deferred (see PORT_PROGRESS.md's Phase 7 notes).
+  Phase 7b added the PWA installability wrapper: viewport meta (mobile
+  rendering correctness), the manifest link, a favicon link (otherwise
+  Chromium/Safari auto-request /favicon.ico and log a console 404 -- reusing
+  icon-192.png here avoids a spurious extra asset), apple-touch-icon (what
+  iOS Safari actually uses for the home-screen icon -- manifest.json's icons
+  array is largely ignored there), theme-color, the apple-mobile-web-app-*
+  trio, and the service-worker registration below. index.html itself
+  (the immutable JS reference) is never touched -- these mirror its own
+  existing viewport/apple-mobile-web-app-capable values where applicable,
+  not new ad hoc choices.
 
   The <canvas id="canvas"> id is a hard requirement, not a style choice:
   bgfx's HTML5/Emscripten GL backend (bgfx/src/glcontext_html5.cpp) reads
@@ -19,7 +25,15 @@
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Lake Hill Thunder (WebAssembly build)</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Lake Hill Thunder">
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   canvas { display: block; width: 100vw; height: 100vh; outline: none; }
@@ -31,6 +45,9 @@
   var Module = {
     canvas: document.getElementById('canvas')
   };
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js');
+  }
 </script>
 {{{ SCRIPT }}}
 </body>

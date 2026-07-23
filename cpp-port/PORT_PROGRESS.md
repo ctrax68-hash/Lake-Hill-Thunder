@@ -740,6 +740,142 @@ the user wants, and is now the priority track instead of this one.
   coupling), and whether the global `-O1` downgrade can be narrowed once/if the upstream
   LLVM WASM-SIMD-at-`-O3` bug is fixed.
 
+### Phase 7b — PWA installability wrapper — DONE (Session 4)
+- [x] Make `build-web/lht_port.html` genuinely installable as a PWA (manifest, service
+      worker, icons, apple-touch-icon/theme-color meta tags) -- what actually delivers
+      "Add to Home Screen" on Safari, the user's real underlying goal since this project's
+      pivot away from native App Store distribution. **Explicitly still out of scope**: real
+      Safari/iOS "Add to Home Screen" verification -- no macOS/iOS device exists anywhere
+      in this container, same caveat Phase 7 already ended on.
+
+  **New `web/icons/` assets**: no reusable icon art existed anywhere in the repo (checked --
+  every image asset in the tree is vendored third-party SDL2/bgfx example content), so
+  generated new ones via a small one-off Pillow script, `web/generate_icons.py` (committed
+  for reproducibility, deliberately *not* wired into the CMake build -- it's authored
+  branding art, not a build artifact). Design: a checkered-flag motif in a yellow frame --
+  not an arbitrary choice, `index.html`'s own JS side already established exactly this
+  visual language for race-state UI (its "unified state banner + flag icon routine", see
+  UI-D in this file's much earlier session log) and a black/white/`#F7D400` yellow palette
+  (`index.html`'s `--c-yellow` custom property), so this reuses the game's own existing
+  identity rather than inventing a new one. Sharp corners throughout, matching this
+  project's own established design-token convention (no rounded corners anywhere in the JS
+  UI). Three sizes generated: `icon-192.png`, `icon-512.png` (manifest `icons` array, what
+  Android/Chrome's installability check wants), and `apple-touch-icon.png` at 180x180 --
+  confirmed via research this session that iOS Safari does *not* read the manifest's icons
+  array for the home-screen icon at all, using this separate `<link>` tag instead.
+
+  **New `web/manifest.json`**: standard Web App Manifest -- `name`/`short_name`: "Lake Hill
+  Thunder"/"LHT", `start_url`/`scope` both relative (`"./lht_port.html"`/`"./"`, so it works
+  regardless of what path this eventually gets deployed under), `display: "standalone"`
+  (the broadly-correct choice for a game; iOS actually ignores this field and uses the
+  `apple-mobile-web-app-capable` meta tag instead, see below), `orientation: "landscape"`
+  (matches the game's landscape-only design and Phase 3c's own existing portrait-block
+  work -- honored on Android/Chrome, harmlessly ignored on iOS), `background_color`/
+  `theme_color` both `#000000` (matches `shell.html`'s existing black chrome), and an
+  `icons` array referencing the two PNGs above.
+
+  **`web/shell.html` additions** (had none of this before this session -- confirmed by
+  re-reading it at the start): the viewport meta tag (`width=device-width, initial-scale=1,
+  maximum-scale=1, user-scalable=no, viewport-fit=cover`, copied verbatim from `index.html`'s
+  own -- `index.html` itself is never touched, per this project's standing immutable-
+  reference rule), `<link rel="manifest">`, `<link rel="apple-touch-icon">`, `<link
+  rel="icon">` (see the favicon fix below), `theme-color` meta, and the
+  `apple-mobile-web-app-capable`/`-status-bar-style`/`-title` trio (`index.html` only has
+  the first of these three; this port adds all three for completeness). A small inline
+  script registers the service worker (`if ('serviceWorker' in navigator)
+  navigator.serviceWorker.register('sw.js')`).
+
+  **New `web/sw.js`**: a straightforward cache-first service worker -- `install` caches the
+  whole app shell (`lht_port.html`/`.js`/`.wasm`, `manifest.json`, all three icon PNGs)
+  under a versioned cache name (`lht-v1`) and calls `self.skipWaiting()`; `activate` deletes
+  any cache not matching the current version name and calls `self.clients.claim()`;
+  `fetch` serves from cache first, falling back to network, and opportunistically caches
+  new same-origin "basic" responses. This is what makes the 824KB `.wasm` binary load
+  instantly on repeat visits and enables offline play after the first load -- genuinely
+  part of "feels like an installed app," not just decoration.
+
+  **`CMakeLists.txt` wiring**: `build-web/` previously had no mechanism at all for getting
+  static files into it besides emcc's own `--shell-file` output. Added a `POST_BUILD`
+  custom command on the `lht_port` target (still inside the existing `if(EMSCRIPTEN)`
+  block) that copies `web/manifest.json`/`web/sw.js` and copy-directories `web/icons/` into
+  `${CMAKE_CURRENT_BINARY_DIR}` alongside the emcc-produced files, via
+  `${CMAKE_COMMAND} -E copy_if_different`/`copy_directory`. Chose `POST_BUILD` over a
+  configure-time `file(COPY)` specifically so edits to these files take effect on the next
+  build without requiring a manual reconfigure -- confirmed this actually matters: a
+  `shell.html` edit made mid-session did *not* get picked up by CMake automatically (it has
+  no way to know `--shell-file`'s target is a build input at all), and needed the stale
+  `lht_port.html`/`.js`/`.wasm` outputs deleted by hand to force a relink -- a real gotcha
+  worth remembering for any future `shell.html` edit, not just a one-off annoyance this
+  session. Caught one self-inflicted footgun before it shipped: `generate_icons.py` was
+  initially written to live inside `web/icons/` itself, which would have caused the new
+  `copy_directory` step to stage the *generator script* into `build-web/icons/` alongside
+  the actual PNGs; moved it to `web/generate_icons.py` and switched its path handling to be
+  relative to the script's own location rather than the caller's cwd.
+
+  **New checks added to `tests/wasm_verify.js`** (extended, not replaced -- Phase 7's
+  original non-blank/frame-advances screenshot check is untouched and still runs every
+  time): `manifest.json` fetches `200` and parses as JSON with `name`/`icons`/`start_url`/
+  `display` all present; the three icon PNGs fetch `200` and pass a PNG-signature sanity
+  check; `navigator.serviceWorker.ready` resolves without throwing after page load
+  (confirmed registration actually completes, not just that `register()` was called).
+
+  **A real bug found and fixed this session, not assumed away**: the first verification run
+  reported one console error -- a `favicon.ico` 404. Root-caused (not just noted and
+  ignored, unlike Phase 7's own more permissive pass) by cross-checking with a standalone
+  Playwright script logging every `response`/`console` event: it's Chromium's automatic
+  `GET /favicon.ico` that every browser issues when a page declares no `<link rel="icon">`
+  at all, confirmed via a direct `curl` against `/favicon.ico` returning `404` independent
+  of anything this session touched. Fixed properly (not suppressed) by adding
+  `<link rel="icon" href="icons/icon-192.png" type="image/png">` to `shell.html`, reusing
+  the already-generated 192px icon rather than creating a fourth asset -- confirmed this
+  eliminates the request entirely (browsers only fall back to `/favicon.ico` when no icon
+  link is declared) and re-verified `wasm_verify.js` now reports zero console errors and
+  zero page errors.
+
+  **Verification, all genuinely checked, not assumed**: rebuilt `build-web/` from a clean
+  `emmake cmake --build` after every source change (had to delete the stale `lht_port.html`/
+  `.js`/`.wasm` once to force a relink after the `shell.html` favicon fix, per the gotcha
+  above); confirmed via `ls`/`grep` that `manifest.json`, `sw.js`, and all three icon PNGs
+  land in `build-web/` and that the built HTML's `<head>` actually contains the new
+  `<link rel=icon>`/`<link rel=manifest>`/`<link rel=apple-touch-icon>` tags (minified but
+  present). Served via `python3 -m http.server 8765`; `curl` confirmed `200` on
+  `lht_port.html`, `manifest.json`, `sw.js`, `icons/icon-192.png`, `icons/apple-touch-
+  icon.png`. Ran the extended `wasm_verify.js`: manifest and all three icons fetch `200`
+  and validate; service worker registers and reaches `ready` (scope
+  `http://localhost:8765/`); **zero console errors, zero page errors** after the favicon
+  fix (down from the one 404 the first run caught). Regression-checked the actual game
+  rendering via the same PIL technique Phase 7 established: both screenshots show a real
+  0-255 pixel range on every channel (not a flat blank canvas), and diffing them found a
+  changed region (bbox `(56, 66, 816, 142)`, matching the HUD/leaderboard area) -- the sim
+  is still genuinely advancing frame to frame, confirming the PWA wrapper introduced no
+  regression to the working WASM build.
+
+  **Explicitly, honestly NOT verified** (impossible in this container, no macOS/iOS device
+  exists at all): whether Safari actually shows the checkered-flag icon on the iOS home
+  screen, whether "Add to Home Screen" launches the game standalone (no browser chrome),
+  and whether the service worker/offline-caching behavior holds up under Safari's own
+  (historically stricter, sometimes storage-limited) service-worker implementation.
+  Manifest/icon/service-worker *correctness* is now confirmed; whether that correctness
+  actually produces the desired install experience on a real Apple device is the one
+  thing left that only a real device can answer.
+
+  **Status**: `build-web/lht_port.html`, served over any static HTTP host (e.g. GitHub
+  Pages, matching this project's already-existing Phase 6.0 hosting-workflow precedent for
+  the JS build), is now a complete, correctly-wired installable PWA by every check this
+  container can perform. The only remaining gap before this can be called fully done is
+  the one Phase 7 already flagged and this session narrowed but could not close: real
+  Safari/iOS hands-on verification.
+
+  **Next**: someone with a real Apple device should serve `build-web/` (or a deployed copy)
+  and try "Add to Home Screen" from Safari directly -- confirm the icon, standalone
+  launch, and offline reload all behave as intended. Longer-term/optional, carried over
+  unchanged from Phase 7's own closing notes: a genuinely native `shaderc` side-build to
+  remove the native-build-must-run-first coupling, revisiting whether the global `-O1`
+  optimization downgrade can be narrowed if a newer Emscripten/LLVM fixes the underlying
+  WASM-SIMD-at-`-O3` instruction-selector bug, and (new, PWA-specific) richer splash-screen
+  handling and maskable-icon variants for Android if that platform ever becomes a real
+  target.
+
 ## Open questions
 
 *(Seed this section as Phase 1 finds JS behavior that's ambiguous or looks like an
@@ -1930,3 +2066,49 @@ elsewhere in the same run.
   and whether the global `-O1` optimization downgrade can be narrowed or
   removed once/if the upstream LLVM WASM-SIMD-at-`-O3` instruction-
   selector bug is fixed in a future Emscripten/LLVM release.
+
+- **Session 4 -- Phase 7b: PWA installability wrapper.** Direct
+  continuation of Session 3's own stated next step: turn the already-
+  working WASM build into something genuinely installable from Safari's
+  home screen, not just loadable in a tab. See this session's Phase 7b
+  checklist entry above for the full technical detail (icon generation,
+  manifest, service worker, `shell.html` meta tags, the `CMakeLists.txt`
+  `POST_BUILD` staging step, and the real `shell.html`-edit-doesn't-
+  trigger-a-relink gotcha this session ran into and fixed by hand).
+
+  **A real bug found via testing, not assumed away**: the first
+  verification pass of the new `wasm_verify.js` checks reported one
+  console error. Rather than wave it off the way "one confirmed-benign
+  console error" got noted in Session 3's own Phase 7 pass, this session
+  root-caused it with a standalone Playwright script logging every
+  network response and console message, confirmed via a direct `curl` to
+  be Chromium's automatic `/favicon.ico` request (issued whenever a page
+  declares no `<link rel="icon">`), and fixed it properly by adding a
+  favicon link reusing the already-generated 192px icon. Re-verification
+  after the fix shows genuinely zero console/page errors, not "zero
+  except one we've decided is fine."
+
+  **Result**: `build-web/` now contains a complete, correctly-wired
+  installable PWA -- `manifest.json` validates with all required fields,
+  all three icon assets (`icon-192`, `icon-512`, `apple-touch-icon`) fetch
+  and are valid PNGs, the service worker registers and reaches `ready`,
+  and the underlying game still renders and advances frame-to-frame with
+  zero regression from Phase 7's own baseline (confirmed via the same
+  PIL non-blank/frame-diff technique, re-run after this session's
+  changes rather than assumed still valid).
+
+  **Honestly flagged, not glossed over**: exactly like Phase 7's own
+  closing note, nothing this session did can verify real Safari/iOS
+  behavior -- no macOS or iOS device exists anywhere in this container.
+  Manifest/icon/service-worker *correctness* is now confirmed by every
+  check available here; whether Safari actually shows the right
+  home-screen icon, launches standalone, and behaves like a real
+  installed app is the one thing left that only a real Apple device can
+  answer. This is now the single remaining gap before the user's original
+  goal ("play off Safari as a PWA") is fully, hands-on confirmed rather
+  than just plausible.
+
+  **Status**: committed and pushed to `main`. This closes out the
+  concrete engineering work of the Safari-PWA pivot that began when the
+  user redirected away from native App Store distribution in Session 3 --
+  what remains is purely real-device verification, not further building.

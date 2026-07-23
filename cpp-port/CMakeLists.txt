@@ -233,6 +233,24 @@ if(EMSCRIPTEN)
     "-sFULL_ES3=1"
     "--shell-file=${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html"
   )
+
+  # ---- Phase 7b: PWA installability wrapper (PORT_PROGRESS.md) ----
+  # emcc's own output mechanism only ever produces lht_port.html/.js/.wasm --
+  # there's no existing static-asset-copy step in this file to piggyback on,
+  # so this POST_BUILD command stages manifest.json/sw.js/icons/ into
+  # build-web/ alongside those every time lht_port is built. POST_BUILD
+  # (not a configure-time file(COPY)) so editing these files doesn't need a
+  # manual reconfigure to take effect.
+  add_custom_command(TARGET lht_port POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_CURRENT_SOURCE_DIR}/web/manifest.json
+            ${CMAKE_CURRENT_SOURCE_DIR}/web/sw.js
+            $<TARGET_FILE_DIR:lht_port>
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/web/icons
+            $<TARGET_FILE_DIR:lht_port>/icons
+    COMMENT "Staging PWA manifest/service-worker/icons alongside lht_port.html"
+  )
 endif()
 
 # ---- Phase 1 sim tests (headless, no SDL2/bgfx dependency) ----
