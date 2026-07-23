@@ -157,12 +157,15 @@ if(EMSCRIPTEN)
   # this port actually uses depends on whether shaderc itself was compiled to
   # run on x86 Linux or wasm32.
   set(LHT_NATIVE_GENERATED_SHADERS ${CMAKE_CURRENT_SOURCE_DIR}/build/generated_shaders)
-  if(NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_flat.sc.bin.h)
+  if(NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_flat.sc.bin.h
+     OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_lit.sc.bin.h)
     message(FATAL_ERROR
       "Phase 7 web build reuses the native build's already-compiled shader "
       "headers (see this file's own comment) instead of cross-compiling "
       "shaderc -- run `cmake --build build` (the native target) at least "
-      "once first so ${LHT_NATIVE_GENERATED_SHADERS} exists.")
+      "once first so ${LHT_NATIVE_GENERATED_SHADERS} exists (Phase 5a added "
+      "vs_lit/fs_lit, so a stale native build missing those will also hit "
+      "this guard).")
   endif()
   set(LHT_GENERATED_SHADERS_DIR ${LHT_NATIVE_GENERATED_SHADERS})
   add_custom_target(lht_shaders) # nothing to build, just a no-op dependency target
@@ -185,7 +188,30 @@ else()
     AS_HEADERS
     OUT_FILES_VAR LHT_FS_FLAT_OUTPUTS
   )
-  add_custom_target(lht_shaders DEPENDS ${LHT_VS_FLAT_OUTPUTS} ${LHT_FS_FLAT_OUTPUTS})
+  # Phase 5a (PORT_PROGRESS.md): vs_lit/fs_lit -- hemisphere+directional
+  # lit shading for world-space geometry (the banked track ribbon, and
+  # stadium/stands starting Phase 5d). Own varying def since it adds a
+  # normal attribute vs_flat/fs_flat don't have.
+  bgfx_compile_shaders(
+    TYPE VERTEX
+    SHADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/vs_lit.sc
+    VARYING_DEF ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/varying_lit.def.sc
+    OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders
+    INCLUDE_DIRS ${LHT_SHADER_INCLUDE_DIRS}
+    AS_HEADERS
+    OUT_FILES_VAR LHT_VS_LIT_OUTPUTS
+  )
+  bgfx_compile_shaders(
+    TYPE FRAGMENT
+    SHADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/fs_lit.sc
+    VARYING_DEF ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/varying_lit.def.sc
+    OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders
+    INCLUDE_DIRS ${LHT_SHADER_INCLUDE_DIRS}
+    AS_HEADERS
+    OUT_FILES_VAR LHT_FS_LIT_OUTPUTS
+  )
+  add_custom_target(lht_shaders DEPENDS ${LHT_VS_FLAT_OUTPUTS} ${LHT_FS_FLAT_OUTPUTS}
+    ${LHT_VS_LIT_OUTPUTS} ${LHT_FS_LIT_OUTPUTS})
   set(LHT_GENERATED_SHADERS_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders)
 endif()
 
@@ -205,6 +231,7 @@ add_executable(lht_port
   src/render/minimap.cpp
   src/render/renderer.cpp
   src/render/status_bars.cpp
+  src/render/track_surface.cpp
   src/render/ui_draw.cpp
   src/ui/menu.cpp
   src/ui/results.cpp
@@ -281,6 +308,12 @@ add_test(NAME rng_test COMMAND rng_test)
 
 add_executable(track_test tests/track_test.cpp src/sim/track.cpp)
 add_test(NAME track_test COMMAND track_test)
+
+# Phase 5a (PORT_PROGRESS.md): track_surface_test exercises pos3()/surfH()/
+# surfaceUp()'s pure geometry math -- zero bgfx dependency, same category as
+# track_test itself (links only track.cpp, plus the new track_surface.cpp).
+add_executable(track_surface_test tests/track_surface_test.cpp src/sim/track.cpp src/render/track_surface.cpp)
+add_test(NAME track_surface_test COMMAND track_surface_test)
 
 add_executable(car_test tests/car_test.cpp src/sim/track.cpp src/sim/car.cpp)
 add_test(NAME car_test COMMAND car_test)

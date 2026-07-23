@@ -573,13 +573,21 @@ port; it's the reference the C++ port must match).
       Session 6 log entry for the full writeup. **Phase 4 ("UI overlay") is now
       fully DONE.**
 
-### Phase 5 — Full render fidelity — NOT STARTED
+### Phase 5 — Full render fidelity — IN PROGRESS (Session 7)
 - [ ] Procedural stadium/stands/crowd-tile/livery-painting mesh generation (JS builds
       these via Three.js geometry helpers + canvas-drawn textures; needs raw vertex
       buffer construction in bgfx)
 - [ ] Sky/environment per track preset (JS: `ENV_PRESETS`)
 - [ ] Hand-rolled bloom (downsample→blur→combine, replacing `UnrealBloomPass`) +
       tonemap (replacing `OutputPass`)
+
+Broken into 8 sub-phases (5a-5h), one commit each, same rhythm as Phase 4's
+4a-4h. Full plan on file for this session; see each sub-phase's own log entry
+below for what actually landed and any scope notes.
+
+**Phase 5a done (Session 7)**: 3D rendering foundation -- see this session's
+log entry below for the full writeup (banked track mesh, real perspective
+camera, hemisphere+directional lighting, depth testing).
 
 ### Phase 6 — Polish & platform packaging — NOT STARTED, DEPRIORITIZED
 The user explicitly clarified (Session 3, same session Phase 7 below started): no App Store,
@@ -2691,3 +2699,126 @@ elsewhere in the same run.
   original checklist (lap/position/flag/speed, menu, last/best lap time,
   gear/RPM, segmented tire/fuel/car bars, minimap, leaderboard, results
   screen + restart) is ported and verified.
+
+- **Session 7 -- Phase 5a: 3D rendering foundation.** User asked to proceed
+  to Phase 5 ("Full render fidelity"). Since Phase 5's own checklist is
+  large (procedural stadium/livery mesh generation, per-track sky/ENV
+  presets, hand-rolled bloom+tonemap) and touches almost every part of the
+  renderer, it's broken into 8 sub-phases (5a-5h) tracked in a session plan,
+  same commit-per-sub-phase rhythm as Phase 4's 4a-4h.
+
+  **Scope decisions made up front** (engineering judgment; user declined
+  further clarifying questions and asked to continue): the full JS
+  alternate-camera-mode suite (helmet/tower/blimp/victory-orbit/pit-stop/
+  caution-TV-montage/menu-establishing-shot) is **explicitly out of scope**
+  for Phase 5 -- it's not on the phase's literal checklist, and is deferred
+  to a future session. Livery painting (5f, not yet started) will be a
+  full-fidelity CPU-rasterizer port of `paintLivery()`, not a shortcut tint.
+
+  **What Phase 5a actually is**: today's renderer was a deliberate 2D
+  placeholder (confirmed by direct reading before this session started) --
+  strictly orthographic camera, flat unlit vertex-color shader, a flat Z=0
+  track ribbon, depth cleared but never tested/written. `Track::bankAt()`
+  was already correctly ported but never consumed by rendering. Phase 5a
+  gives the renderer real 3D: a banked track mesh, a lit shading model, a
+  genuine perspective chase camera with banking lean, and depth testing --
+  the minimum foundation the rest of Phase 5's stadium/sky/livery geometry
+  needs to be visible at all (the old top-down-only ortho view would never
+  show it).
+
+  **New `src/render/track_surface.h/.cpp`** (bgfx-free): a direct,
+  parameter-passing port of JS's "3D surface model (render only; physics
+  stays planar)" (`index.html:377-395`) -- `wallLat()`/`apronIn()`/`surfH()`/
+  `pos3()` as functions of `const Track&` instead of JS's global `TRACK`.
+  Also `surfaceUp(track, s)`: JS derives its camera-lean up-vector from the
+  car's own 3D model-matrix (`carBasis()`, index.html:3064-3071), which
+  doesn't exist in this port (no 3D car loft). Rather than approximate,
+  algebraically reduced JS's cross-product formula to its exact closed
+  form -- `up = (sin(b)*sin(th), cos(b), -sin(b)*cos(th))`, already unit
+  length and, importantly, provably independent of car pitch in JS too (JS's
+  own `c.pitch` only ever perturbs the forward vector, never this one) -- so
+  this is an exact port of that vector's math, not a simplification, despite
+  having no car model matrix to derive it from directly. Verified in new
+  bgfx-free `tests/track_surface_test.cpp`, cross-checked against
+  `Track::bankAt()`'s own already-verified sign convention rather than
+  hardcoding new banking-angle magic numbers.
+
+  **New lit shader path**: `PosNormalColorVertex` (`src/render/vertex_lit.h`)
+  + `vs_lit.sc`/`fs_lit.sc`/`varying_lit.def.sc` -- hemisphere-ambient +
+  directional-diffuse shading (JS's two-light model, one
+  `THREE.HemisphereLight` + one `THREE.DirectionalLight`, no shadow maps,
+  matching JS which has none either). The existing flat unlit
+  `vs_flat.sc`/`fs_flat.sc`/`PosColorVertex` path is untouched, still used
+  for the pixel-space UI overlay (view 1). `renderer.cpp`'s `setTrack()`
+  rebuilds the ribbon mesh using `pos3()` (real elevation/banking) with flat
+  per-triangle normals (**logged simplification**: not smooth vertex
+  normals -- acceptable for a mostly-planar ribbon, revisit only if a visual
+  problem shows up). Added `BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS`
+  to view 0's draw state -- this is the first time this renderer has
+  actually tested/written depth; Phases 0-4 cleared it every frame but
+  relied purely on submission order for layering.
+
+  **Camera rewrite**: `TopDown` stays orthographic (still a static whole-
+  track overview) but now looks straight down the real Y axis instead of a
+  2D-placeholder Z axis. `Chase` is now a real `bx::mtxProj` perspective
+  view (FOV 60, near 0.5, far 1500, matching JS's own
+  `new THREE.PerspectiveCamera(60, 1, 0.5, 1500)` exactly): eye/look/up all
+  derived from `pos3()`/`surfaceUp()`, JS's exact `dist=6.9+v*0.02`/
+  `hgt=2.55` constants, the existing corner-lookahead bias reused, and JS's
+  **two-rate exponential smoothing** (`k=1-exp(-dt*11)` for position,
+  `k2=1-exp(-dt*22)` for look) -- this port's prior 2D chase camera used a
+  single shared smoothing rate for both, a simplification now corrected as
+  part of this rewrite (logged as a fidelity fix, not a new feature). The
+  surface-height clamp (`Track::project()` + `surfH()+1.4`) and the NT2003
+  lean (`upBlend = normalize([up.x*0.45, 1.0, up.z*0.45])`, y hardcoded to
+  1.0 and *not* blended) are both direct ports of JS's own constants. Car
+  quads keep their existing flat-quad shape (no 3D car loft -- out of
+  scope) but now sit at the correct banked height/normal via `pos3()`/
+  `surfaceUp()` instead of a flat world Z.
+
+  **Two real bugs found and fixed during this sub-phase, both logged
+  here rather than silently patched**:
+  1. *Lighting overexposure*: the very first Chase-mode screenshot was a
+     near-uniform pale wash across the whole frame. JS's light intensities
+     (sun=3.2, hemi=1.1) are calibrated for use with
+     `THREE.ACESFilmicToneMapping` (not ported yet -- that's Phase 5h's
+     job), so writing those same raw values to an LDR backbuffer with no
+     tonemap clips almost everything to near-white. Fixed with a temporary
+     `min(ambient + diffuse, vec3(1.0))` clamp in `fs_lit.sc`, explicitly
+     commented in the shader as a stand-in until Phase 5h's real ACES pass
+     replaces it.
+  2. *`bx::mtxProj` FOV double-conversion*: after fixing (1), Chase-mode
+     screenshots still showed the entire frame as one uniform color (95%+
+     of sampled pixels identical, no clear-color visible anywhere). Root-
+     caused methodically, not by guessing: confirmed TopDown still worked
+     (isolating the bug to Chase-only code), added temporary debug printfs
+     confirming the mesh and camera eye/at/up values were all numerically
+     sane, then added a manual clip-space transform of known test points
+     (`bx::mtxMul` + `vec4MulMtx`) which showed an off-axis point landing at
+     roughly 75-100x the expected NDC magnitude -- the entire visible frame
+     really was just the nearest geometry, wildly over-magnified. Reading
+     `third_party/bgfx.cmake/bx/src/math.cpp:106-110` directly confirmed
+     `bx::mtxProj(float*, float _fovy, ...)` calls `toRad(_fovy)`
+     internally, i.e. it expects **degrees**, not radians -- this port's
+     code had pre-converted via `bx::toRad(60.0f)`, double-converting to a
+     near-zero effective FOV. Fixed by passing `60.0f` directly; the fix and
+     an explanatory comment (including the bug's exact symptom, so a future
+     reader doesn't reintroduce it) are in `renderer.cpp`. All temporary
+     debug instrumentation was removed once the fix was confirmed.
+
+  **Verified**: `ctest` 15/15 (new `track_surface_test` added). Headless
+  `xvfb-run` screenshots on Big Sable (index 3, 23 deg banking): `Chase`
+  mode now shows genuine perspective with a real vanishing point, the track
+  correctly receding into the distance with visible curvature, cars
+  rendered as distance-scaled quads sitting on the track surface (not
+  floating), and the crisp HUD/leaderboard/minimap overlay rendering
+  unaffected on top (confirming the flat-shader UI view still sits outside
+  the new lit-geometry path). `TopDown` mode re-verified unbroken (whole-
+  track overview, cars visible at the start/finish line, HUD intact) --
+  no regression from the camera/mesh rewrite.
+
+  **Explicitly deferred, not part of this sub-phase**: the full alternate-
+  camera-mode suite (noted above), per-track lighting data (5b hardcodes
+  today's uniforms to `noon-grass`'s values), and any stadium/sky/livery
+  geometry (5b onward). **Next**: Phase 5b (per-track theme/stadium/
+  `ENV_PRESETS` data + real per-track lighting).

@@ -2,7 +2,9 @@
 #include "color.h"
 #include "hud.h"
 #include "shaders_embedded.h"
+#include "track_surface.h"
 #include "vertex.h"
+#include "vertex_lit.h"
 #include "../ui/menu.h"
 #include "../ui/results.h"
 
@@ -13,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 
@@ -101,12 +104,27 @@ bool Renderer::init(void* nativeDisplayHandle, void* nativeWindowHandle, int wid
     bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "fs_flat");
     program_ = bgfx::createProgram(vsh, fsh, true /* destroy shaders when program is destroyed */);
 
-    return bgfx::isValid(program_);
+    // Phase 5a (PORT_PROGRESS.md): lit program for world-space geometry.
+    litLayout_ = PosNormalColorVertex::layout();
+    bgfx::ShaderHandle vshLit = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "vs_lit");
+    bgfx::ShaderHandle fshLit = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "fs_lit");
+    litProgram_ = bgfx::createProgram(vshLit, fshLit, true);
+    uSunDir_ = bgfx::createUniform("u_sunDir", bgfx::UniformType::Vec4);
+    uSunColor_ = bgfx::createUniform("u_sunColor", bgfx::UniformType::Vec4);
+    uHemiSky_ = bgfx::createUniform("u_hemiSky", bgfx::UniformType::Vec4);
+    uHemiGround_ = bgfx::createUniform("u_hemiGround", bgfx::UniformType::Vec4);
+
+    return bgfx::isValid(program_) && bgfx::isValid(litProgram_);
 }
 
 void Renderer::shutdown() {
     if (bgfx::isValid(trackVb_)) bgfx::destroy(trackVb_);
     if (bgfx::isValid(program_)) bgfx::destroy(program_);
+    if (bgfx::isValid(litProgram_)) bgfx::destroy(litProgram_);
+    if (bgfx::isValid(uSunDir_)) bgfx::destroy(uSunDir_);
+    if (bgfx::isValid(uSunColor_)) bgfx::destroy(uSunColor_);
+    if (bgfx::isValid(uHemiSky_)) bgfx::destroy(uHemiSky_);
+    if (bgfx::isValid(uHemiGround_)) bgfx::destroy(uHemiGround_);
     bgfx::shutdown();
     delete callback_;
     callback_ = nullptr;
@@ -121,29 +139,54 @@ void Renderer::setTrack(const Track& track) {
     const double step = 4.0;
     const int n = std::max(8, (int)std::ceil(total / step));
 
+    // Phase 5a (PORT_PROGRESS.md): the ribbon is now a real banked 3D
+    // surface (pos3()/surfH(), track_surface.h) instead of a flat Z=0 plane
+    // -- banking raises the +lat (outside) edge, matching JS's own "3D
+    // surface model (render only; physics stays planar)" (index.html:377).
     struct EdgePair {
-        float ix, iy, ox, oy;
+        Vec3 inner, outer;
     };
     std::vector<EdgePair> pts(n);
-    float minx = 1e9f, maxx = -1e9f, miny = 1e9f, maxy = -1e9f;
+    float minx = 1e9f, maxx = -1e9f, minz = 1e9f, maxz = -1e9f;
     for (int i = 0; i < n; ++i) {
         const double s = (double)i / n * total;
-        PointResult p = track.pointAt(s);
-        const double nx = -std::sin(p.hdg), ny = std::cos(p.hdg);
-        // Inner edge is lat=-halfW, outer edge is lat=+halfW -- same
-        // (p.x + nx*lat, p.y + ny*lat) convention used everywhere else in
-        // this port (see e.g. stepPace()'s pace.x/pace.y).
-        const float ix = (float)(p.x - nx * halfW), iy = (float)(p.y - ny * halfW);
-        const float ox = (float)(p.x + nx * halfW), oy = (float)(p.y + ny * halfW);
-        pts[i] = {ix, iy, ox, oy};
-        minx = std::min({minx, ix, ox});
-        maxx = std::max({maxx, ix, ox});
-        miny = std::min({miny, iy, oy});
-        maxy = std::max({maxy, iy, oy});
+        const Vec3 inner = pos3(track, s, -halfW);
+        const Vec3 outer = pos3(track, s, halfW);
+        pts[i] = {inner, outer};
+        minx = std::min({minx, (float)inner.x, (float)outer.x});
+        maxx = std::max({maxx, (float)inner.x, (float)outer.x});
+        minz = std::min({minz, (float)inner.z, (float)outer.z});
+        maxz = std::max({maxz, (float)inner.z, (float)outer.z});
     }
 
+    // Flat per-triangle normals (not smoothed vertex normals -- a
+    // deliberate simplification, logged in PORT_PROGRESS.md; acceptable
+    // since the ribbon is mostly planar within a segment). Forced to point
+    // up (n.y >= 0) regardless of the triangle's winding, since this
+    // renderer draws with no backface culling and winding order here isn't
+    // otherwise meaningful.
+    auto faceNormal = [](const Vec3& a, const Vec3& b, const Vec3& c) {
+        const double ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
+        const double vx = c.x - a.x, vy = c.y - a.y, vz = c.z - a.z;
+        double nx = uy * vz - uz * vy;
+        double ny = uz * vx - ux * vz;
+        double nz = ux * vy - uy * vx;
+        const double len = std::sqrt(nx * nx + ny * ny + nz * nz);
+        if (len > 1e-9) {
+            nx /= len;
+            ny /= len;
+            nz /= len;
+        }
+        if (ny < 0) {
+            nx = -nx;
+            ny = -ny;
+            nz = -nz;
+        }
+        return Vec3{nx, ny, nz};
+    };
+
     const uint32_t asphalt = packColor(0.25f, 0.25f, 0.27f);
-    std::vector<PosColorVertex> verts;
+    std::vector<PosNormalColorVertex> verts;
     verts.reserve((size_t)n * 6);
     for (int i = 0; i < n; ++i) {
         const EdgePair& a = pts[i];
@@ -152,25 +195,36 @@ void Renderer::setTrack(const Track& track) {
         // (inner_a, outer_b, inner_b). Triangle list, not a strip -- a
         // closed loop's wraparound is simpler to get right this way, and a
         // few hundred duplicated vertices costs nothing here.
-        verts.push_back({a.ix, a.iy, 0.0f, asphalt});
-        verts.push_back({a.ox, a.oy, 0.0f, asphalt});
-        verts.push_back({b.ox, b.oy, 0.0f, asphalt});
-        verts.push_back({a.ix, a.iy, 0.0f, asphalt});
-        verts.push_back({b.ox, b.oy, 0.0f, asphalt});
-        verts.push_back({b.ix, b.iy, 0.0f, asphalt});
+        const Vec3 n1 = faceNormal(a.inner, a.outer, b.outer);
+        const Vec3 n2 = faceNormal(a.inner, b.outer, b.inner);
+        verts.push_back({(float)a.inner.x, (float)a.inner.y, (float)a.inner.z,
+                          (float)n1.x, (float)n1.y, (float)n1.z, asphalt});
+        verts.push_back({(float)a.outer.x, (float)a.outer.y, (float)a.outer.z,
+                          (float)n1.x, (float)n1.y, (float)n1.z, asphalt});
+        verts.push_back({(float)b.outer.x, (float)b.outer.y, (float)b.outer.z,
+                          (float)n1.x, (float)n1.y, (float)n1.z, asphalt});
+        verts.push_back({(float)a.inner.x, (float)a.inner.y, (float)a.inner.z,
+                          (float)n2.x, (float)n2.y, (float)n2.z, asphalt});
+        verts.push_back({(float)b.outer.x, (float)b.outer.y, (float)b.outer.z,
+                          (float)n2.x, (float)n2.y, (float)n2.z, asphalt});
+        verts.push_back({(float)b.inner.x, (float)b.inner.y, (float)b.inner.z,
+                          (float)n2.x, (float)n2.y, (float)n2.z, asphalt});
     }
 
     trackVb_ = bgfx::createVertexBuffer(
-        bgfx::copy(verts.data(), (uint32_t)(verts.size() * sizeof(PosColorVertex))), layout_);
+        bgfx::copy(verts.data(), (uint32_t)(verts.size() * sizeof(PosNormalColorVertex))), litLayout_);
     trackVertexCount_ = (uint32_t)verts.size();
 
-    // Frame the static top-down camera to this track's bounding box, with a
-    // 10% margin. Actual aspect-correct fitting to the window happens per-
-    // frame in renderFrame() since the window size can change.
+    // Frame the static top-down camera to this track's bounding box (x/z,
+    // i.e. the same math x/y plane as before -- pos3()'s lateral cos(bank)
+    // foreshortening is a few percent at most for this game's bank angles,
+    // well inside the existing 10% margin). Actual aspect-correct fitting
+    // to the window happens per-frame in renderFrame() since the window
+    // size can change.
     topCx_ = (minx + maxx) / 2.0f;
-    topCy_ = (miny + maxy) / 2.0f;
+    topCy_ = (minz + maxz) / 2.0f;
     topHalfW_ = std::max((maxx - minx) / 2.0f * 1.1f, 10.0f);
-    topHalfH_ = std::max((maxy - miny) / 2.0f * 1.1f, 10.0f);
+    topHalfH_ = std::max((maxz - minz) / 2.0f * 1.1f, 10.0f);
 
     // Phase 4f (PORT_PROGRESS.md): the minimap's outline, built eagerly
     // here (see this class's own header comment for why that's a
@@ -245,8 +299,32 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         // own bgfx::touch(kView) call.
         bgfx::touch(kView);
     } else {
-    float cx = topCx_, cy = topCy_;
-    float halfW = topHalfW_, halfH = topHalfH_;
+    // Phase 5a (PORT_PROGRESS.md): sun/hemisphere lighting uniforms --
+    // hardcoded to the 'noon-grass' ENV_PRESETS entry's values for now
+    // (index.html:3490-3491); Phase 5b makes these real per-track data
+    // selected in setTrack(). Sun direction is TOWARD the sun (matches
+    // fs_lit.sc's `dot(n, u_sunDir)`), from azimuth=35deg/elevation=55deg.
+    {
+        constexpr double az = 35.0 * 3.14159265358979323846 / 180.0;
+        constexpr double el = 55.0 * 3.14159265358979323846 / 180.0;
+        const float sunDir[4] = {(float)(std::cos(az) * std::cos(el)), (float)std::sin(el),
+                                  (float)(std::sin(az) * std::cos(el)), 0.0f};
+        const float sunColor[4] = {1.0f * 3.2f, 0.9569f * 3.2f, 0.8784f * 3.2f, 0.0f};
+        const float hemiSky[4] = {0.7490f * 1.1f, 0.8392f * 1.1f, 1.0f * 1.1f, 0.0f};
+        const float hemiGround[4] = {0.2f * 1.1f, 0.1843f * 1.1f, 0.1569f * 1.1f, 0.0f};
+        bgfx::setUniform(uSunDir_, sunDir);
+        bgfx::setUniform(uSunColor_, sunColor);
+        bgfx::setUniform(uHemiSky_, hemiSky);
+        bgfx::setUniform(uHemiGround_, hemiGround);
+    }
+
+    // Phase 5a (PORT_PROGRESS.md): real depth testing, now that world-space
+    // geometry has genuine 3D extent (banked ribbon, and stadium/stands
+    // starting Phase 5d) -- previously layering relied purely on
+    // submission order (no BGFX_STATE_WRITE_Z/DEPTH_TEST at all).
+    const uint64_t state =
+        BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS;
+
     if (cameraMode_ == CameraMode::Chase) {
         const Car* car = nullptr;
         for (auto& c : cars) {
@@ -255,16 +333,15 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
                 break;
             }
         }
-        // 2D-adapted analogue of the JS default chase camera
-        // (index.html:3399-3457): forward lookahead + corner-lookahead bias
-        // on the look target, both exponentially smoothed toward every
-        // frame. Deliberately NOT ported: banking lean (upBlend), surface-
-        // height clamping, and the victory/pit-stop/tower/helmet/blimp/menu/
-        // caution-montage alternate camera branches (index.html:3293-3437)
-        // -- all of those need real 3D track/car geometry (elevation,
-        // banking mesh, a car model matrix) that doesn't exist until
-        // Phase 5. This is a flat top-down view with a tighter zoom and
-        // smoothed follow, not a 3rd-person chase cam.
+        // Phase 5a (PORT_PROGRESS.md): a real 3D perspective port of JS's
+        // default chase camera (index.html:3399,3438-3469) -- forward
+        // lookahead + corner-lookahead bias on the look target, banking
+        // lean (upBlend), and a surface-height clamp so the camera never
+        // dips below the (banked) track surface. Deliberately still NOT
+        // ported: the victory-orbit/pit-stop/tower/helmet/blimp/menu-
+        // establishing/caution-montage alternate camera branches
+        // (index.html:3293-3437) -- out of scope for this Phase 5 pass,
+        // deferred to a future session (not on Phase 5's own checklist).
         if (car && track_) {
             const auto now = std::chrono::steady_clock::now();
             double dtSec = 0.0;
@@ -274,68 +351,127 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             }
             chaseLastTime_ = now;
 
-            const double fwx = std::cos(car->hdg), fwy = std::sin(car->hdg);
-            const double lookAheadDist = 10.0 + car->v * 0.35;
-            double targetCx = car->x + fwx * lookAheadDist;
-            double targetCy = car->y + fwy * lookAheadDist;
+            const Vec3 base = pos3(*track_, car->s, car->lat);
+            const double th = car->hdg;
+            const double fwx = std::cos(th), fwz = std::sin(th); // fw.y == 0
+            const Vec3 up = surfaceUp(*track_, car->s);
 
-            // Corner-lookahead bias (index.html:3446-3449's pAh/lookLat,
-            // same constants -- this is a world-space offset, not a
-            // screen-space one, so it doesn't need rescaling for this
-            // camera's tighter zoom).
+            const double dist = 6.9 + car->v * 0.020, hgt = 2.55; // index.html:3438
+            double targetEyeX = base.x - fwx * dist + up.x * hgt;
+            double targetEyeY = base.y + up.y * hgt;
+            double targetEyeZ = base.z - fwz * dist + up.z * hgt;
+            double targetLookX = base.x + fwx * 8.0;
+            double targetLookY = base.y + 0.9;
+            double targetLookZ = base.z + fwz * 8.0;
+
+            // Corner lookahead: bias the look point into the upcoming
+            // corner (index.html:3446-3449's pAh/lookLat, same constants).
             PointResult pAh = track_->pointAt(car->s + std::max(20.0, car->v * 0.7));
             const double lookLat = std::max(-2.5, std::min(2.5, pAh.curv * 450.0));
             const double nx = -std::sin(pAh.hdg), ny = std::cos(pAh.hdg);
-            targetCx += nx * lookLat;
-            targetCy += ny * lookLat;
+            targetLookX += nx * lookLat;
+            targetLookZ += ny * lookLat;
 
             if (!chaseInitialized_) {
-                chaseCx_ = (float)targetCx;
-                chaseCy_ = (float)targetCy;
+                chaseEyeX_ = (float)targetEyeX;
+                chaseEyeY_ = (float)targetEyeY;
+                chaseEyeZ_ = (float)targetEyeZ;
+                chaseLookX_ = (float)targetLookX;
+                chaseLookY_ = (float)targetLookY;
+                chaseLookZ_ = (float)targetLookZ;
                 chaseInitialized_ = true;
             } else {
-                const double k = 1.0 - std::exp(-dtSec * 11.0); // index.html:3453
-                chaseCx_ += (float)((targetCx - chaseCx_) * k);
-                chaseCy_ += (float)((targetCy - chaseCy_) * k);
+                // Two-rate smoothing (index.html:3453): position settles
+                // slower (k) than the look target (k2), matching JS exactly
+                // -- this port's earlier 2D chase camera used one shared
+                // rate for both; fixing that here is a fidelity correction.
+                const double k = 1.0 - std::exp(-dtSec * 11.0);
+                const double k2 = 1.0 - std::exp(-dtSec * 22.0);
+                chaseEyeX_ += (float)((targetEyeX - chaseEyeX_) * k);
+                chaseEyeY_ += (float)((targetEyeY - chaseEyeY_) * k);
+                chaseEyeZ_ += (float)((targetEyeZ - chaseEyeZ_) * k);
+                chaseLookX_ += (float)((targetLookX - chaseLookX_) * k2);
+                chaseLookY_ += (float)((targetLookY - chaseLookY_) * k2);
+                chaseLookZ_ += (float)((targetLookZ - chaseLookZ_) * k2);
+            }
+
+            // Keep the camera above the local (banked) surface
+            // (index.html:3459-3461).
+            ProjectResult pr = track_->project(chaseEyeX_, chaseEyeZ_);
+            const double clampedLat = std::max(apronIn(*track_), std::min(wallLat(*track_), pr.lat));
+            const float minY = (float)(surfH(*track_, pr.s, clampedLat) + 1.4);
+            if (chaseEyeY_ < minY) chaseEyeY_ = minY;
+        }
+
+        // Camera up blends world-up with surface bank for the NT2003 lean
+        // (index.html:3463): only the horizontal (x/z) lean components are
+        // dampened by 0.45 -- the vertical component is left at a flat 1.0,
+        // not blended, then the whole vector is renormalized. Recomputed
+        // fresh from the car's live (unsmoothed) position every frame,
+        // matching JS (upBlend isn't itself smoothed, only cam.pos/look are).
+        Vec3 upBlend{0, 1, 0};
+        if (car && track_) {
+            const Vec3 up = surfaceUp(*track_, car->s);
+            upBlend = {up.x * 0.45, 1.0, up.z * 0.45};
+            const double len = std::sqrt(upBlend.x * upBlend.x + upBlend.y * upBlend.y + upBlend.z * upBlend.z);
+            if (len > 1e-9) {
+                upBlend.x /= len;
+                upBlend.y /= len;
+                upBlend.z /= len;
             }
         }
-        cx = chaseCx_;
-        cy = chaseCy_;
-        halfW = 50.0f;
-        halfH = 50.0f;
-    }
 
-    const float winAspect = (height_ > 0) ? (float)width_ / (float)height_ : 1.0f;
-    const float boxAspect = halfW / halfH;
-    if (boxAspect > winAspect) {
-        halfH = halfW / winAspect;
+        float view[16], proj[16];
+        const bx::Vec3 eye = {chaseEyeX_, chaseEyeY_, chaseEyeZ_};
+        const bx::Vec3 at = {chaseLookX_, chaseLookY_, chaseLookZ_};
+        const bx::Vec3 up = {(float)upBlend.x, (float)upBlend.y, (float)upBlend.z};
+        bx::mtxLookAt(view, eye, at, up);
+        const float aspect = (height_ > 0) ? (float)width_ / (float)height_ : 1.0f;
+        // FOV 60, near 0.5, far 1500 -- matches JS's own
+        // `new THREE.PerspectiveCamera(60, 1, 0.5, 1500)` exactly. bx's
+        // `mtxProj(fovy, aspect, ...)` overload takes `_fovy` in DEGREES
+        // and converts internally (`toRad(_fovy)` inside math.cpp) -- do
+        // NOT pre-convert here, that double-converts and produces a
+        // near-zero effective FOV (a real bug hit and fixed this session:
+        // it manifested as the entire frame being covered by whatever
+        // geometry was nearest the camera, with ~75x too much magnification).
+        bx::mtxProj(proj, 60.0f, aspect, 0.5f, 1500.0f, homogeneousDepth);
+        bgfx::setViewTransform(kView, view, proj);
     } else {
-        halfW = halfH * winAspect;
+        // TopDown: unchanged framing/purpose (a static overview of the
+        // whole track), still orthographic -- now looking straight down
+        // the real height (Y) axis instead of a 2D placeholder Z axis,
+        // since the ribbon mesh itself is genuinely 3D as of Phase 5a.
+        float halfW = topHalfW_, halfH = topHalfH_;
+        const float winAspect = (height_ > 0) ? (float)width_ / (float)height_ : 1.0f;
+        const float boxAspect = halfW / halfH;
+        if (boxAspect > winAspect) {
+            halfH = halfW / winAspect;
+        } else {
+            halfW = halfH * winAspect;
+        }
+        float view[16], proj[16];
+        const bx::Vec3 eye = {topCx_, 200.0f, topCy_};
+        const bx::Vec3 at = {topCx_, 0.0f, topCy_};
+        const bx::Vec3 up = {0.0f, 0.0f, -1.0f};
+        bx::mtxLookAt(view, eye, at, up);
+        bx::mtxOrtho(proj, -halfW, halfW, -halfH, halfH, 0.1f, 1000.0f, 0.0f, homogeneousDepth);
+        bgfx::setViewTransform(kView, view, proj);
     }
-
-    float view[16], proj[16];
-    const bx::Vec3 eye = {cx, cy, 200.0f};
-    const bx::Vec3 at = {cx, cy, 0.0f};
-    const bx::Vec3 up = {0.0f, 1.0f, 0.0f};
-    bx::mtxLookAt(view, eye, at, up);
-    bx::mtxOrtho(proj, -halfW, halfW, -halfH, halfH, 0.1f, 1000.0f, 0.0f, homogeneousDepth);
-    bgfx::setViewTransform(kView, view, proj);
-
-    const uint64_t state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A;
 
     if (trackVertexCount_ > 0) {
         bgfx::setTransform(identity);
         bgfx::setVertexBuffer(0, trackVb_, 0, trackVertexCount_);
         bgfx::setState(state);
-        bgfx::submit(kView, program_);
+        bgfx::submit(kView, litProgram_);
     }
 
-    if (!cars.empty()) {
+    if (!cars.empty() && track_) {
         const uint32_t maxVerts = (uint32_t)cars.size() * 6; // 2 triangles/car, triangle list
-        if (bgfx::getAvailTransientVertexBuffer(maxVerts, layout_) >= maxVerts) {
+        if (bgfx::getAvailTransientVertexBuffer(maxVerts, litLayout_) >= maxVerts) {
             bgfx::TransientVertexBuffer tvb;
-            bgfx::allocTransientVertexBuffer(&tvb, maxVerts, layout_);
-            auto* vertex = (PosColorVertex*)tvb.data;
+            bgfx::allocTransientVertexBuffer(&tvb, maxVerts, litLayout_);
+            auto* vertex = (PosNormalColorVertex*)tvb.data;
             uint32_t vIdx = 0;
             const float hl = (float)(CAR.len / 2.0);
             const float hw = (float)(CAR.wid / 2.0);
@@ -344,6 +480,16 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
                 const float cs = std::cos(ch), sn = std::sin(ch);
                 const float wx = (float)c.x, wy = (float)c.y;
                 const uint32_t col = packColor((float)c.col[0], (float)c.col[1], (float)c.col[2]);
+                // Phase 5a (PORT_PROGRESS.md): the quad now sits at its
+                // pos3()-derived height on the (possibly banked) surface
+                // instead of a flat world Z, with a surfaceUp()-derived
+                // normal so it shades correctly -- but the quad's own
+                // shape/corners stay flat and horizontal (no 3D car loft;
+                // that's out of scope for all of Phase 5, not just this
+                // sub-phase).
+                const Vec3 carPos = pos3(*track_, c.s, c.lat);
+                const Vec3 carUp = surfaceUp(*track_, c.s);
+                const float carY = (float)carPos.y;
                 // Local-space corners, rotated by heading then translated to
                 // world position -- baked directly into vertex positions
                 // (world space) rather than via a per-draw model matrix,
@@ -356,17 +502,18 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
                     px[k] = wx + lx[k] * cs - ly[k] * sn;
                     py[k] = wy + lx[k] * sn + ly[k] * cs;
                 }
-                vertex[vIdx++] = {px[0], py[0], 0.0f, col};
-                vertex[vIdx++] = {px[1], py[1], 0.0f, col};
-                vertex[vIdx++] = {px[2], py[2], 0.0f, col};
-                vertex[vIdx++] = {px[0], py[0], 0.0f, col};
-                vertex[vIdx++] = {px[2], py[2], 0.0f, col};
-                vertex[vIdx++] = {px[3], py[3], 0.0f, col};
+                const float nx = (float)carUp.x, ny = (float)carUp.y, nz = (float)carUp.z;
+                vertex[vIdx++] = {px[0], carY, py[0], nx, ny, nz, col};
+                vertex[vIdx++] = {px[1], carY, py[1], nx, ny, nz, col};
+                vertex[vIdx++] = {px[2], carY, py[2], nx, ny, nz, col};
+                vertex[vIdx++] = {px[0], carY, py[0], nx, ny, nz, col};
+                vertex[vIdx++] = {px[2], carY, py[2], nx, ny, nz, col};
+                vertex[vIdx++] = {px[3], carY, py[3], nx, ny, nz, col};
             }
             bgfx::setTransform(identity);
             bgfx::setVertexBuffer(0, &tvb, 0, vIdx);
             bgfx::setState(state);
-            bgfx::submit(kView, program_);
+            bgfx::submit(kView, litProgram_);
         }
     }
     } // !showResults

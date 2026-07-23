@@ -1,11 +1,19 @@
 #pragma once
 
-// Phase 2 minimal renderer (PORT_PROGRESS.md): flat-shaded track ribbon
-// (static mesh, built once from Track::pointAt()/halfW()) + car boxes
-// (rebuilt every frame from live Car state via a transient vertex buffer),
-// viewed from a camera that's either a static top-down framing of the whole
-// track or a chase camera following one car. No lighting/materials/
-// postprocessing yet -- that's Phase 5.
+// Phase 2 minimal renderer (PORT_PROGRESS.md): a track ribbon (static mesh,
+// built once from Track::pointAt()/halfW()) + car boxes (rebuilt every frame
+// from live Car state via a transient vertex buffer), viewed from a camera
+// that's either a static top-down framing of the whole track or a chase
+// camera following one car.
+//
+// Phase 5a added real 3D: the ribbon is now banked (Track::bankAt() via
+// track_surface.h's pos3()/surfH()), lit (hemisphere+directional, see
+// vs_lit.sc/fs_lit.sc), depth-tested, and the Chase camera is a real
+// perspective view with banking lean and a surface-height clamp -- see
+// renderFrame()'s CameraMode::Chase branch. Materials/textures/postprocessing
+// are later Phase 5 sub-tasks (5e/5f/5h); the full alternate-camera-mode
+// suite (helmet/tower/blimp/victory/pit/caution-cam) remains deliberately
+// out of scope for Phase 5, deferred to a future session.
 
 #include "../sim/car.h"
 #include "../sim/race_state.h"
@@ -113,19 +121,32 @@ private:
     float minimapBoundX_ = 1.0f, minimapBoundY_ = 1.0f;
 
     // Chase-camera smoothing state (index.html:3451-3457's cam.pos/cam.look
-    // self-init-then-exponentially-blend idiom, adapted to 2D -- see
-    // renderFrame()'s CameraMode::Chase branch for the full writeup of what
-    // this is and isn't a port of). Renderer keeps its own clock for this
-    // (rather than taking a dt parameter) so main.cpp's render call site
-    // doesn't need to know the camera has frame-rate-dependent state.
+    // self-init-then-exponentially-blend idiom). Phase 5a (PORT_PROGRESS.md)
+    // upgraded this from a 2D (x,y) pair to a real 3D (eye + look) pair --
+    // see renderFrame()'s CameraMode::Chase branch for the full writeup.
+    // Renderer keeps its own clock for this (rather than taking a dt
+    // parameter) so main.cpp's render call site doesn't need to know the
+    // camera has frame-rate-dependent state.
     bool chaseInitialized_ = false;
-    float chaseCx_ = 0, chaseCy_ = 0;
+    float chaseEyeX_ = 0, chaseEyeY_ = 0, chaseEyeZ_ = 0;
+    float chaseLookX_ = 0, chaseLookY_ = 0, chaseLookZ_ = 0;
     std::chrono::steady_clock::time_point chaseLastTime_;
 
     bgfx::VertexLayout layout_;
     bgfx::ProgramHandle program_ = BGFX_INVALID_HANDLE;
     bgfx::VertexBufferHandle trackVb_ = BGFX_INVALID_HANDLE;
     uint32_t trackVertexCount_ = 0;
+
+    // Phase 5a (PORT_PROGRESS.md): the lit shader/vertex layout for
+    // world-space geometry (the banked track ribbon here; stadium/stands
+    // join it in Phase 5d). The pixel-space UI overlay (view 1) keeps using
+    // `layout_`/`program_` (flat, unlit) unchanged.
+    bgfx::VertexLayout litLayout_;
+    bgfx::ProgramHandle litProgram_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle uSunDir_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle uSunColor_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle uHemiSky_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle uHemiGround_ = BGFX_INVALID_HANDLE;
 
     bgfx::CallbackI* callback_ = nullptr;
 };

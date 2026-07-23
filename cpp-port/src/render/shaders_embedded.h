@@ -32,8 +32,19 @@
 #include "essl/vs_flat.sc.bin.h"
 #include "essl/fs_flat.sc.bin.h"
 
+// Phase 5a (PORT_PROGRESS.md): vs_lit/fs_lit, the hemisphere+directional lit
+// shader for world-space geometry.
+#include "spirv/vs_lit.sc.bin.h"
+#include "spirv/fs_lit.sc.bin.h"
+#include "glsl/vs_lit.sc.bin.h"
+#include "glsl/fs_lit.sc.bin.h"
+#include "essl/vs_lit.sc.bin.h"
+#include "essl/fs_lit.sc.bin.h"
+
 static const bgfx::EmbeddedShader s_embeddedShaders[] = {
     BGFX_EMBEDDED_SHADER(vs_flat),
     BGFX_EMBEDDED_SHADER(fs_flat),
+    BGFX_EMBEDDED_SHADER(vs_lit),
+    BGFX_EMBEDDED_SHADER(fs_lit),
     BGFX_EMBEDDED_SHADER_END()
 };
