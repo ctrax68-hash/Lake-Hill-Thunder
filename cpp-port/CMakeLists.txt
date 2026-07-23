@@ -199,6 +199,7 @@ add_executable(lht_port
   src/platform/tilt_input.cpp
   src/render/hud.cpp
   src/render/renderer.cpp
+  src/ui/menu.cpp
   src/ui/touch_controls.cpp
   ${SIM_SOURCES}
 )
@@ -285,6 +286,20 @@ add_test(NAME speed_model_test COMMAND speed_model_test)
 add_executable(touch_controls_test tests/touch_controls_test.cpp src/ui/touch_controls.cpp)
 target_link_libraries(touch_controls_test PRIVATE SDL2::SDL2)
 add_test(NAME touch_controls_test COMMAND touch_controls_test)
+
+# Phase 4b (PORT_PROGRESS.md): menu_test exercises menu.cpp's pure region/
+# value-math functions (touch_controls_test's own rationale applies here
+# too -- see menu_test.cpp's header comment). Unlike touch_controls.cpp,
+# menu.cpp calls bgfx::dbgTextPrintf() in drawMenu() (not exercised by this
+# test, but still a symbol the linker must resolve), so this target needs
+# bgfx's include paths and library the same way lht_port itself does.
+add_executable(menu_test tests/menu_test.cpp src/ui/menu.cpp)
+target_link_libraries(menu_test PRIVATE SDL2::SDL2 bgfx)
+target_include_directories(menu_test PRIVATE
+  third_party/bgfx.cmake/bgfx/include
+  third_party/bgfx.cmake/bx/include
+)
+add_test(NAME menu_test COMMAND menu_test)
 
 add_executable(determinism_test tests/determinism_test.cpp tests/determinism/trace.cpp)
 add_test(NAME determinism_test COMMAND determinism_test)

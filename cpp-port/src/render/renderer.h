@@ -10,6 +10,7 @@
 #include "../sim/car.h"
 #include "../sim/race_state.h"
 #include "../sim/track.h"
+#include "../ui/menu.h"
 
 #include <bgfx/bgfx.h>
 
@@ -44,8 +45,13 @@ public:
     void setChaseTarget(int chaseCarIdx) { chaseCarIdx_ = chaseCarIdx; }
 
     // Draws the track ribbon + one box per car + HUD text, then submits
-    // the frame.
-    void renderFrame(const RaceState& raceState, const std::vector<Car>& cars);
+    // the frame. Phase 4b (PORT_PROGRESS.md): while raceState.mode=="menu",
+    // `cars` is expected to be empty (no grid built yet) and `menu`/
+    // `menuTrackName` (both must be non-null in that case) drive a menu
+    // overlay drawn in place of the HUD -- see menu.h's drawMenu(). Ignored
+    // whenever mode != "menu" (may be null then).
+    void renderFrame(const RaceState& raceState, const std::vector<Car>& cars,
+                      const MenuSelection* menu = nullptr, const std::string* menuTrackName = nullptr);
 
     // Phase 3c (PORT_PROGRESS.md): stand-in for the CSS `#rotate` prompt
     // (index.html:140-147,203) shown whenever the viewport is portrait --

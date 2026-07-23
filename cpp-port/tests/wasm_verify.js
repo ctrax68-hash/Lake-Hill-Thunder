@@ -26,6 +26,26 @@
 //   6. The service worker actually registers (navigator.serviceWorker.ready
 //      resolves without throwing), checked in-page after load.
 //
+// Phase 4b added the menu screen -- the page now lands on the menu (no
+// cars, nothing ticking) instead of an already-running pace lap, so this
+// adds a real end-to-end click-through:
+//   7. A screenshot immediately after load (the menu -- expected static,
+//      non-blank).
+//   8. A real Playwright mouse click at the Start button's known pixel
+//      coordinates (computeMenuRegions()'s kRowStart row center -- see
+//      src/ui/menu.cpp; not simulated X11/XTEST input, which this
+//      project's own Phase 2e/3b session notes established is unreliable
+//      in this container for the *native* SDL2 build specifically --
+//      Playwright drives the browser's own input pipeline instead, a
+//      completely different and already-proven-reliable code path here).
+//   9. Two more screenshots a few seconds after the click (the original
+//      frame-advances regression check, now performed post-click since
+//      that's where gameplay actually renders).
+// This script only captures screenshots + basic console/error checks --
+// actual pixel-level verification (non-blank extrema, frame-diff) is done
+// as a separate manual PIL pass over the written PNGs, same division of
+// labor Phase 7/7b already used.
+//
 // NOT checked here, and not checkable in this container: real Safari/iOS
 // "Add to Home Screen" behavior -- no macOS/iOS device exists in this
 // sandbox. Manifest/icon/SW correctness is a necessary but not sufficient
@@ -120,9 +140,27 @@ async function main() {
     console.log('service worker: OK (ready, scope =', swResult.scope, ')');
   }
 
-  // Give the wasm module time to instantiate and the sim/render loop to
-  // actually start producing frames (pace phase + a few seconds of real
-  // ticks) before the first screenshot.
+  const fs = require('fs');
+  const path = require('path');
+  const outDir = process.argv[3] || '/tmp/claude-0/-home-user-Boardwalk/d3ca08ad-c098-513a-a356-d82aaf81bd44/scratchpad';
+
+  // Give the wasm module time to instantiate and render the menu (Phase 4b:
+  // the page now lands here first, not an already-running pace lap).
+  await page.waitForTimeout(2000);
+  const menuShot = await page.screenshot();
+  fs.writeFileSync(path.join(outDir, 'wasm_menu.png'), menuShot);
+
+  // Click the Start button. Fixed pixel coordinates matching
+  // computeMenuRegions()'s startBtn row exactly (src/ui/menu.cpp: kCol=1,
+  // kCellW=8, kCellH=16, kRowStart=11, kStartColsWide=24 -> x in
+  // [8, 8+24*8)=[8,200), y in [11*16, 11*16+16)=[176,192)); this is a real
+  // click through Playwright's own input pipeline, not simulated X11/XTEST
+  // input (see this function's header comment for why that distinction
+  // matters in this container).
+  await page.mouse.click(104, 184);
+
+  // Give gridStart()'s new car field time to actually appear and the pace
+  // phase to advance a few real seconds before the first post-click shot.
   await page.waitForTimeout(4000);
   const shot1 = await page.screenshot();
 
@@ -131,9 +169,6 @@ async function main() {
 
   await browser.close();
 
-  const fs = require('fs');
-  const path = require('path');
-  const outDir = process.argv[3] || '/tmp/claude-0/-home-user-Boardwalk/d3ca08ad-c098-513a-a356-d82aaf81bd44/scratchpad';
   fs.writeFileSync(path.join(outDir, 'wasm_shot1.png'), shot1);
   fs.writeFileSync(path.join(outDir, 'wasm_shot2.png'), shot2);
 
@@ -141,7 +176,8 @@ async function main() {
   consoleErrors.forEach((e) => console.log('  console error:', e));
   console.log(`Page errors: ${pageErrors.length}`);
   pageErrors.forEach((e) => console.log('  page error:', e));
-  console.log('Screenshots written to', outDir, '(wasm_shot1.png, wasm_shot2.png)');
+  console.log('Screenshots written to', outDir,
+              '(wasm_menu.png before the click, wasm_shot1.png/wasm_shot2.png after)');
 
   if (consoleErrors.length > 0 || pageErrors.length > 0) {
     fail('console/page errors occurred during load+run (see above)');

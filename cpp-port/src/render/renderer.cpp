@@ -1,6 +1,7 @@
 #include "renderer.h"
 #include "hud.h"
 #include "shaders_embedded.h"
+#include "../ui/menu.h"
 
 #include "../sim/car.h"
 
@@ -207,7 +208,8 @@ void Renderer::renderBlockedFrame() {
     bgfx::frame();
 }
 
-void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& cars) {
+void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& cars,
+                            const MenuSelection* menu, const std::string* menuTrackName) {
     const bgfx::ViewId kView = 0;
     // Sequential: draw calls execute in submission order, not bgfx's default
     // sort-by-key order -- this Phase 2 scene has no depth buffer (see the
@@ -352,6 +354,12 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     // hud.cpp for exactly what's ported vs. deferred.
     bgfx::dbgTextClear();
     drawHud(raceState, cars);
+    // Phase 4b (PORT_PROGRESS.md): drawHud() itself already early-returns
+    // for mode=="menu" (hud.cpp:21), so both can unconditionally run here
+    // without stepping on each other's dbgText rows.
+    if (raceState.mode == "menu" && menu && menuTrackName) {
+        drawMenu(*menu, raceState.laps, raceState.tilt, *menuTrackName);
+    }
 
     bgfx::frame();
 }

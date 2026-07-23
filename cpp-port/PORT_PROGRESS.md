@@ -511,8 +511,14 @@ port; it's the reference the C++ port must match).
       pixels present as expected from the track/cars).
 - [ ] **Install Android NDK here** (deferred from Phase 0 per the sequencing decision)
 
-### Phase 4 — UI overlay — IN PROGRESS (Session 3)
-- [ ] Menu screen (track/laps/qualifying/sound/tilt toggles, volume slider, start button)
+### Phase 4 — UI overlay — IN PROGRESS (Session 3, Phase 4b added Session 5)
+- [x] Menu screen (track/laps/qualifying/sound/tilt toggles, volume slider, start button)
+      **Phase 4b done (Session 5)**: `src/ui/menu.{h,cpp}` -- see this file's own Session 5
+      log entry below for the full writeup (region layout, what's a real toggle vs.
+      stored-but-inert UI parity for qual/sound/volume, the menu-first startup
+      restructure in `main.cpp`, and end-to-end click verification via Playwright on
+      the web build). RaceState's default `mode="menu"` is now a real, reachable
+      entry point instead of being immediately overwritten at startup.
 - [~] HUD (lap counter, position, timing — note the JS side has grown a lot more HUD
       surface recently: gear+RPM readout, live leaderboard gaps, minimap with a
       player wedge + trouble-pulse rings, segmented TIRE/FUEL/CAR bars — check
@@ -2112,3 +2118,135 @@ elsewhere in the same run.
   concrete engineering work of the Safari-PWA pivot that began when the
   user redirected away from native App Store distribution in Session 3 --
   what remains is purely real-device verification, not further building.
+
+- **Session 5 -- Phase 4b: the menu screen.** With the WASM/PWA path proven
+  (Phase 7/7b), the user asked to continue Phase 4 -- this session picked
+  the one fully-unstarted item, the menu screen (JS's `#menu` DOM overlay,
+  `index.html:167-184,4650-4723`), as its scope: track/laps/qualifying/
+  sound/tilt toggles, a volume control, and a Start button, adapted to
+  this port's bgfx-debug-text-only rendering and `touch_controls.h`'s
+  region-hit-testing pattern rather than a real widget framework.
+
+  **New `src/ui/menu.{h,cpp}`**: `MenuRegions computeMenuRegions()` returns
+  fixed pixel rects for seven rows (track/laps/qual/sound/tilt/volume/
+  start), positioned to exactly match the text rows `drawMenu()` prints at
+  (same 8x16 dbgText cell grid `hud.cpp` already established) so the
+  clickable area always lines up with what's drawn -- no separate pixel
+  bookkeeping to keep in sync by hand. `cycleLaps()` mirrors JS's exact
+  `#lapTog` cycle (3->5->10->20->3, `index.html:4706-4709`).
+  `volumeFromClickX()` adapts JS's drag-based `<input type=range>` into a
+  click-to-set proportion of the volume row's width, since this port has
+  no drag-slider widget. **Not every JS control does something real**:
+  `RaceState::laps`/`RaceState::tilt` are genuine, already-existing sim
+  fields (`race_state.h`) that the menu's laps/tilt rows toggle directly,
+  matching JS's own immediate-effect bindings exactly -- but `qual`/
+  `sound`/`volume` are new fields on a `MenuSelection` struct that are
+  stored and toggleable for UI parity only:
+  - `qual`: real qualifying (`startQualifying()`'s single-car timed lap,
+    then `finishQualifying()`'s synthesized-grid rebuild,
+    `index.html:4615ish`) is genuine unported sim-core work -- `race.cpp`'s
+    own `tick()` comment already noted only the `mode='qual'->'menuwait'`
+    transition itself is ported, not what puts the sim into `'qual'` mode
+    in the first place. Out of scope for a UI-only sub-task. Toggling this
+    row is honest parity; pressing Start with it on prints a one-line note
+    and starts a normal race anyway (drawn in grey in the menu as a small
+    visual "this doesn't do anything yet" cue).
+  - `sound`/`volume`: this port has no audio system at all yet (Phase 6,
+    still not started) -- nothing exists for these to control. Also drawn
+    grey.
+
+  **`main.cpp` restructure -- the real entry point is now the menu**:
+  previously `main()` called `gridStart()` and force-set
+  `state.mode = "pace"` unconditionally, immediately after init -- there
+  was no menu to skip past. `RaceState::mode`'s own default (`"menu"`,
+  `race_state.h`) is now left alone at startup; a new
+  `startRaceFromMenu()` (mirroring JS's `startRace()`,
+  `index.html:4604-4614`, including its explicit `state.finishLaps =
+  state.laps` reset -- no longer a free coincidence now that laps is
+  genuinely menu-selectable) only runs once Start is actually clicked, via
+  a new `handleMenuClick()` hooked into the existing
+  `SDL_MOUSEBUTTONDOWN`/`SDL_FINGERDOWN` handling, gated on
+  `state.mode == "menu"`. `Renderer::renderFrame()` gained an optional
+  `MenuSelection*`/track-name parameter, drawing the menu overlay via the
+  new `drawMenu()` whenever `mode == "menu"` -- `hud.cpp`'s `drawHud()`
+  already early-returned for that mode, so both coexist without stepping
+  on each other's dbgText rows. Discovered and fixed one real correctness
+  gap while wiring this up: the sim's `tick()` was being called every
+  frame regardless of mode, including while sitting on the menu with an
+  empty `cars` vector (no `gridStart()` yet) -- harmless by luck today
+  (`updateAero()`/`collide()`/etc. all no-op over an empty vector), but
+  papering over a real risk and not matching JS at all, which gates its
+  own `tick()` call to `mode==='race'||'pace'||'qual'||'victory'` only
+  (`index.html:4144`) -- ported that same gate exactly. Also had to add an
+  explicit `simAcc = 0` reset in `startRaceFromMenu()`: the frame-time
+  accumulator keeps accumulating every frame regardless of mode, so
+  however long a player sat on the menu would otherwise become a backlog
+  `tick()` tries to instantly replay the moment Start is pressed -- JS has
+  no equivalent risk since its own accumulator only lives inside the same
+  mode-gated block that calls `tick()`.
+
+  `LHT_FORCE_RACE` (the existing debug/headless-verification bypass) keeps
+  working exactly as before -- it now calls `startRaceFromMenu()` then
+  immediately overrides to `mode="race"/flag="green"`, skipping both the
+  menu and the pace phase in one step, same end state scripted
+  verification already relied on pre-this-session.
+
+  **New `tests/menu_test.cpp` + `menu_test` ctest target**: same rationale
+  as `touch_controls_test.cpp` (region math is testable headlessly, actual
+  synthetic input delivery is not -- see this file's own Phase 2e/3b notes
+  on three independent xdotool/XTEST/XSendEvent attempts never registering
+  against a real SDL window in this container). Checks region layout (no
+  overlaps, correct top-to-bottom order, each region's own center hits
+  only itself), `cycleLaps()`'s exact sequence and that it's a 4-cycle, and
+  `volumeFromClickX()`'s edge/midpoint/clamping behavior. Needed linking
+  against `bgfx` (unlike `touch_controls_test`) since `menu.cpp` calls
+  `bgfx::dbgTextPrintf()` in `drawMenu()` -- a symbol the linker must
+  resolve even though this test never calls that function.
+
+  **Verification, all genuinely checked, not assumed**:
+  - Native: full `ctest` suite, now 8/8 (`menu_test` new, the other 7
+    unaffected). Headless `xvfb-run` screenshot with **no** env override
+    confirmed the menu itself renders correctly (title, all six rows with
+    live values, the `>>> START RACE <<<` button, the empty track visible
+    behind it, zero cars -- matching JS's own "menu shows a live
+    establishing shot with `S.cars` empty" behavior,
+    `index.html:4166-4172`) and that `state.t` stayed at `0.0` the whole
+    120-frame run, confirming the new sim-tick gate actually holds (no
+    silent sim advancement while idling on the menu). A second headless
+    run with `LHT_FORCE_RACE=1` reproduced the exact pre-session behavior
+    (`mode=race`, `flag=green`, player velocity ~30.5 matching the
+    historical baseline in this file's own Phase 2e notes) and the HUD/
+    car-field screenshot looked identical in kind to previous phases' --
+    confirms the menu restructure caused no regression to the underlying
+    race flow.
+  - **Live mouse-click verification was not attempted natively** -- this
+    file's own Phase 2e/3b session notes already established, across
+    three independently-tried mechanisms, that synthetic X11/XTEST/
+    XSendEvent input does not reliably reach this container's SDL2+Xvfb
+    setup. Not re-litigated a fourth time.
+  - Web (WASM/PWA build): rebuilt `build-web/`, served it, and extended
+    `tests/wasm_verify.js` with a **real** end-to-end click-through:
+    navigate, screenshot the menu (confirmed non-blank, matching the
+    native menu screenshot in content), `page.mouse.click()` at the exact
+    pixel coordinates `computeMenuRegions()`'s Start row occupies (a
+    genuine Playwright-driven browser input event -- a completely
+    different, already-proven-reliable code path in this container from
+    native SDL2/X11, per Phase 7's own successful headless-Chromium
+    verification), then two more screenshots a few seconds apart. Result:
+    zero console/page errors; the post-click screenshot shows the full
+    20-car field grid-started and running (`LAP 1/5`, `POS 20/20`,
+    `GREEN`, `SPD 38`) with a diff bbox against the pre-click menu shot
+    confirming genuinely different content (not a stale frame), and the
+    two post-click shots differ from each other too (the original
+    frame-advances regression check, now performed after the click since
+    that's where gameplay actually renders). **The Start button
+    genuinely works end to end in a real browser**, not just via a debug
+    env-var bypass.
+
+  **Status**: Phase 4's menu screen is done and verified both natively
+  (region/value-math unit test + headless regression screenshots) and in
+  the actual shipped WASM/PWA build (a real simulated click driving the
+  full menu->race transition). Qualifying and sound/volume remain honest,
+  visually-marked stubs pending their own sim-core/audio-system work
+  (Phase 4's HUD leaderboard/minimap/tire-fuel-bars/gear-RPM items and the
+  Results screen also remain, per this file's own Phase 4 checklist).

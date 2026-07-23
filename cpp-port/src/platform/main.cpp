@@ -24,6 +24,7 @@
 #include "../sim/race.h"
 #include "../sim/rng.h"
 #include "../sim/tracks_data.h"
+#include "../ui/menu.h"
 #include "../ui/orientation.h"
 #include "../ui/touch_controls.h"
 #include "tilt_input.h"
@@ -57,6 +58,7 @@ struct LoopState {
     std::vector<Car*> finishOrder;
     TiltInput tiltInput;
     TouchRegions touchRegions;
+    MenuSelection menu; // Phase 4b (PORT_PROGRESS.md): live menu selections
     bool touchLeft = false, touchRight = false, touchGas = false, touchBrake = false;
     bool portrait = false;
     bool running = true;
@@ -82,7 +84,13 @@ struct LoopState {
     int screenshotAtFrame = 0;
 
     LoopState(int trackIdx, uint32_t rngSeed, uint32_t rngRSeed)
-        : track(TRACKS[trackIdx]), rng(rngSeed), rngR(rngRSeed) {}
+        : track(TRACKS[trackIdx]), rng(rngSeed), rngR(rngRSeed) {
+        // Keep the menu's own trackIdx in sync with whatever this LoopState
+        // was actually constructed with (argv[1]/default 0) -- otherwise
+        // the menu's trackBtn would cycle relative to index 0 regardless of
+        // which track is actually loaded/displayed at startup.
+        menu.trackIdx = trackIdx;
+    }
 };
 
 // Mirrors bP's JS click handler (index.html:4665-4669) exactly: an
@@ -97,6 +105,68 @@ void togglePlayerPit(LoopState& S) {
     }
     if (player && S.state.mode == "race" && !player->done && player->pit == 0) {
         player->pitReq = !player->pitReq;
+    }
+}
+
+// Mirrors JS's startRace() (index.html:4604-4614): gridStart() placement,
+// plus the state resets startRace() makes explicitly alongside it. Most of
+// these already match RaceState's freshly-constructed defaults (this port
+// only ever runs gridStart() once per session so far, no menu-return/
+// restart flow exists yet), but state.finishLaps = state.laps is the one
+// that's no longer a coincidence now that the menu's laps row makes
+// state.laps genuinely user-selectable (Phase 4b, PORT_PROGRESS.md) --
+// written explicitly here, matching JS, rather than relying on both
+// defaulting to 5.
+void startRaceFromMenu(LoopState& S) {
+    gridStart(S.track, S.rng, S.state, S.pace, S.cars, nullptr);
+    S.state.oneToGo = false;
+    S.state.pitsOpen = true;
+    S.state.cautionMaxSlot = -1;
+    S.state.finishLaps = S.state.laps;
+    S.state.gwcState = "none";
+    S.state.gwcAttempts = 0;
+    S.state.gwcMarkLap = -1;
+    S.state.mode = "pace";
+    // The accumulator may hold an arbitrarily large backlog of real elapsed
+    // time from however long the player sat on the menu (dt keeps
+    // accumulating every frame regardless of mode, below) -- without this
+    // reset, tick()'s `while (simAcc >= DT)` loop would try to instantly
+    // replay that entire idle span the moment Start is pressed. JS has no
+    // equivalent risk: its `acc` only accumulates inside the same
+    // mode-gated block that calls tick() (index.html:4144-4166), so it
+    // never builds up backlog while sitting in the menu in the first place.
+    S.simAcc = 0.0;
+}
+
+// Menu row click/tap handling (Phase 4b, PORT_PROGRESS.md), matching
+// index.html's #trkTog/#lapTog/#qualTog/#sndTog/#tiltTog/#volSlider/
+// #startBtn handlers (index.html:4650-4723) -- see menu.h's own comments
+// for what's a real toggle (track/laps/tilt) vs. stored-but-inert UI
+// parity (qual/sound/volume) and why.
+void handleMenuClick(LoopState& S, int x, int y) {
+    const MenuRegions r = computeMenuRegions();
+    if (pointInRect(x, y, r.trackBtn)) {
+        S.menu.trackIdx = (S.menu.trackIdx + 1) % (int)TRACKS.size();
+        S.track = Track(TRACKS[S.menu.trackIdx]);
+        S.renderer.setTrack(S.track);
+    } else if (pointInRect(x, y, r.lapsBtn)) {
+        S.state.laps = cycleLaps(S.state.laps);
+    } else if (pointInRect(x, y, r.qualBtn)) {
+        S.menu.qual = !S.menu.qual;
+    } else if (pointInRect(x, y, r.soundBtn)) {
+        S.menu.sound = !S.menu.sound;
+    } else if (pointInRect(x, y, r.tiltBtn)) {
+        S.state.tilt = !S.state.tilt;
+    } else if (pointInRect(x, y, r.volumeBar)) {
+        S.menu.volume = volumeFromClickX(r.volumeBar, x);
+    } else if (pointInRect(x, y, r.startBtn)) {
+        if (S.menu.qual) {
+            // Honest, one-shot note rather than silently ignoring the
+            // selection -- see MenuSelection::qual's comment for why.
+            std::printf("Menu: qualifying isn't implemented in this port yet -- "
+                        "starting a normal race instead.\n");
+        }
+        startRaceFromMenu(S);
     }
 }
 
@@ -117,10 +187,12 @@ void mainLoopTick(void* argPtr) {
             // touch/click-only) -- desktop-testing convenience, same
             // rationale as LHT_FORCE_RACE/LHT_START_CHASE.
             if (ev.key.keysym.sym == SDLK_p && !ev.key.repeat) togglePlayerPit(S);
-            // Debug-only: JS's tilt-steer mode is toggled from a menu
-            // checkbox (index.html:4704) that doesn't exist yet in this
-            // port (Phase 4's "UI overlay" job) -- desktop-testing
-            // convenience standing in for that checkbox.
+            // Debug-only: the real tilt-steer checkbox now exists (Phase 4b's
+            // menu tiltBtn, below) and toggles this exact same field --
+            // this keyboard shortcut just remains a desktop-testing
+            // convenience that also works mid-race, matching JS's own
+            // #tiltTog binding having no mode restriction either
+            // (index.html:4703-4705).
             if (ev.key.keysym.sym == SDLK_t && !ev.key.repeat) S.state.tilt = !S.state.tilt;
         }
         if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_RESIZED) {
@@ -135,25 +207,37 @@ void mainLoopTick(void* argPtr) {
         // pointerdown/up), bP is a single toggle on press (index.html's
         // click), matching bindBtn()'s and bP's own listener exactly.
         // Ignored entirely while portrait, matching the `#rotate` overlay
-        // physically covering the on-screen buttons in JS.
+        // physically covering the on-screen buttons in JS. While
+        // mode=="menu" (Phase 4b, PORT_PROGRESS.md), clicks/taps go to the
+        // menu rows instead -- the drive controls don't exist to hit yet
+        // (no cars until Start is pressed), matching JS's own menu overlay
+        // covering the driving HUD entirely.
         if (!S.portrait && ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_LEFT) {
             const int x = ev.button.x, y = ev.button.y;
-            if (pointInRect(x, y, S.touchRegions.bL)) S.touchLeft = true;
-            if (pointInRect(x, y, S.touchRegions.bR)) S.touchRight = true;
-            if (pointInRect(x, y, S.touchRegions.bG)) S.touchGas = true;
-            if (pointInRect(x, y, S.touchRegions.bB)) S.touchBrake = true;
-            if (pointInRect(x, y, S.touchRegions.bP)) togglePlayerPit(S);
+            if (S.state.mode == "menu") {
+                handleMenuClick(S, x, y);
+            } else {
+                if (pointInRect(x, y, S.touchRegions.bL)) S.touchLeft = true;
+                if (pointInRect(x, y, S.touchRegions.bR)) S.touchRight = true;
+                if (pointInRect(x, y, S.touchRegions.bG)) S.touchGas = true;
+                if (pointInRect(x, y, S.touchRegions.bB)) S.touchBrake = true;
+                if (pointInRect(x, y, S.touchRegions.bP)) togglePlayerPit(S);
+            }
         }
         if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_LEFT) {
             S.touchLeft = S.touchRight = S.touchGas = S.touchBrake = false;
         }
         if (!S.portrait && ev.type == SDL_FINGERDOWN) {
             const int x = (int)(ev.tfinger.x * S.width), y = (int)(ev.tfinger.y * S.height);
-            if (pointInRect(x, y, S.touchRegions.bL)) S.touchLeft = true;
-            if (pointInRect(x, y, S.touchRegions.bR)) S.touchRight = true;
-            if (pointInRect(x, y, S.touchRegions.bG)) S.touchGas = true;
-            if (pointInRect(x, y, S.touchRegions.bB)) S.touchBrake = true;
-            if (pointInRect(x, y, S.touchRegions.bP)) togglePlayerPit(S);
+            if (S.state.mode == "menu") {
+                handleMenuClick(S, x, y);
+            } else {
+                if (pointInRect(x, y, S.touchRegions.bL)) S.touchLeft = true;
+                if (pointInRect(x, y, S.touchRegions.bR)) S.touchRight = true;
+                if (pointInRect(x, y, S.touchRegions.bG)) S.touchGas = true;
+                if (pointInRect(x, y, S.touchRegions.bB)) S.touchBrake = true;
+                if (pointInRect(x, y, S.touchRegions.bP)) togglePlayerPit(S);
+            }
         }
         if (ev.type == SDL_FINGERUP) {
             S.touchLeft = S.touchRight = S.touchGas = S.touchBrake = false;
@@ -174,13 +258,24 @@ void mainLoopTick(void* argPtr) {
     S.last = now;
     if (dt > 0.25) dt = 0.25; // clamp a stall (e.g. window drag) instead of a physics-time jump
     S.simAcc += dt;
-    while (S.simAcc >= DT) {
-        tick(S.state, S.cars, S.pace, S.track, S.rngR, S.input, S.finishOrder);
-        S.simAcc -= DT;
+    // Matches JS's own frame() gate exactly (index.html:4144): tick() only
+    // runs in race/pace/qual/victory, never in menu/menuwait/done. Menu mode
+    // has no cars yet (gridStart() hasn't run), so this isn't just a JS
+    // parity nicety -- it also avoids running collide()/the caution
+    // controller over an empty field.
+    const bool simRunning = S.state.mode == "race" || S.state.mode == "pace" ||
+                             S.state.mode == "qual" || S.state.mode == "victory";
+    if (simRunning) {
+        while (S.simAcc >= DT) {
+            tick(S.state, S.cars, S.pace, S.track, S.rngR, S.input, S.finishOrder);
+            S.simAcc -= DT;
+        }
     }
 
     if (S.portrait) {
         S.renderer.renderBlockedFrame();
+    } else if (S.state.mode == "menu") {
+        S.renderer.renderFrame(S.state, S.cars, &S.menu, &S.track.name());
     } else {
         S.renderer.renderFrame(S.state, S.cars);
     }
@@ -310,15 +405,22 @@ int main(int argc, char** argv)
     // same rationale as LHT_FORCE_RACE below.
     if (std::getenv("LHT_START_CHASE")) S.renderer.setCameraMode(Renderer::CameraMode::Chase);
 
-    gridStart(S.track, S.rng, S.state, S.pace, S.cars, nullptr);
-    S.state.mode = "pace";
-    // Debug-only: skip straight past the ~28-sim-second pace phase (during
-    // which every car, including the player, is formation-driven --
-    // keyboard input is ignored, matching the JS original) so keyboard
-    // responsiveness can actually be tested without waiting real-time for
-    // green flag. Same seeded-starting-state philosophy as the --force flag
-    // used throughout this port's determinism tests, not a physics bypass.
+    // Phase 4b (PORT_PROGRESS.md): the real entry point is now the menu
+    // screen -- RaceState's own default mode ("menu", race_state.h) is left
+    // untouched here, and gridStart() only runs once Start is actually
+    // pressed (mainLoopTick()'s handleMenuClick() -> startRaceFromMenu()).
+    //
+    // Debug-only: LHT_FORCE_RACE remains a scripted-verification bypass,
+    // matching its pre-menu behavior exactly -- skip straight past both the
+    // menu AND the ~28-sim-second pace phase (during which every car,
+    // including the player, is formation-driven -- keyboard input is
+    // ignored, matching the JS original), landing already in a running
+    // green-flag race so headless screenshot verification doesn't need to
+    // simulate a mouse click just to see gameplay. Same seeded-starting-
+    // state philosophy as the --force flag used throughout this port's
+    // determinism tests, not a physics bypass.
     if (std::getenv("LHT_FORCE_RACE")) {
+        startRaceFromMenu(S);
         S.state.mode = "race";
         S.state.flag = "green";
     }
