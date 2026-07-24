@@ -48,6 +48,43 @@ double axleLateralForce(double stiffness, double slipAngle, double mu, double fz
     return std::max(-fyMax, std::min(fyMax, fyWanted));
 }
 
+// Regression-pass fix (see CarConstants::yawSubsteps): subdivides `dt` into
+// `substeps` equal inner steps, recomputing slipAngles()/axleLateralForce()
+// every substep from the just-updated vy/r (semi-implicit: vyDot uses the
+// substep's just-updated r, not the pre-substep value, matching the
+// stability improvement already used before substepping existed).
+YawIntegrationResult integrateYawDynamics(const CarConstants& c, double vy0, double r0, double vDyn,
+                                           double vSafe, double steerAngle, const AxleLoads& fz, double muEff,
+                                           double fxFracFront, double fxFracRear, double dt, int substeps) {
+    const double dtSub = dt / substeps;
+    const double aF = c.wheelBase * (1 - c.weightDistF);
+    const double aR = c.wheelBase * c.weightDistF;
+    double vy = vy0, r = r0;
+    double hdgDelta = 0.0;
+    double slipMagSum = 0.0;
+    bool pastLimitAny = false;
+
+    for (int i = 0; i < substeps; ++i) {
+        const SlipAngles alpha = slipAngles(c, vy, r, vDyn, steerAngle);
+        const double fyFront = axleLateralForce(c.cf, alpha.front, muEff, fz.front, fxFracFront);
+        const double fyRear = axleLateralForce(c.cr, alpha.rear, muEff, fz.rear, fxFracRear);
+
+        const double rDot = (aF * fyFront * std::cos(steerAngle) - aR * fyRear) / c.iz;
+        r += rDot * dtSub;
+        const double vyDot = (fyFront * std::cos(steerAngle) + fyRear) / c.mass - vSafe * r;
+        vy += vyDot * dtSub;
+
+        hdgDelta += r * dtSub;
+        slipMagSum += std::abs(alpha.front) + std::abs(alpha.rear);
+
+        const double fyMaxFront = muEff * fz.front * std::sqrt(std::max(0.0, 1.0 - fxFracFront * fxFracFront));
+        const double fyMaxRear = muEff * fz.rear * std::sqrt(std::max(0.0, 1.0 - fxFracRear * fxFracRear));
+        if (std::abs(fyFront) >= fyMaxFront * 0.999 || std::abs(fyRear) >= fyMaxRear * 0.999) pastLimitAny = true;
+    }
+
+    return {vy, r, hdgDelta, slipMagSum / substeps, pastLimitAny};
+}
+
 // ROSTER (index.html:431-451)
 const std::array<RosterEntry, 19> ROSTER{{
     {"B. HOLLISTER", 28, CarPalette::Red, {0, 0, 0, CarPalette::White}},

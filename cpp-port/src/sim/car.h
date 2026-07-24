@@ -55,6 +55,23 @@ struct CarConstants {
     // existing feedforward steerIn, so the AI compensates for the lag
     // instead of assuming zero-latency turning.
     double yawCorrGain = 0.35;    // dimensionless per (rad/s) of yaw-rate error
+
+    // Regression-pass fix: the vy/r bicycle-model integration diverges
+    // numerically under this sim's fixed 0.02s explicit-Euler step at
+    // highway speed with steerIn saturated at full lock for several
+    // consecutive ticks (a stiff coupled-oscillator stability failure --
+    // Cf/Cr/Iz/mass/v set the system's natural frequency, and the fixed
+    // step violates the discretization's stability margin in that specific
+    // regime even though the same equations are stable elsewhere). Fixed by
+    // subdividing each tick into this many substeps inside
+    // integrateYawDynamics() (car.cpp), recomputing slip angles/forces each
+    // substep rather than integrating against one frozen force -- the
+    // instability is driven by the tight alpha<->vy/r feedback loop itself,
+    // so freezing forces would remove exactly the self-correction raising
+    // the sampling rate is meant to restore. A yaw-damping term was tried
+    // instead and rejected: it suppressed the divergence but crippled
+    // legitimate cornering response fleet-wide.
+    int yawSubsteps = 4;
 };
 inline const CarConstants CAR{};
 
@@ -83,6 +100,26 @@ SlipAngles slipAngles(const CarConstants& c, double vy, double r, double v, doub
 // combining `mu*fz` with `fxFrac` (how much of that axle's longitudinal grip
 // is already spent, in [-1,1]).
 double axleLateralForce(double stiffness, double slipAngle, double mu, double fz, double fxFrac);
+
+// Regression-pass fix (see CarConstants::yawSubsteps): integrates the
+// bicycle-model vy/r/hdg state over one outer tick of length `dt`, split
+// into `substeps` inner steps that each recompute slip angles and axle
+// forces from the just-updated vy/r (not one frozen force for the whole
+// tick) -- restores the discretization's stability margin at high speed
+// under sustained full-lock steering. `fz`/`muEff`/`steerAngle`/
+// `fxFracFront`/`fxFracRear` don't depend on vy/r and are computed once by
+// the caller, outside this function, exactly as before this fix.
+// `vDyn`/`vSafe` are also caller-supplied (both derived from `c.v`, which
+// doesn't change across substeps within one tick).
+struct YawIntegrationResult {
+    double vy, r;       // updated state, replaces c.vy/c.r
+    double hdgDelta;     // sum of r_i*dtSub across substeps -- add to c.hdg
+    double slipMagAvg;   // time-weighted average of |alpha.front|+|alpha.rear|
+    bool pastLimitAny;   // true if any substep's force hit the friction ellipse
+};
+YawIntegrationResult integrateYawDynamics(const CarConstants& c, double vy0, double r0, double vDyn,
+                                           double vSafe, double steerAngle, const AxleLoads& fz, double muEff,
+                                           double fxFracFront, double fxFracRear, double dt, int substeps);
 
 // CAR_PALETTE (index.html:413-423)
 namespace CarPalette {

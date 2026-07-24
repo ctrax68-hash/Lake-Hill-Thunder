@@ -3922,3 +3922,78 @@ elsewhere in the same run.
   enough that tuning now would be wasted work. Step 2/3 (glTF skinned-mesh
   animation) remain gated on this regression pass fully clearing, per the
   original plan's own stated ordering -- not yet unblocked.
+
+### Finding #5 resolved -- yaw-integration substepping + AI spin recovery
+
+  Two changes together closed finding #5 (the last open item from the
+  regression pass above):
+
+  **1. Substepping (`integrateYawDynamics()`, `src/sim/car.h`/`.cpp`)**. The
+  `vy`/`r`/`hdg` integration previously inline in `step_car.cpp`'s bicycle-
+  model branch was extracted into a pure function, subdividing each 0.02s
+  tick into `CarConstants::yawSubsteps` (default 4) inner steps that each
+  recompute slip angles and axle forces from the just-updated `vy`/`r` --
+  not integrating against one frozen force for the whole tick. Verified via
+  a real-sim fine-grained per-tick trace (`LHT_SUBSTEP_DEBUG`, temporary,
+  removed after use): peak `vy` before a wall-reset interrupted a slip
+  episode dropped from >1000 m/s (pre-fix) to ~65 m/s, and peak `r` from
+  13+ rad/s to ~4 rad/s -- a real, substantial improvement, not a no-op.
+
+  **Important correction discovered during verification**: an isolated-
+  function probe (holding `steerAngle` at full lock and `muEff`/`fz`
+  constant, no wall resets, no wear feedback, for hundreds to thousands of
+  ticks) showed the residual growth under that specific, unrealistic
+  boundary condition is **not a discretization artifact at all** -- results
+  at `n=1` and `n=4800` substeps (240,000Hz effective inner rate) were
+  indistinguishable (`vy=18687` vs `vy=18681` at 2000 ticks, <0.04%
+  difference). Once slip angles saturate `axleLateralForce()`'s friction-
+  ellipse clamp at both axles, `rDot` becomes approximately constant, so
+  `r` grows ~linearly forever under a *persistently held, uncorrected*
+  full-lock input -- a genuine property of this simplified linear-tire-
+  model's response to an unchanging boundary condition, not fixable by any
+  amount of finer time resolution. In real play this scenario is always
+  interrupted well before it matters. `tests/tire_model_test.cpp`'s
+  regression test for `integrateYawDynamics()` was written to match this
+  finding: it checks substep-count *convergence* over a realistic ~25-tick
+  episode window (matching the real wall-reset interval), not unconditional
+  boundedness over an artificial forever-sustained scenario the model has
+  no obligation to keep bounded.
+
+  **2. AI spin-recovery throttle lift (`step_car.cpp`)**. The real fix for
+  the *practical* problem (cars taking terminal damage during ordinary
+  formation driving) turned out to be behavioral, not numerical: a real
+  driver lifts off the throttle the instant the car is visibly spinning,
+  rather than holding a fixed throttle command throughout. Added a small
+  override, applied after all driving branches compute `thr`/`steerIn` but
+  before the shared physics tail smooths them into `c.thr`/`c.steer`: when
+  `|c.r|` (last tick's yaw rate, already-observed, not a new planning
+  heuristic) exceeds 1.2 rad/s -- far beyond any legitimate cornering yaw
+  rate, confirmed via the regression pass to never occur in normal racing
+  -- throttle is proportionally lifted and light braking applied, tapering
+  to zero additional intervention by ~3.4 rad/s. Deliberately leaves
+  `steerIn` untouched: an earlier variant that also reduced steering
+  authority while spinning made overall fleet damage *worse*, not better,
+  since it removed exactly the corrective authority
+  `CarConstants::yawCorrGain`'s feedback needs to recover the spin.
+
+  **Combined verification** (natural-start regression, same harness as the
+  original regression pass, track 0, `LHT_MAX_FRAMES=20000`): substepping
+  alone improved the baseline from 4/20 destroyed cars to 3/20. Adding the
+  spin-recovery throttle lift kept the same 3/20 destroyed count (car
+  `num=62`, `num=18`, `num=21` -- consistent across runs) but meaningfully
+  improved the rest of the field: 6 cars finish the run with **zero**
+  damage (`dmg=0.000`) and the remaining cars mostly sit in the 0.0-0.5
+  range, versus every car carrying some damage before. Native `ctest`:
+  27/27 passing, including a new `integrateYawDynamics()` substep-
+  convergence test. 4-track smoke test (`LHT_FORCE_RACE=1
+  LHT_HEADLESS_FAST=1`, 3000 frames): `wreckCount=0` on every track, no
+  instability.
+
+  **Deliberately not done**: the residual 3/20-destroyed count was not
+  chased further this pass -- those specific cars' failure mode wasn't
+  isolated beyond confirming it's not the same full-lock/high-speed pattern
+  finding #5 targeted (no `SUBSTEPDBG` lines fired at all in the final
+  verification run, meaning the narrow scenario this fix targeted no longer
+  occurs). `Cf`/`Cr`/`aeroBalanceF`/etc. retuning remains deferred, per the
+  original regression pass's own reasoning, now that the structural physics
+  bugs are resolved.

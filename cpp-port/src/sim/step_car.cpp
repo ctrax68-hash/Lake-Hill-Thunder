@@ -335,6 +335,25 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         }
     }
 
+    // Spin-recovery override: a real driver lifts off the throttle once the
+    // car is visibly out of control, rather than holding a fixed throttle
+    // command while spinning (the "avoid crash" racecraft behavior real
+    // racing-sim AI already models). c.r here is still last tick's yaw rate
+    // (this tick's integration hasn't run yet) -- an already-observed "am I
+    // currently spinning" signal, not a new planning heuristic. Only engages
+    // far beyond any legitimate cornering yaw rate (regression pass: normal
+    // racing at speed never exceeds ~1 rad/s; the pathological sustained-
+    // full-lock case reaches 3-4+ rad/s), so ordinary cornering is
+    // unaffected. Deliberately leaves steerIn untouched -- it's already the
+    // yaw-rate-error feedback's job (CarConstants::yawCorrGain) to correct
+    // the spin, and reducing steering authority on top of that made overall
+    // damage worse, not better, when tried.
+    if (!freeSpin && !c.isPlayer && std::abs(c.r) > 1.2) {
+        const double lift = std::max(0.0, 1.0 - (std::abs(c.r) - 1.2) / 2.0);
+        thr *= lift;
+        if (lift < 1.0) brk = std::max(brk, 0.3);
+    }
+
     // ---- shared physics tail (index.html:977-1109), applies to every branch ----
     c.thr += (thr - c.thr) * 0.28;
     c.brk += (brk - c.brk) * 0.4;
@@ -425,7 +444,6 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         c.fzRear = fz.rear;
 
         const double steerAngle = c.steer * CAR.maxSteerAngle;
-        const SlipAngles alpha = slipAngles(CAR, c.vy, c.r, vDyn, steerAngle);
 
         // Longitudinal-grip fraction already spent at each axle (RWD engine
         // force + brake-bias split between the axles) -- feeds the friction
@@ -437,35 +455,24 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         const double fxFracFront = std::max(-1.0, std::min(1.0, fxFront / (muEff * fz.front)));
         c.slipRatio = fxFracRear;
 
-        const double fyFront = axleLateralForce(CAR.cf, alpha.front, muEff, fz.front, fxFracFront);
-        const double fyRear = axleLateralForce(CAR.cr, alpha.rear, muEff, fz.rear, fxFracRear);
-
-        const double aF = CAR.wheelBase * (1 - CAR.weightDistF);
-        const double aR = CAR.wheelBase * CAR.weightDistF;
-        const double rDot = (aF * fyFront * std::cos(steerAngle) - aR * fyRear) / CAR.iz;
-        c.r += rDot * DT;
-        // Semi-implicit (symplectic) Euler: vyDot uses the just-updated `r`,
-        // not the pre-tick value -- a standard, cheap stability improvement
-        // for a coupled vy/r oscillator under a fixed explicit timestep
-        // (confirmed necessary via the regression pass: a lower CAR.iz meant
-        // to make yaw response snappier caused vy to diverge numerically,
-        // e.g. climbing past 1000 m/s, under plain forward Euler here).
-        const double vyDot = (fyFront * std::cos(steerAngle) + fyRear) / CAR.mass - vSafe * c.r;
-        c.vy += vyDot * DT;
+        // Regression-pass fix: vy/r/hdg integration now runs substepped
+        // inside integrateYawDynamics() (car.cpp) -- fixes a numerical
+        // divergence in this coupled oscillator at highway speed under
+        // sustained full-lock steering (see CarConstants::yawSubsteps).
+        const YawIntegrationResult yawInt = integrateYawDynamics(
+            CAR, c.vy, c.r, vDyn, vSafe, steerAngle, fz, muEff, fxFracFront, fxFracRear, DT, CAR.yawSubsteps);
+        c.vy = yawInt.vy;
+        c.r = yawInt.r;
+        c.hdg += yawInt.hdgDelta;
 
         // Mirrors the old model's two wear contributions: a steady rate
         // proportional to slip while cornering (equivalent to the old
-        // |yaw|*v term), plus an extra flat bump once an axle's demanded
-        // force actually got friction-ellipse-clamped -- the equivalent of
-        // the old model's `demand > cap` "past the grip limit" case.
-        const double slipMag = std::abs(alpha.front) + std::abs(alpha.rear);
-        c.wear = std::min(1.0, c.wear + slipMag * c.v * 0.0000004);
-        const double fyMaxFront = muEff * fz.front * std::sqrt(std::max(0.0, 1.0 - fxFracFront * fxFracFront));
-        const double fyMaxRear = muEff * fz.rear * std::sqrt(std::max(0.0, 1.0 - fxFracRear * fxFracRear));
-        const bool pastLimit = std::abs(fyFront) >= fyMaxFront * 0.999 || std::abs(fyRear) >= fyMaxRear * 0.999;
-        if (pastLimit) c.wear = std::min(1.0, c.wear + 0.00012);
-
-        c.hdg += c.r * DT;
+        // |yaw|*v term, now a time-weighted average across substeps), plus
+        // an extra flat bump once an axle's demanded force actually got
+        // friction-ellipse-clamped in ANY substep -- the equivalent of the
+        // old model's `demand > cap` "past the grip limit" case.
+        c.wear = std::min(1.0, c.wear + yawInt.slipMagAvg * c.v * 0.0000004);
+        if (yawInt.pastLimitAny) c.wear = std::min(1.0, c.wear + 0.00012);
     }
     c.vdir = c.hdg - wrapPi(std::atan2(c.vy, vSafe));
     c.x += std::cos(c.vdir) * c.v * DT;
