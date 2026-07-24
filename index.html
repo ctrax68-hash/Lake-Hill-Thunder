@@ -519,7 +519,12 @@ const S = {
   finishLaps:5, gwcState:'none', gwcAttempts:0, gwcMarkLap:-1,
   // Step 5: current weather condition (see WEATHER_PRESETS) -- re-picked
   // once per startRace(), independent of track selection.
-  weather:'clear'
+  weather:'clear',
+  // Step 6: crowd wave, triggered once at the halfway-lap broadcast beat
+  // (see S.halfMsg above) -- waveT counts up in real dt while waveActive,
+  // read by updateCrowdWave() to sweep a traveling highlight around the
+  // venue over WAVE_DURATION seconds.
+  waveActive:false, waveT:0
 };
 // Started at 3 per the original plan; empirical testing showed even a
 // halved wreck-roll probability still exhausts 3 attempts routinely --
@@ -1744,6 +1749,21 @@ let WORLD=null, WORLD_TEX=null, CARBUFS={};
 // crowd camera-flash sparkle spawner. Both reset with the world.
 let GROOVE_IDX=[], STAND_ZONES=[], lastRubberStep=-1;
 const RUBBER_COL = [0.075,0.082,0.10];
+// Step 6 (roadmap, crowd/stadium polish): CROWD_WAVE_IDX -- {start,s} per
+// crowd-tile quad (same "record the vertex-index start at build time,
+// rewrite the baked color attribute per frame" technique GROOVE_IDX already
+// established above), read by updateCrowdWave() to sweep a traveling
+// brightness pulse around the whole venue. PIT_CREW_IDX -- {start,idx} per
+// pit stall's crew-figure vertex range, read by updatePitCrewHighlight() to
+// brighten a stall's crew figures while a car is actually parked in box
+// (c.pit===2). JUMBO_ANCHOR/JUMBO_MESH: the Big Sable jumbotron's live-feed
+// numeric content is its own small standalone mesh (same "separate object,
+// not baked into the static world mesh" idea as FLAGMESH below), rebuilt
+// periodically from the live running order rather than a static ROSTER
+// snapshot baked once at track-build time. All reset with the world.
+let CROWD_WAVE_IDX=[], PIT_CREW_IDX=[];
+const PIT_CREW_VERTS_PER_STALL = 36; // 3 figures * 2 sides * 2 tris * 3 verts, fixed by addPitRoad()'s own loop
+let JUMBO_ANCHOR=null, JUMBO_MESH=null, jumboRefreshT=0;
 // animated flagman's flag: a small separate mesh at the flag stand (its own
 // draw call — the only one besides the world) whose texture row/column is
 // flipped in drawGL to wave green/yellow/checkered matching the race state
@@ -1817,6 +1837,7 @@ function addStand(B, sStart, sEnd, tiers, opts){
       const sA=crossPt(sa,latB,riseH), sB=crossPt(sb,latB,riseH);
       const sC=crossPt(sb,latT,hT), sD=crossPt(sa,latT,hT);
       if(t < opts.crowdTiers){                    // front tiers: crowd texture (Big Sable gets more)
+        CROWD_WAVE_IDX.push({ start: B.pos.length/3, s: (sa+sb)/2 });
         B.quadUV(sD,sC,sB,sA,
           [crowdUV[0],crowdUV[3]],[crowdUV[2],crowdUV[3]],[crowdUV[2],crowdUV[1]],[crowdUV[0],crowdUV[1]]);
       } else {                                    // upper tiers: flat swatch (fog hides banding)
@@ -1892,6 +1913,11 @@ function addPitRoad(B, pitOut, pitIn){
     // crew figures: billboard quads sampling the crew atlas tile, doubled
     // back-to-back (same technique as the flag panel) since the world mesh
     // is single-sided
+    // Step 6: record this stall's crew-figure vertex range so
+    // updatePitCrewHighlight() can brighten it live while a car (c.idx===idx)
+    // is actually parked in the box (c.pit===2) -- PIT_CREW_VERTS_PER_STALL
+    // is fixed by this loop's own shape (3 figures * 2 sides * 2 tris * 3 verts).
+    PIT_CREW_IDX.push({ start: B.pos.length/3, idx });
     const crewUV = atlasUV(ATLAS.crew);
     const cw3 = (crewUV[2]-crewUV[0])/3;
     for(let f=0; f<3; f++){
@@ -2142,17 +2168,17 @@ function buildWorld(){
     const JB_W = 14, JB_H = 8, baseH = 6;
     B.box(cx-0.4, 0, cz-0.4, cx+0.4, baseH, cz+0.4, COL.chrome);   // support pillar
     B.box(cx-JB_W/2, baseH, cz-1.0, cx+JB_W/2, baseH+JB_H, cz+1.0, [0.08,0.08,0.10]);  // screen bezel
-    // "leaderboard" rows, facing the frontstretch. No back-face culling in
-    // this scene, so the content is still visible (mirror-reversed) from the
-    // far side too — a real second mirrored panel would need each digit's
-    // internal shape re-authored, not just its position negated, so a single
-    // front-facing panel is the pragmatic choice here.
-    const rows = ROSTER.slice(0,5).map(r=>r.num);
-    rows.forEach((num,i)=>{
-      const rowY = baseH+JB_H*0.85 - i*1.3;
-      const put = (x,y) => [ cx + x, rowY + y, cz + 1.05 ];
-      addNumber(B, num, put, 4.2, 1.0, i===0 ? [0.95,0.85,0.1] : [0.85,0.9,0.95]);
-    });
+    // Step 6: the "leaderboard" numeric content used to be a static ROSTER
+    // snapshot baked directly into this same Builder pass -- now it's its
+    // own small standalone mesh (JUMBO_MESH, same "separate object rebuilt
+    // on demand" idea as FLAGMESH), rebuilt periodically from the live
+    // running order by refreshJumbotron() instead. JUMBO_ANCHOR just
+    // records where/how big that panel is. No back-face culling in this
+    // scene, so content is still visible (mirror-reversed) from the far
+    // side too -- a real second mirrored panel would need each digit's
+    // internal shape re-authored, not just its position negated, so a
+    // single front-facing panel is the pragmatic choice here.
+    JUMBO_ANCHOR = { cx, cz, baseH, JB_H };
   }
   // scattered infield billboards/haulers for depth — kept clear of the jumbotron
   for(let i=0;i<10;i++){
@@ -2197,6 +2223,32 @@ function addNumber(B, num, put, w, h, col){
     addDigitQuads(B, +ch, x, -h/2, dw, h, put, col);
     x += dw*1.22;
   }
+}
+// Step 6: jumbotron "feed" -- rebuilds JUMBO_MESH's numeric content from the
+// live running order (S.order, already maintained by tick()'s own sort)
+// instead of the static ROSTER snapshot the old baked-in-world-mesh version
+// showed. A small standalone mesh (same idea as FLAGMESH), rebuilt on demand
+// rather than every frame -- geometry rebuild cost is trivial at 5 rows of
+// digits, but there's no reason to redo it more often than the standings
+// can actually change (emitFX() below re-triggers this every ~2.5s during
+// green-flag racing, not every frame). No-op if this track has no jumbotron
+// (JUMBO_ANCHOR only gets set in buildWorld() when st.jumbotron is true).
+function refreshJumbotron(){
+  if(!JUMBO_ANCHOR) return;
+  if(JUMBO_MESH){ scene.remove(JUMBO_MESH); JUMBO_MESH = null; }
+  const { cx, cz, baseH, JB_H } = JUMBO_ANCHOR;
+  // before a race actually starts (menu/pre-grid), S.order is still empty --
+  // fall back to the first few roster entries so the panel isn't blank.
+  const rows = (S.order && S.order.length) ? S.order.slice(0,5).map(c=>c.num) : ROSTER.slice(0,5).map(r=>r.num);
+  const B2 = new Builder();
+  rows.forEach((num,i)=>{
+    const rowY = baseH+JB_H*0.85 - i*1.3;
+    const put = (x,y) => [ cx + x, rowY + y, cz + 1.05 ];
+    addNumber(B2, num, put, 4.2, 1.0, i===0 ? [0.95,0.85,0.1] : [0.85,0.9,0.95]);
+  });
+  JUMBO_MESH = B2.bake();
+  JUMBO_MESH.matrixAutoUpdate = false; // static between refreshes, no per-frame transform writes
+  scene.add(JUMBO_MESH);
 }
 
 /* =====================================================================
@@ -3111,6 +3163,13 @@ function spawnP(x,y,z, vx,vy,vz, life, size, col){
 function emitFX(dt){
   if(S.mode==='menuwait') return;
   const inMenu = S.mode==='menu';
+  // Step 6: jumbotron feed refresh -- every ~2.5s while a race is actually
+  // running, not every frame (rebuilding 5 rows of digit geometry is cheap
+  // but there's no reason to do it faster than standings can change).
+  if(S.mode==='race' || S.mode==='pace' || S.mode==='victory'){
+    jumboRefreshT -= dt;
+    if(jumboRefreshT <= 0){ jumboRefreshT = 2.5; refreshJumbotron(); }
+  }
   // crowd camera-flash sparkle: white flecks in the grandstands at the big
   // moments (green flag, one-to-go, final lap, victory). Render-side only —
   // reads S, spawns via the particle system's own rngP stream (already
@@ -3316,6 +3375,74 @@ function updateRain(dt){
     }
   }
   rainPts.geometry.attributes.position.needsUpdate = true;
+}
+// Step 6: crowd wave -- sweeps a traveling brightness pulse around the
+// venue's crowd-tile vertex colors (CROWD_WAVE_IDX, captured at build time
+// in addStand()) over WAVE_DURATION seconds of real dt, triggered once at
+// the halfway-lap broadcast beat (see S.halfMsg's own trigger). Crowd-tile
+// quads' baked vertex color is always white (Builder.prototype.triNUV
+// pushes (1,1,1,1) unconditionally for UV-textured tris), so the baseline
+// here is genuinely (1,1,1) -- multiplying it up during the pulse reads as
+// a bright flash passing through the stands, the same "MeshStandardMaterial
+// multiplies map-texel * vertex-color" mechanism GROOVE_IDX's rubber-in
+// effect above already relies on.
+const WAVE_DURATION = 9, WAVE_WIDTH = 45, WAVE_BOOST = 0.7;
+function updateCrowdWave(){
+  if(!WORLD || !CROWD_WAVE_IDX.length) return;
+  if(!S.waveActive) return;
+  S.waveT += FRAME_DT;
+  const colAttr = WORLD.geometry.attributes.color;
+  const arr = colAttr.array;
+  if(S.waveT > WAVE_DURATION){
+    // sweep finished -- reset every crowd tile back to baseline (1,1,1)
+    // rather than leaving whatever partial boost the last active frame
+    // happened to leave near s=0 (the tiles nearest the wrap-around point).
+    S.waveActive = false;
+    for(const q of CROWD_WAVE_IDX){
+      for(let v=0; v<6; v++){ const i=(q.start+v)*3; arr[i]=1; arr[i+1]=1; arr[i+2]=1; }
+    }
+    colAttr.needsUpdate = true;
+    return;
+  }
+  const total = TRACK.total;
+  const wavePos = (S.waveT/WAVE_DURATION) * total;
+  for(const q of CROWD_WAVE_IDX){
+    let d = wavePos - q.s;
+    d -= Math.round(d/total)*total;              // shortest signed distance, wrapped around the lap
+    const boost = 1 + WAVE_BOOST*Math.exp(-(d/WAVE_WIDTH)*(d/WAVE_WIDTH));
+    for(let v=0; v<6; v++){
+      const i = (q.start+v)*3;
+      arr[i] = boost; arr[i+1] = boost; arr[i+2] = boost;
+    }
+  }
+  colAttr.needsUpdate = true;
+}
+// Step 6: pit-crew highlight -- brightens a stall's 3 crew-figure billboards
+// (PIT_CREW_IDX, captured at build time in addPitRoad()) with a warm amber
+// tint while a car is actually parked in that box (c.pit===2), reading the
+// live c.idx<->stall correspondence addPitRoad()'s own comment documents
+// (stall idx === c.idx, same sStall formula as pitStallS()). Diffs against
+// the previous active-stall set so the color attribute only gets rewritten
+// when something actually changed, not every frame.
+const PIT_CREW_ACTIVE_COL = [1.5,1.15,0.55], PIT_CREW_IDLE_COL = [1,1,1];
+let lastPitCrewActive = '';
+function updatePitCrewHighlight(){
+  if(!WORLD || !PIT_CREW_IDX.length) return;
+  const activeIdx = new Set();
+  for(const c of S.cars) if(c.pit===2) activeIdx.add(c.idx);
+  const key = Array.from(activeIdx).sort().join(',');
+  if(key === lastPitCrewActive) return;
+  lastPitCrewActive = key;
+  const colAttr = WORLD.geometry.attributes.color;
+  const arr = colAttr.array;
+  for(const stall of PIT_CREW_IDX){
+    const col = activeIdx.has(stall.idx) ? PIT_CREW_ACTIVE_COL : PIT_CREW_IDLE_COL;
+    for(let v=0; v<PIT_CREW_VERTS_PER_STALL; v++){
+      const i = (stall.start+v)*3;
+      arr[i] = col[0]; arr[i+1] = col[1]; arr[i+2] = col[2];
+    }
+  }
+  colAttr.needsUpdate = true;
 }
 
 /* ---------- chase camera + broadcast presentation cameras ---------- */
@@ -3753,6 +3880,7 @@ function drawGL(){
     // old direct buildSkyTexture() call here was removed as redundant.
     scene.fog = new THREE.FogExp2(BASE_FOG_COLOR, BASE_FOG_DENSITY);
     applyWeather();
+    refreshJumbotron();
   }
   // animated flag: row = race state, column flips every ~400ms for the wave
   if(FLAGMESH){
@@ -3785,6 +3913,8 @@ function drawGL(){
       colAttr.needsUpdate = true;
     }
   }
+  updateCrowdWave();
+  updatePitCrewHighlight();
   updateCamera();
   // speed + draft FOV zoom, smoothed so it breathes instead of tracking
   // every per-tick speed wiggle. This is the ONLY camera.fov writer — the
@@ -4716,7 +4846,12 @@ function tick(){
       }
     }
     const pl = S.player.lap;
-    if(pl === Math.ceil(S.laps/2) && S.halfMsg!==1 && S.laps>=4){ S.halfMsg=1; S.msgTxt='HALFWAY — LAP '+pl+' OF '+S.laps; S.msgT=2.6; }
+    if(pl === Math.ceil(S.laps/2) && S.halfMsg!==1 && S.laps>=4){ S.halfMsg=1; S.msgTxt='HALFWAY — LAP '+pl+' OF '+S.laps; S.msgT=2.6;
+      // Step 6: the crowd does the wave at the same halfway beat -- a real
+      // broadcast moment (a lull mid-race), reusing this trigger's own
+      // once-per-race guard rather than adding a new RNG-gated timer.
+      S.waveActive = true; S.waveT = 0;
+    }
     if(pl === S.laps-1 && S.whiteMsg!==1){ S.whiteMsg=1; S.msgTxt='WHITE FLAG — FINAL LAP'; S.msgT=2.8; }
   }
   if(S.player.done && S.mode==='race'){
@@ -4750,6 +4885,7 @@ function startRace(){
   S.fastLap = 0; S.halfMsg = 0; S.whiteMsg = 0; S.msgT = 0; S.msgTxt = '';
   S.spotT = 0; S.spotTxt = ''; S.spotState = 'clear'; S.togoMsg = 0;
   S.fuelMsg = 0; S.tireMsg = 0; S.penaltyT = 0;
+  S.waveActive = false; S.waveT = 0;
   S.oneToGo = false; S.pitsOpen = true; S.cautionMaxSlot = -1;
   S.finishLaps = S.laps; S.gwcState = 'none'; S.gwcAttempts = 0; S.gwcMarkLap = -1;
   if(CAR_MAT_AMBER) CAR_MAT_AMBER.emissiveIntensity = 1.2;
@@ -4859,8 +4995,10 @@ function selectTrack(i){
   TRACK = buildTrack(TRACKS[trackIdx]);
   WORLD = null; WORLD_TEX = null; MMPTS = null;      // rebuilt lazily for the new geometry
   GROOVE_IDX = []; STAND_ZONES = []; lastRubberStep = -1;
+  CROWD_WAVE_IDX = []; PIT_CREW_IDX = []; JUMBO_ANCHOR = null; jumboRefreshT = 0; lastPitCrewActive = '';
   FLAG_POS = null;
   if(FLAGMESH){ scene.remove(FLAGMESH); FLAGMESH = null; }
+  if(JUMBO_MESH){ scene.remove(JUMBO_MESH); JUMBO_MESH = null; }
   document.getElementById('trkTog').textContent = 'TRACK: ' + TRACK.name;
   document.getElementById('trackSub').innerHTML = TRACK.name + ' &bull; ' + TRACK.sub;
   const wc = TRACK.theme.wall;
