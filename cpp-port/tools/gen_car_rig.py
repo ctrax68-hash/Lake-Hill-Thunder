@@ -1,29 +1,29 @@
 import struct, json, base64, math
 
-# Step 3 (PORT_PROGRESS.md, physics-driven car rig animation): generates a
-# placeholder car rig -- a box chassis + 4 box "wheels", each wheel a child
-# joint of the chassis root -- for wiring SkinnedMesh into the real renderer
-# before a real Unreal-authored rig exists (Step 2's mesh_import.h can only
-# import the first primitive of the first mesh, so chassis+wheels share one
-# vertex stream/material -- wheels sample the same livery texture as the
-# body, at a fixed UV point, rather than a separate material).
+# Roadmap Phase 5 / G1 (NASCAR-Thunder gap-analysis plan): replaces the
+# original box-chassis placeholder with a real cross-section loft -- a
+# sequence of (half-width, top-y, bottom-y) stations running nose-to-tail,
+# ribboned into quads -- so the car finally reads as a stock-car silhouette
+# (blunt nose/tail, fender shoulders, a greenhouse that steps in narrower and
+# up from the beltline, a roof plateau) instead of a single rectangular prism.
 #
-# Deliberate simplification: wheel joints are translation-only (no axle-
-# orientation rotation), so computeBonePalette()'s rotateX(spin) rotates
-# each wheel box around the chassis's own nose-tail axis, not the true
-# lateral axle axis. There's no strongly "correct" rolling axis for a box
-# to preserve visually anyway (a real Unreal rig would define each wheel
-# joint's own local frame with X aligned to the true axle, needing no
-# change to the animation code) -- this keeps the placeholder-generation
-# script simple (matches tests/fixtures/skinned_wheel_test.gltf's own
-# translation-only precedent) while still exercising the real skinning
-# math end to end.
+# The wheels are still simple boxes (add_box(), unchanged) -- the plan's own
+# G1 section calls this an acceptable short-term simplification, since the
+# skinning/animation code addresses each wheel purely by joint index and
+# doesn't care what shape is bound to it.
+#
+# Critically, the joint/skin structure is untouched: everything the loft
+# generates below is bound to joint 0 ("chassis"), translation-only IBM,
+# same as before -- wheel_animation.cpp/skinned_mesh.cpp need zero changes.
+# mesh_import.h's own "first primitive of first mesh" limit isn't hit either
+# -- this is still one mesh, one primitive, just with far more vertices.
 
 CAR_LEN = 5.08
 CAR_WID = 2.0
 WHEELBASE = 2.79
 WHEEL_RADIUS = 0.35
 TRACK_HALF = CAR_WID * 0.42  # slightly narrower than full body width
+HALF_LEN = CAR_LEN / 2.0
 
 positions = []
 normals = []
@@ -63,10 +63,94 @@ def add_box(cx, cy, cz, hx, hy, hz, joint_idx, top_livery_uv):
                          face_base, face_base + 2, face_base + 3])
     return base
 
-# Chassis (joint 0): sits from just above the wheel hubs up to a plausible
-# roof height.
-add_box(0.0, WHEEL_RADIUS * 1.3 + 0.45, 0.0, CAR_LEN / 2.0, 0.45, CAR_WID / 2.0,
-        joint_idx=0, top_livery_uv=True)
+def _sub(a, b):
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+def _cross(a, b):
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+def _dot(a, b):
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+def _norm(a):
+    l = math.sqrt(_dot(a, a))
+    return (a[0] / l, a[1] / l, a[2] / l) if l > 1e-9 else (0.0, 0.0, 0.0)
+
+def emit_quad(p0, p1, p2, p3, outward_hint, joint_idx=0):
+    """Appends one flat-shaded quad (2 triangles) to the chassis mesh.
+
+    `outward_hint` is a rough direction the face should point; the actual
+    normal is computed from the quad's own plane and the winding is flipped
+    if it points the wrong way, so callers don't have to hand-verify winding
+    order for every non-axis-aligned wall.
+
+    UV: a face is treated as "roof/hood/trunk deck" (get the nose-to-tail
+    livery band, same formula the old single-box roof face used) only when
+    its final normal points mostly up; every other face (sides, underbody,
+    end caps) samples the same flat body-color texel the placeholder always
+    used -- this stays a G1 mesh-only change, not a livery UV rework (that's
+    flagged in the plan as a separate follow-up).
+    """
+    n = _norm(_cross(_sub(p1, p0), _sub(p3, p0)))
+    if _dot(n, outward_hint) < 0:
+        p0, p1, p2, p3 = p0, p3, p2, p1
+        n = _norm(_cross(_sub(p1, p0), _sub(p3, p0)))
+    is_top = n[1] > 0.7
+    base = len(positions)
+    for p in (p0, p1, p2, p3):
+        positions.append(p)
+        normals.append(n)
+        if is_top:
+            u = 0.02 + (HALF_LEN - p[0]) / (2.0 * HALF_LEN) * 0.76
+            v = 0.5 + (0.20 if p[2] > 0 else (-0.20 if p[2] < 0 else 0.0))
+            uvs.append((u, v))
+        else:
+            uvs.append((0.4, 0.5))
+        joints0.append((joint_idx, 0, 0, 0))
+        weights0.append((1.0, 0.0, 0.0, 0.0))
+    indices.extend([base, base + 1, base + 2, base, base + 2, base + 3])
+
+# Chassis loft (joint 0): stations run nose(+X) to tail(-X) as
+# (x, halfWidthBottom, yBottom, halfWidthTop, yTop). Bottom stays a flat
+# undercarriage; top rises from hood height, steps narrower for the
+# greenhouse (cowl -> roof -> decklid), then back down to trunk/rear-fender
+# height -- the same nose/cowl/greenhouse/deck-station sequence the roadmap
+# plan calls for. Fender half-widths (1.08/1.10) are kept comfortably wider
+# than the wheel's own outer edge (TRACK_HALF + wheel half-width, ~1.05) so
+# the wheels sit visibly tucked under the body instead of poking through it.
+FLOOR_Y = 0.45
+CHASSIS_STATIONS = [
+    (HALF_LEN,        0.15, FLOOR_Y, 0.15, 0.55),  # nose tip / front fascia
+    (HALF_LEN - 0.49,  1.08, FLOOR_Y, 0.95, 0.74),  # front bumper -> hood start
+    (HALF_LEN - 1.04,  1.10, FLOOR_Y, 0.95, 0.80),  # front fender peak (over front wheel)
+    (HALF_LEN - 1.59,  0.92, FLOOR_Y, 0.60, 0.92),  # cowl / windshield base (steps in+up)
+    (HALF_LEN - 2.14,  0.92, FLOOR_Y, 0.56, 1.32),  # windshield top / roof front
+    (-(HALF_LEN - 2.14), 0.92, FLOOR_Y, 0.56, 1.32),  # roof rear (plateau)
+    (-(HALF_LEN - 1.59), 0.92, FLOOR_Y, 0.60, 0.92),  # rear window base / decklid start
+    (-(HALF_LEN - 1.04), 1.10, FLOOR_Y, 0.95, 0.78),  # rear fender peak (over rear wheel)
+    (-(HALF_LEN - 0.49), 1.08, FLOOR_Y, 0.95, 0.66),  # rear bumper / trunk
+    (-HALF_LEN,          0.15, FLOOR_Y, 0.15, 0.55),  # tail tip / rear fascia
+]
+
+def _corners(station):
+    x, bw, by, tw, ty = station
+    return {
+        "BR": (x, by, bw), "BL": (x, by, -bw),
+        "TR": (x, ty, tw), "TL": (x, ty, -tw),
+    }
+
+for i in range(len(CHASSIS_STATIONS) - 1):
+    c0 = _corners(CHASSIS_STATIONS[i])
+    c1 = _corners(CHASSIS_STATIONS[i + 1])
+    emit_quad(c0["BR"], c1["BR"], c1["TR"], c0["TR"], (0, 0, 1))   # right side wall
+    emit_quad(c0["BL"], c0["TL"], c1["TL"], c1["BL"], (0, 0, -1))  # left side wall
+    emit_quad(c0["TL"], c1["TL"], c1["TR"], c0["TR"], (0, 1, 0))   # top deck (hood/roof/decklid)
+    emit_quad(c0["BL"], c0["BR"], c1["BR"], c1["BL"], (0, -1, 0))  # underbody
+
+nose = _corners(CHASSIS_STATIONS[0])
+emit_quad(nose["BR"], nose["BL"], nose["TL"], nose["TR"], (1, 0, 0))   # nose cap
+tail = _corners(CHASSIS_STATIONS[-1])
+emit_quad(tail["BL"], tail["BR"], tail["TR"], tail["TL"], (-1, 0, 0))  # tail cap
 
 # Wheels (joints 1-4): FL, FR, RL, RR. Local X = nose(+)/tail(-) offset from
 # chassis origin; local Z = left(+)/right(-); local Y = wheel-radius (so the
@@ -197,9 +281,10 @@ with open("/tmp/car_rig_preview.gltf", "w") as f:
 assert ')"' not in json_text, "raw string delimiter collision, pick a longer delimiter"
 with open("../src/render/car_rig_data.h", "w") as f:
     f.write("#pragma once\n\n")
-    f.write("// Step 3 (PORT_PROGRESS.md, physics-driven car rig animation): a\n")
-    f.write("// placeholder car rig (box chassis + 4 box wheels, joints \"chassis\"/\n")
-    f.write("// \"wheel_FL\"/\"wheel_FR\"/\"wheel_RL\"/\"wheel_RR\"), generated by\n")
+    f.write("// Roadmap Phase 5 / G1 (NASCAR-Thunder gap-analysis plan): a\n")
+    f.write("// lofted car rig -- a real nose/cowl/greenhouse/deck silhouette for the\n")
+    f.write("// chassis (joint \"chassis\"), still-simplified box wheels (joints\n")
+    f.write("// \"wheel_FL\"/\"wheel_FR\"/\"wheel_RL\"/\"wheel_RR\") -- generated by\n")
     f.write("// tools/gen_car_rig.py -- NOT a real art asset. Embedded as a C++ string\n")
     f.write("// literal (matching this port's \"no external runtime assets\" convention\n")
     f.write("// -- every other texture/mesh in this renderer is procedurally generated\n")

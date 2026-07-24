@@ -4413,3 +4413,67 @@ elsewhere in the same run.
 
   This closes out the combined tire-model + Unreal-authored-animation
   plan's Step 4, and with it the whole 4-step plan.
+
+  **NASCAR-Thunder gap-analysis roadmap (new plan, this session)**: with
+  the C++ port confirmed as this project's real primary target (not the
+  JS/Three.js game, now treated as a design/code donor bank), wrote a
+  game-designer-style gap analysis comparing this port against PS2-era EA
+  Sports NASCAR Thunder -- 10 categories, a ranked phased roadmap (Phase 0
+  through Phase 10), and a deep-dive "Graphics Enhancement Deep Dive"
+  (G1-G6: car mesh, specular/fresnel shading, shadow mapping, FXAA/SSAO,
+  environment detail, damage visuals) covering exactly how to get the
+  visual fidelity up to (or past) Thunder's level. Each phase is meant to
+  get its own before-starting confirmation rather than being greenlit as a
+  block.
+
+  **Roadmap Phase 0 -- visible touch controls.** `touch_controls.h`'s own
+  header comment had said plainly "there is no visible on-screen button
+  drawn yet" since Phase 3a -- the steer/brake/gas/pit regions were
+  hit-tested by `main.cpp` but nothing was ever painted, so a touch/mouse
+  player had no visual cue where to tap (a live bug on the deployed site,
+  not just a gap). Added `src/render/touch_buttons.h/.cpp` (bordered quad
+  + centered dbgText label per region, via `ui_draw.h`'s existing
+  `pushQuad()`), matching `index.html`'s own CSS border colors exactly
+  (steer pair blue, brake red, gas yellow, pit orange). `drawHud()` grew
+  `windowW`/`windowH` params so it can call the same `computeTouchRegions()`
+  main.cpp already hit-tests against, so the drawn buttons can't drift out
+  of sync with what's actually clickable. Verified: native `ctest` 29/29;
+  WASM screenshot shows all 5 buttons correctly colored/labeled/positioned.
+
+  **Roadmap Phase 5 / G1 -- real car mesh.** Replaced `tools/
+  gen_car_rig.py`'s single box-chassis placeholder with a real cross-
+  section loft: 10 stations running nose-to-tail (front fascia -> front
+  fender -> cowl/windshield base -> roof front -> roof rear -> rear window
+  base -> rear fender -> rear fascia), each a trapezoid (independent
+  top/bottom half-width and height), ribboned into side/top/bottom quads
+  plus nose/tail end caps via a new `emit_quad()` helper that computes each
+  face's real flat normal from its own plane and auto-corrects winding
+  against a rough outward-direction hint (no more axis-aligned-only
+  normals). The greenhouse steps in narrower and up from the beltline
+  between the cowl and rear-window stations, giving the car an actual
+  nose/fender/cabin/deck silhouette instead of a rectangular prism.
+  Fender half-widths (1.08-1.10m) were sized to stay wider than the
+  wheels' own outer edge (`TRACK_HALF` + wheel half-width, ~1.05m) so the
+  wheels read as tucked under the body rather than poking through it.
+  Deliberately unchanged, per the plan's own scoping: the joint/skin
+  structure (5 joints, translation-only IBMs, `wheel_animation.cpp`/
+  `skinned_mesh.cpp` untouched), the wheels themselves (still simple boxes
+  via the existing `add_box()`), and `mesh_import.h`'s one-mesh/one-
+  primitive import limit (lifting it for separate glass/tire materials is
+  flagged as a follow-up, not required to ship a better silhouette). UV
+  mapping: only faces whose final normal points mostly up (the roof/hood/
+  trunk deck) get the nose-to-tail livery band the old single box-top face
+  used; every other face (sides, underbody, end caps) samples the same
+  flat body-color texel as before -- a mesh-only change, not a livery UV
+  rework.
+  **Verified**: native `ctest` 29/29 (including `mesh_import_test`/
+  `wheel_animation_test`, confirming the regenerated glTF still parses and
+  skins correctly); WASM build compiles and runs with zero new console/
+  page errors (a pre-existing `glDrawElementsInstanced` vertex-attribute-
+  type GL warning was confirmed present even on the menu screen, before
+  any car mesh renders at all -- unrelated to this change, not
+  investigated further here); headless native chase-camera screenshots
+  (via `xvfb-run` + `LHT_START_CHASE`/`LHT_SCREENSHOT`) show a real
+  nose/fender/greenhouse/roof silhouette in place of the old box, with
+  wheel/suspension animation still tracking correctly at each car corner,
+  including on a damaged car.
