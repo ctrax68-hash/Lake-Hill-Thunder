@@ -114,6 +114,14 @@ if(EMSCRIPTEN)
   # an unrelated bimg file even after this -msse4.2 strip.
 endif()
 
+# Step 2 (glTF skinned-mesh import pipeline): cgltf.h (MIT, single-header)
+# is already vendored inside bgfx's own tree for its (disabled) geometryc
+# tool -- reused directly here rather than vendoring a second copy under
+# this port's own third_party/. stb_image.h (used by texture_import.cpp) is
+# similarly already vendored as one of bimg's own 3rdparty dependencies.
+set(LHT_CGLTF_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bgfx.cmake/bgfx/3rdparty/cgltf)
+set(LHT_STB_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bgfx.cmake/bimg/3rdparty/stb)
+
 # Drivetrain upgrade: car.cpp now calls gearRpm() (src/render/gear_rpm.h/
 # .cpp, previously only a HUD/audio-side cosmetic helper) to shape engine
 # force, so it's part of the sim's own link closure now -- included here
@@ -166,17 +174,19 @@ if(EMSCRIPTEN)
      OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_lit.sc.bin.h
      OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_sky.sc.bin.h
      OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_textured_lit.sc.bin.h
-     OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/fs_grade_tonemap.sc.bin.h)
+     OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/fs_grade_tonemap.sc.bin.h
+     OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_skinned.sc.bin.h)
     message(FATAL_ERROR
       "Phase 7 web build reuses the native build's already-compiled shader "
       "headers (see this file's own comment) instead of cross-compiling "
       "shaderc -- run `cmake --build build` (the native target) at least "
       "once first so ${LHT_NATIVE_GENERATED_SHADERS} exists (Phase 5a added "
       "vs_lit/fs_lit, Phase 5c added vs_sky/fs_sky, Phase 5e added "
-      "vs_textured_lit/fs_textured_lit, and Phase 5h added "
+      "vs_textured_lit/fs_textured_lit, Phase 5h added "
       "fs_bloom_bright/fs_bloom_blur/fs_grade_tonemap (reusing vs_sky as "
-      "their vertex stage), so a stale native build missing any of those "
-      "will also hit this guard).")
+      "their vertex stage), and Step 2 (glTF skinned-mesh import) added "
+      "vs_skinned (reusing fs_textured_lit as its fragment stage), so a "
+      "stale native build missing any of those will also hit this guard).")
   endif()
   set(LHT_GENERATED_SHADERS_DIR ${LHT_NATIVE_GENERATED_SHADERS})
   add_custom_target(lht_shaders) # nothing to build, just a no-op dependency target
@@ -296,10 +306,25 @@ else()
     AS_HEADERS
     OUT_FILES_VAR LHT_FS_GRADE_TONEMAP_OUTPUTS
   )
+  # Step 2 (PORT_PROGRESS.md, glTF skinned-mesh import pipeline): vs_skinned
+  # -- GPU linear-blend skinning vertex stage, reusing fs_textured_lit.sc
+  # unchanged as its fragment stage (same v_normal/v_texcoord0 outputs, just
+  # sourced from skinned rather than static geometry) -- no new fragment
+  # shader needed.
+  bgfx_compile_shaders(
+    TYPE VERTEX
+    SHADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/vs_skinned.sc
+    VARYING_DEF ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/varying_skinned.def.sc
+    OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders
+    INCLUDE_DIRS ${LHT_SHADER_INCLUDE_DIRS}
+    AS_HEADERS
+    OUT_FILES_VAR LHT_VS_SKINNED_OUTPUTS
+  )
   add_custom_target(lht_shaders DEPENDS ${LHT_VS_FLAT_OUTPUTS} ${LHT_FS_FLAT_OUTPUTS}
     ${LHT_VS_LIT_OUTPUTS} ${LHT_FS_LIT_OUTPUTS} ${LHT_VS_SKY_OUTPUTS} ${LHT_FS_SKY_OUTPUTS}
     ${LHT_VS_TEXTURED_LIT_OUTPUTS} ${LHT_FS_TEXTURED_LIT_OUTPUTS}
-    ${LHT_FS_BLOOM_BRIGHT_OUTPUTS} ${LHT_FS_BLOOM_BLUR_OUTPUTS} ${LHT_FS_GRADE_TONEMAP_OUTPUTS})
+    ${LHT_FS_BLOOM_BRIGHT_OUTPUTS} ${LHT_FS_BLOOM_BLUR_OUTPUTS} ${LHT_FS_GRADE_TONEMAP_OUTPUTS}
+    ${LHT_VS_SKINNED_OUTPUTS})
   set(LHT_GENERATED_SHADERS_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders)
 endif()
 
@@ -322,12 +347,15 @@ add_executable(lht_port
   src/render/hud.cpp
   src/render/leaderboard.cpp
   src/render/livery.cpp
+  src/render/mesh_import.cpp
   src/render/minimap.cpp
   src/render/pylon_mesh.cpp
   src/render/renderer.cpp
+  src/render/skinned_mesh.cpp
   src/render/sky_texture.cpp
   src/render/stadium_mesh.cpp
   src/render/status_bars.cpp
+  src/render/texture_import.cpp
   src/render/track_surface.cpp
   src/render/ui_draw.cpp
   src/ui/menu.cpp
@@ -341,6 +369,8 @@ target_include_directories(lht_port PRIVATE
   third_party/bgfx.cmake/bgfx/include
   third_party/bgfx.cmake/bx/include
   ${LHT_GENERATED_SHADERS_DIR}
+  ${LHT_CGLTF_INCLUDE_DIR}
+  ${LHT_STB_INCLUDE_DIR}
 )
 
 # ---- Phase 7: WebAssembly/browser build (PORT_PROGRESS.md) ----
@@ -496,6 +526,16 @@ add_test(NAME speed_model_test COMMAND speed_model_test)
 add_executable(tire_model_test tests/tire_model_test.cpp src/sim/car.cpp src/sim/track.cpp
   src/render/gear_rpm.cpp)
 add_test(NAME tire_model_test COMMAND tire_model_test)
+
+# Step 2 (PORT_PROGRESS.md, glTF skinned-mesh import pipeline): mesh_import_test
+# exercises importGltfFromMemory()'s pure glTF/cgltf parsing, bgfx-free,
+# against a hand-authored fixture (tests/fixtures/skinned_wheel_test.gltf).
+# Reads that fixture by a repo-relative path, same WORKING_DIRECTORY pattern
+# already used by determinism_test for tests/fixtures/trace_synthetic.txt.
+add_executable(mesh_import_test tests/mesh_import_test.cpp src/render/mesh_import.cpp)
+target_include_directories(mesh_import_test PRIVATE ${LHT_CGLTF_INCLUDE_DIR})
+add_test(NAME mesh_import_test COMMAND mesh_import_test)
+set_tests_properties(mesh_import_test PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # touch_controls_test only needs SDL2's headers (SDL_Rect) for the region
 # math -- linked against SDL2::SDL2 for its include path the same way

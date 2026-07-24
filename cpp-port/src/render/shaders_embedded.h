@@ -72,6 +72,13 @@
 #include "glsl/fs_grade_tonemap.sc.bin.h"
 #include "essl/fs_grade_tonemap.sc.bin.h"
 
+// Step 2 (PORT_PROGRESS.md, glTF skinned-mesh import pipeline): vs_skinned,
+// GPU linear-blend skinning. Reuses fs_textured_lit (above) as its fragment
+// stage, so no new fs_* embed entries needed.
+#include "spirv/vs_skinned.sc.bin.h"
+#include "glsl/vs_skinned.sc.bin.h"
+#include "essl/vs_skinned.sc.bin.h"
+
 static const bgfx::EmbeddedShader s_embeddedShaders[] = {
     BGFX_EMBEDDED_SHADER(vs_flat),
     BGFX_EMBEDDED_SHADER(fs_flat),
@@ -84,5 +91,6 @@ static const bgfx::EmbeddedShader s_embeddedShaders[] = {
     BGFX_EMBEDDED_SHADER(fs_bloom_bright),
     BGFX_EMBEDDED_SHADER(fs_bloom_blur),
     BGFX_EMBEDDED_SHADER(fs_grade_tonemap),
+    BGFX_EMBEDDED_SHADER(vs_skinned),
     BGFX_EMBEDDED_SHADER_END()
 };
