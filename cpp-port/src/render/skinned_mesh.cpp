@@ -101,12 +101,12 @@ void SkinnedMesh::setBoneMatrices(const float* matrices4x4ColMajor, int jointCou
     if (n > 0) bgfx::setUniform(g_uBoneMatrices, matrices4x4ColMajor, (uint16_t)n);
 }
 
-void SkinnedMesh::draw(uint16_t view, const float* modelMatrix4x4ColMajor) const {
+void SkinnedMesh::draw(uint16_t view, const float* modelMatrix4x4ColMajor, bgfx::TextureHandle textureOverride) const {
     if (!isValid()) return;
     bgfx::setTransform(modelMatrix4x4ColMajor);
     bgfx::setVertexBuffer(0, vb_);
     bgfx::setIndexBuffer(ib_, 0, indexCount_);
-    bgfx::setTexture(0, g_sTexColor, texture_);
+    bgfx::setTexture(0, g_sTexColor, bgfx::isValid(textureOverride) ? textureOverride : texture_);
     // No BGFX_STATE_CULL_* -- matches renderer.cpp's own lit/textured-lit
     // draw state (see its renderFrame(), which applies no backface culling
     // anywhere either), rather than guessing this pipeline's winding-order

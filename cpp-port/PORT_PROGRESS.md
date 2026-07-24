@@ -4207,3 +4207,105 @@ elsewhere in the same run.
   rig once one exists; procedural per-frame joint-transform computation
   from live wheel-spin/suspension-load physics state
   (`tests/wheel_animation_test.cpp`).
+
+### Step 3: physics-driven car rig animation, wired into the real renderer
+
+  Replaces the flat 2D-textured car quad (`renderer.cpp`'s Phase 5f code)
+  with a real `SkinnedMesh` instance per car, its joints driven every frame
+  by that car's own live `Car::v`/`fzFront`/`fzRear` -- wheel spin is an
+  integral of angular velocity, suspension travel is proportional to
+  instantaneous axle load above the static rest split -- rather than a
+  baked glTF animation clip. Closes out the combined tire-model/Unreal-
+  animation plan's Step 3.
+
+  **Placeholder rig, not a real Unreal-authored asset (deliberate, logged
+  rather than silently assumed)**: `tools/gen_car_rig.py` generates a box
+  chassis + 4 box wheels (`CAR_LEN=5.08`/`CAR_WID=2.0`/`WHEELBASE=2.79`/
+  `WHEEL_RADIUS=0.35`, matching `CarConstants`), embedded as a C++ raw
+  string literal (`src/render/car_rig_data.h`'s `kCarRigGltfJson`) --
+  matching this project's "everything procedurally generated/embedded in
+  code, no runtime asset loading" convention (every other texture/mesh in
+  this renderer is built in C++, never loaded from disk). Wheel joints are
+  translation-only in their bind pose (no axle-orientation rotation), so
+  `computeBonePalette()`'s spin rotation turns each wheel box around the
+  chassis's nose-tail axis rather than the true lateral axle axis -- there's
+  no strongly "correct" rolling axis for a plain box to preserve visually,
+  and swapping in a real artist-authored rig later only needs that rig's own
+  joint-local axis convention, not any change to the animation code. The
+  single-primitive-per-mesh limitation already logged in Step 2 also still
+  applies here: chassis and all 4 wheels share one vertex stream/material,
+  so wheels sample the same livery texture as the body at a fixed UV point
+  (0.4, 0.5) rather than a separate tire/rim material.
+
+  **`src/render/wheel_animation.h`/`.cpp`** (bgfx-free, ctest-covered,
+  `tests/wheel_animation_test.cpp`): `computeWheelTransforms()` integrates
+  `omega = v / max(0.05, wheelRadius)` into a persistent per-wheel spin
+  angle (render-side state, `WheelAnimState`, NOT sim state -- it doesn't
+  belong in `Car`/`car.h` since it's a property of how the physics gets
+  *drawn*, not simulated) and derives a suspension offset per axle from
+  `clamp((axleFz*0.5 - restLoadPerAxle) * loadToTravel, -maxTravel,
+  maxTravel)`, using Step 1c's already suspension-lagged `Car::fzFront`/
+  `fzRear`. `computeBonePalette()` walks the rig's joint hierarchy (parent
+  chain from `mesh_import.h`'s `ImportedJoint` list), composing each wheel
+  joint's bind-local transform with an extra translate(0, suspOffset, 0) *
+  rotateX(spinAngle) before the usual `worldJoint = parentWorld * jointLocal`
+  / `skinMatrix = worldJoint * inverseBindMatrix` chain -- verified against
+  hand-derived expected matrix-vector products for both a suspension-only
+  and a spin-only case on a minimal 2-joint rig (same shape as Step 2's own
+  `skinned_wheel_test.gltf` fixture).
+
+  **`renderer.cpp`/`.h` wiring**: `Renderer::init()` parses
+  `kCarRigGltfJson` via `importGltfFromMemory()`, uploads it once via a new
+  `carMesh_` (`SkinnedMesh`) member, and caches the imported joint list plus
+  each `wheel_FL`/`FR`/`RL`/`RR` joint's index (resolved by name).
+  `Renderer::shutdown()` releases it via `carMesh_.destroy()`. The old
+  per-car `PosNormalUVVertex` transient-quad loop in `renderFrame()` is
+  replaced by: compute a real wall-clock `dt` (a new `wheelAnimLastTime_`/
+  `wheelAnimInitialized_` pair, updated unconditionally every frame so
+  wheels keep spinning in `TopDown` mode too, not just `Chase` --
+  `renderFrame()`'s call cadence isn't the sim's fixed `DT` tick, so this
+  needs its own elapsed-time clock, same idea as the existing
+  `chaseLastTime_` but not gated to one camera mode); per car, look up or
+  default-construct that car's `WheelAnimState` from a new
+  `carWheelAnim_` map (keyed by car number, same pattern as the existing
+  `carTextures_` cache -- a car's identity, not which track it's racing);
+  call `computeWheelTransforms()`/`computeBonePalette()`; upload the
+  resulting bone palette via `SkinnedMesh::setBoneMatrices()`; and draw with
+  a model matrix built from this file's own hand-rolled
+  `mat4Translate`/`mat4RotateY`/`mat4Mul` helpers (not `bx::mtx*` -- a quick
+  read of `bx`'s `mtxMul` left its row/column-major multiply-order
+  convention unclear, and this project already paid once, in Step 2, for
+  trusting an unverified attribute-type convention; reusing
+  `wheel_animation.cpp`'s own already-verified column-major convention here
+  avoids repeating that debugging cost). `mat4RotateY(-ch)` (not `+ch`) is
+  the derived formula that reproduces the old quad's exact world-space
+  rotation (`px = wx + lx·cos(ch) - ly·sin(ch)`, `py = wy + lx·sin(ch) +
+  ly·cos(ch)`, for the rig's local X = nose-tail / local Z = left-right, the
+  same axes the quad's `lx`/`ly` used) -- worked out algebraically rather
+  than by trial and error, then confirmed visually (below). Livery still
+  applies via `getOrBuildCarTexture()`, bound per-draw through
+  `SkinnedMesh::draw()`'s `textureOverride` parameter added this step.
+
+  **Verified**: native `ctest` 29/29 (new `wheel_animation_test`, added to
+  `CMakeLists.txt` alongside `wheel_animation.cpp` in `lht_port`'s own
+  source list). 4-track headless smoke test (`LHT_FORCE_RACE=1
+  LHT_HEADLESS_FAST=1`, 3000 frames): `wreckCount=0` on every track, same as
+  every prior step's baseline. Natural-start fleet-wide regression (track 0,
+  20000 frames): `wreckCount=0`, 2/20 cars at `dmg=1.000` -- at least as good
+  as Step 1c's documented 3/20 baseline, no regression from the new render
+  path (expected, since this step's only sim-adjacent code is render-side
+  state that's never read back by `src/sim/`).
+
+  **Visual verification (headless `xvfb-run` screenshot via the existing
+  `LHT_SCREENSHOT` mechanism, not a new debug hook)**: a `TopDown` shot
+  confirms the rig draws and textures without crashing across the whole
+  field. A `Chase`-mode shot (`LHT_START_CHASE=1`) of the stationary player
+  car at race start showed the rig filling most of the frame at a steep,
+  near-vertical tilt -- initially read as a possible orientation bug, so
+  checked directly: built the pre-Step-3 commit (`6ea5701`) and captured the
+  *same* scenario (same track, same frame count, `Chase` mode, stationary
+  player) with the old flat quad. It produced the identical framing and
+  tilt, confirming this is a pre-existing `Chase`-camera characteristic for
+  a car at `v=0` (out of scope for this step), not something the new rig's
+  model-matrix math introduced -- the derived `mat4RotateY(-ch)` formula
+  positions/orients the new rig exactly where the old quad used to be.

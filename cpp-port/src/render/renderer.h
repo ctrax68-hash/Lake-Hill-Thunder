@@ -15,11 +15,16 @@
 // suite (helmet/tower/blimp/victory/pit/caution-cam) remains deliberately
 // out of scope for Phase 5, deferred to a future session.
 
+#include "mesh_import.h"
+#include "skinned_mesh.h"
+#include "wheel_animation.h"
+
 #include "../sim/car.h"
 #include "../sim/race_state.h"
 #include "../sim/track.h"
 #include "../ui/menu.h"
 
+#include <array>
 #include <bgfx/bgfx.h>
 
 #include <chrono>
@@ -200,6 +205,31 @@ private:
     // at), only by shutdown().
     std::unordered_map<int, bgfx::TextureHandle> carTextures_;
     bgfx::TextureHandle getOrBuildCarTexture(const Car& car);
+
+    // Step 3 (PORT_PROGRESS.md, physics-driven car rig animation): replaces
+    // the flat textured car quad above with a real skinned rig -- one
+    // shared SkinnedMesh (car_rig_data.h's placeholder box-chassis-plus-4-
+    // wheels rig, parsed once in init()), drawn once per car with a
+    // per-car bone-matrix palette (wheel_animation.h, driven by that car's
+    // live Car::v/fzFront/fzRear) and that car's own livery texture
+    // (getOrBuildCarTexture(), unchanged).
+    SkinnedMesh carMesh_;
+    std::vector<ImportedJoint> carRigJoints_; // cached from the rig import, read every frame
+    // wheel_FL/FR/RL/RR's index into carRigJoints_, resolved once in init()
+    // by joint name; -1 for any wheel the rig doesn't have (defensive, not
+    // expected to ever be needed for the shipped rig).
+    std::array<int, 4> carWheelJointIndex_{-1, -1, -1, -1};
+    // Wheel spin is an integral of angular velocity -- real per-car render
+    // state that must persist across frames, keyed by car number like
+    // carTextures_ above (a car's identity, not which track it's racing).
+    std::unordered_map<int, WheelAnimState> carWheelAnim_;
+    // Wall-clock delta for wheel-spin integration -- renderFrame() may be
+    // called at a different cadence than the sim's own fixed DT tick (see
+    // main.cpp's accumulator loop), so this needs its own real elapsed-time
+    // clock, same idea as chaseLastTime_ above but updated unconditionally
+    // every frame (wheels keep spinning in TopDown camera mode too).
+    bool wheelAnimInitialized_ = false;
+    std::chrono::steady_clock::time_point wheelAnimLastTime_;
 
     // Phase 5h (PORT_PROGRESS.md): the bloom+grade+tonemap postprocess
     // chain. The sky/world views now render into `sceneFb_` (an offscreen

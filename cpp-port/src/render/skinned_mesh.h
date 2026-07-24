@@ -56,7 +56,12 @@ public:
     static void setBoneMatrices(const float* matrices4x4ColMajor, int jointCount);
 
     // Draws with the given world transform (column-major 4x4) into `view`.
-    void draw(uint16_t view, const float* modelMatrix4x4ColMajor) const;
+    // `textureOverride`, if valid, is bound instead of this instance's own
+    // texture_ -- Step 3's per-car livery use case: one shared SkinnedMesh
+    // (the car rig's geometry, uploaded once) drawn once per car, each with
+    // a different already-built livery texture (Renderer::getOrBuildCarTexture()).
+    void draw(uint16_t view, const float* modelMatrix4x4ColMajor,
+              bgfx::TextureHandle textureOverride = BGFX_INVALID_HANDLE) const;
 
 private:
     bgfx::VertexBufferHandle vb_ = BGFX_INVALID_HANDLE;

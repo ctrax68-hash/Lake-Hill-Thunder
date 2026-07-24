@@ -358,6 +358,7 @@ add_executable(lht_port
   src/render/texture_import.cpp
   src/render/track_surface.cpp
   src/render/ui_draw.cpp
+  src/render/wheel_animation.cpp
   src/ui/menu.cpp
   src/ui/results.cpp
   src/ui/touch_controls.cpp
@@ -536,6 +537,15 @@ add_executable(mesh_import_test tests/mesh_import_test.cpp src/render/mesh_impor
 target_include_directories(mesh_import_test PRIVATE ${LHT_CGLTF_INCLUDE_DIR})
 add_test(NAME mesh_import_test COMMAND mesh_import_test)
 set_tests_properties(mesh_import_test PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Step 3 (PORT_PROGRESS.md, physics-driven car rig animation): wheel_animation_test
+# exercises computeWheelTransforms()/computeBonePalette()'s pure joint-transform
+# math, bgfx-free -- links mesh_import.cpp only for the ImportedJoint type its
+# signature uses, same as skinned_mesh.h's own bgfx-free/bgfx-calling split.
+add_executable(wheel_animation_test tests/wheel_animation_test.cpp src/render/wheel_animation.cpp
+  src/render/mesh_import.cpp)
+target_include_directories(wheel_animation_test PRIVATE ${LHT_CGLTF_INCLUDE_DIR})
+add_test(NAME wheel_animation_test COMMAND wheel_animation_test)
 
 # touch_controls_test only needs SDL2's headers (SDL_Rect) for the region
 # math -- linked against SDL2::SDL2 for its include path the same way
