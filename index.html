@@ -516,7 +516,10 @@ const S = {
   // green-white-checkered: finishLaps is the EFFECTIVE final lap (grows
   // past S.laps during overtime); gwcState machine walks
   // 'none' -> 'watch' -> 'clean1' -> 'white' -> (arbitration ends the race)
-  finishLaps:5, gwcState:'none', gwcAttempts:0, gwcMarkLap:-1
+  finishLaps:5, gwcState:'none', gwcAttempts:0, gwcMarkLap:-1,
+  // Step 5: current weather condition (see WEATHER_PRESETS) -- re-picked
+  // once per startRace(), independent of track selection.
+  weather:'clear'
 };
 // Started at 3 per the original plan; empirical testing showed even a
 // halved wreck-roll probability still exhausts 3 attempts routinely --
@@ -3257,6 +3260,63 @@ function drawParticlesThree(){
     pts.geometry.attributes.aColor.needsUpdate = true;
   }
 }
+// Step 5 (cosmetic weather): a simple always-on-while-raining rain volume
+// around the camera. Reuses THREE.Points the same way smoke/sparks do
+// above (VIS-4/THREE-6), but as its own continuous batch, not tied to
+// PARTS' per-event age/life model -- rain is an ambient volume, not a
+// spawned/aged effect, so a plain THREE.PointsMaterial (no custom shader)
+// is enough; billboarding/exact per-vertex size isn't needed for tiny
+// uniform streak dots. Drops live in LOCAL space (a fixed box around the
+// origin); each frame the whole batch's position is retranslated to the
+// camera's current X/Z (Y left alone) so the volume always surrounds the
+// viewer without every drop needing camera-relative math individually.
+const RAIN_COUNT = 260, RAIN_RADIUS = 55, RAIN_HEIGHT = 42, RAIN_FALL = 38;
+let rainPts = null, rainActive = false;
+function ensureRain(){
+  if(rainPts) return;
+  if(!PARTICLE_TEX) PARTICLE_TEX = buildParticleSprite();
+  const geo = new THREE.BufferGeometry();
+  const arr = new Float32Array(RAIN_COUNT*3);
+  for(let i=0;i<RAIN_COUNT;i++){
+    arr[i*3]   = (rng2()-0.5)*RAIN_RADIUS*2;
+    arr[i*3+1] = rng2()*RAIN_HEIGHT - RAIN_HEIGHT*0.3;
+    arr[i*3+2] = (rng2()-0.5)*RAIN_RADIUS*2;
+  }
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3).setUsage(THREE.DynamicDrawUsage));
+  // NormalBlending, not Additive -- a near-white additive dot reads as
+  // invisible against this file's own light overcast/rain sky tint
+  // (additive blending can only ever brighten, and white-on-white doesn't
+  // brighten visibly); alpha blending shows up against both the bright sky
+  // and the darker track/car geometry regardless of background luminance.
+  // map:PARTICLE_TEX -- the same soft radial-gradient sprite the smoke/
+  // spark batches use (buildParticleSprite() above), so drops render as
+  // soft round dots instead of PointsMaterial's default hard-edged square.
+  const mat = new THREE.PointsMaterial({ color:0x8fa2b8, size:0.5, map:PARTICLE_TEX, transparent:true, opacity:0.6,
+    depthWrite:false, blending:THREE.NormalBlending, sizeAttenuation:true });
+  rainPts = new THREE.Points(geo, mat);
+  rainPts.frustumCulled = false;
+  rainPts.visible = false;
+  scene.add(rainPts);
+}
+function setRainActive(active){
+  ensureRain();
+  rainActive = active;
+  rainPts.visible = active;
+}
+function updateRain(dt){
+  if(!rainActive || !rainPts) return;
+  rainPts.position.set(camera.position.x, 0, camera.position.z);
+  const pos = rainPts.geometry.attributes.position.array;
+  for(let i=0;i<RAIN_COUNT;i++){
+    pos[i*3+1] -= RAIN_FALL*dt;
+    if(pos[i*3+1] < -RAIN_HEIGHT*0.3){
+      pos[i*3+1] = RAIN_HEIGHT*0.7;
+      pos[i*3]   = (rng2()-0.5)*RAIN_RADIUS*2;
+      pos[i*3+2] = (rng2()-0.5)*RAIN_RADIUS*2;
+    }
+  }
+  rainPts.geometry.attributes.position.needsUpdate = true;
+}
 
 /* ---------- chase camera + broadcast presentation cameras ---------- */
 const cam = { pos:null, look:null };
@@ -3507,6 +3567,36 @@ const ENV_PRESETS = {
   'dusk-lights':{ azimuth:265, elevation:6,  color:0xffc48a, intensity:2.2,
                   hemiSky:0x2a3c66, hemiGround:0x241f1a, hemiIntensity:1.15 }
 };
+// Step 5 (roadmap): cosmetic weather variety, independent of the per-track
+// ENV_PRESET above. Each preset still owns its venue's core "time of day"
+// identity (noon/hazy/sunset/dusk) -- weather instead MODULATES that base
+// via multipliers (dimmer + more desaturated under cloud cover), the same
+// "one config object, no per-track branching" convention ENV_PRESETS
+// itself established, rather than a second independent system that could
+// clash with a preset's own authored mood (e.g. Cedar Valley's crowdPalette
+// is explicitly tuned to match its 'sunset' preset -- replacing that preset
+// outright per-race would fight that existing art direction). Deliberately
+// cosmetic only: no grip/mu change anywhere in the sim, matching every
+// other "cosmetic" step in this file's own established scope discipline.
+const WEATHER_PRESETS = {
+  clear:    { label:'CLEAR',    weight:5, sunMul:1.00, hemiMul:1.00, fogMul:1.0, desat:0.00, rain:false },
+  overcast: { label:'OVERCAST', weight:2, sunMul:0.55, hemiMul:1.15, fogMul:1.7, desat:0.55, rain:false },
+  rain:     { label:'RAIN',     weight:1, sunMul:0.40, hemiMul:1.25, fogMul:2.4, desat:0.70, rain:true  }
+};
+const WEATHER_GRAY = [0.62,0.64,0.67]; // neutral overcast-gray blend target
+// matches this fog's own previously-inline literal values (0xb8cce6, 0.005)
+// -- named here so applyWeather() can scale/tint them per weather condition.
+const BASE_FOG_COLOR = 0xb8cce6, BASE_FOG_DENSITY = 0.005;
+function mixToward(rgb, target, amt){ return [0,1,2].map(i => rgb[i] + (target[i]-rgb[i])*amt); }
+// Weighted pick via rngR -- the existing "runtime events" RNG stream (qual
+// spread, spins), not a new one: weather is exactly that kind of
+// non-deterministic-but-not-AI event this stream already exists for.
+function pickWeather(){
+  const total = Object.values(WEATHER_PRESETS).reduce((a,w)=>a+w.weight, 0);
+  let r = rngR()*total;
+  for(const key in WEATHER_PRESETS){ r -= WEATHER_PRESETS[key].weight; if(r<=0) return key; }
+  return 'clear';
+}
 let envMap = null, sunLight = null, hemiLight = null, envAppliedFor = null;
 function ensureEnvMap(){
   if(envMap) return envMap;
@@ -3517,16 +3607,48 @@ function ensureEnvMap(){
   room.dispose();
   return envMap;
 }
-function applyEnvPreset(stadium){
+// Step 5: applyEnvPreset's replacement -- same job (sun/hemi from the
+// track's own ENV_PRESET), plus applying S.weather's multipliers on top,
+// plus the fog/sky/wet-track-tint/rain-particle side effects a weather
+// change also needs. Callable any time (guarded on sunLight/hemiLight
+// existing) since weather now changes on every startRace(), not just once
+// per track load like the old preset-only version did.
+function applyWeather(){
   scene.environment = ensureEnvMap();
+  if(!sunLight || !hemiLight) return;
+  const stadium = TRACK.stadium;
   const preset = ENV_PRESETS[stadium.env.preset] || ENV_PRESETS['noon-grass'];
+  const w = WEATHER_PRESETS[S.weather] || WEATHER_PRESETS.clear;
   const az = preset.azimuth*Math.PI/180, el = preset.elevation*Math.PI/180;
   sunLight.position.set(Math.cos(az)*Math.cos(el), Math.sin(el), Math.sin(az)*Math.cos(el));
-  sunLight.color.setHex(preset.color);
-  sunLight.intensity = preset.intensity;
+  // blend the sun color toward neutral gray as desat increases -- overcast
+  // skies scatter direct sunlight into diffuse cloud light, which reads as
+  // desaturated/whiter, not just dimmer.
+  const sunRGB = [((preset.color>>16)&255)/255, ((preset.color>>8)&255)/255, (preset.color&255)/255];
+  const sunMixed = mixToward(sunRGB, WEATHER_GRAY, w.desat);
+  sunLight.color.setRGB(sunMixed[0], sunMixed[1], sunMixed[2]);
+  sunLight.intensity = preset.intensity * w.sunMul;
   hemiLight.color.setHex(preset.hemiSky);
   hemiLight.groundColor.setHex(preset.hemiGround);
-  hemiLight.intensity = preset.hemiIntensity;
+  hemiLight.intensity = preset.hemiIntensity * w.hemiMul;
+  if(scene.fog){
+    const fogRGB = [((BASE_FOG_COLOR>>16)&255)/255, ((BASE_FOG_COLOR>>8)&255)/255, (BASE_FOG_COLOR&255)/255];
+    const fogMixed = mixToward(fogRGB, WEATHER_GRAY, w.desat);
+    scene.fog.color.setRGB(fogMixed[0], fogMixed[1], fogMixed[2]);
+    scene.fog.density = BASE_FOG_DENSITY * w.fogMul;
+  }
+  if(WORLD){
+    // wet-track look under rain: darken + cool-tint the world mesh's own
+    // multiply color, reversible, no geometry/texture regen -- purely
+    // cosmetic (no mu/grip change anywhere in the sim).
+    const wc = w.rain ? [0.72,0.76,0.82] : [1,1,1];
+    WORLD.material.color.setRGB(wc[0], wc[1], wc[2]);
+  }
+  const desatSky = c => mixToward(c, WEATHER_GRAY, w.desat*0.7);
+  const skyMod = { horizon: desatSky(stadium.sky.horizon), zenith: desatSky(stadium.sky.zenith), silhouette: stadium.sky.silhouette };
+  const sunPresetMod = Object.assign({}, preset, { intensity: preset.intensity*w.sunMul });
+  scene.background = buildSkyTexture(skyMod, sunPresetMod);
+  setRainActive(w.rain);
 }
 let placeholderLit = false;
 let SHADOW_GEO = null, SHADOW_MAT = null;
@@ -3611,8 +3733,6 @@ function drawGL(){
       }
       FLAGMESH.position.set(FLAG_POS[0], FLAG_POS[1], FLAG_POS[2]);
     }
-    scene.background = buildSkyTexture(TRACK.stadium.sky,
-      ENV_PRESETS[TRACK.stadium.env.preset] || ENV_PRESETS['noon-grass']);
     // Exponential fog, not linear: a chase cam spends most of its time
     // looking almost straight down-track, which puts long stretches of the
     // boundary wall/fence nearly edge-on to the camera simultaneously (real
@@ -3627,8 +3747,12 @@ function drawGL(){
     // 50 units from a normal chase distance) essentially untouched, and
     // still fully hides Cedar Valley's hill silhouette at its intended
     // ~1400-unit range same as before.
-    scene.fog = new THREE.FogExp2(0xb8cce6, 0.005);
-    applyEnvPreset(TRACK.stadium);
+    // BASE_FOG_COLOR/BASE_FOG_DENSITY are this fog's un-weathered baseline
+    // -- applyWeather() (Step 5) scales/tints both per weather condition,
+    // and also sets scene.background itself (weather-aware sky), so the
+    // old direct buildSkyTexture() call here was removed as redundant.
+    scene.fog = new THREE.FogExp2(BASE_FOG_COLOR, BASE_FOG_DENSITY);
+    applyWeather();
   }
   // animated flag: row = race state, column flips every ~400ms for the wave
   if(FLAGMESH){
@@ -3710,6 +3834,7 @@ function drawGL(){
   }
 
   drawParticlesThree();
+  updateRain(FRAME_DT);
 
   if(composer) composer.render(); else renderer.render(scene, camera);
 }
@@ -3941,7 +4066,17 @@ function drawHUD(){
   cx.fillStyle = THEME.yellow;
   sharpRect(lb.x,lb.y,lb.w,lb.headH); cx.fill();
   cx.fillStyle=THEME.black; cx.font=`bold ${12*s}px 'Arial Narrow',sans-serif`; cx.textAlign='left';
-  cx.fillText(S.flag==='yellow' ? 'CAUTION' : 'LAKE HILL 400', lb.x+8*s, lb.y+lb.headH/2+1);
+  // Step 5: under non-clear weather, alternate the header text with the
+  // weather label every few seconds -- same "swap the label in place"
+  // technique this row already uses for CAUTION, rather than cramming a
+  // second string into the same narrow row (tried first: a right-aligned
+  // chip collided directly against "LAKE HILL 400" with no gap at this
+  // panel's actual width).
+  const headerTxt = S.flag==='yellow' ? 'CAUTION'
+    : (S.weather!=='clear' && Math.floor(performance.now()/3000)%2===1)
+      ? (WEATHER_PRESETS[S.weather] || WEATHER_PRESETS.clear).label
+      : 'LAKE HILL 400';
+  cx.fillText(headerTxt, lb.x+8*s, lb.y+lb.headH/2+1);
   // broadcast-style: alternate names and intervals every few seconds
   const showGaps = S.mode==='race' && S.flag==='green' && Math.floor(S.t/5)%2===1;
   const lapEst = (S.order[0] && S.order[0].lastLapT) || TRACK.total/48;
@@ -4136,11 +4271,17 @@ function showResults(){
 
 /* ---------- main loop ---------- */
 let last=0, acc=0;
+// Step 5: real (non-fast-forwarded) per-frame dt, stashed here so
+// updateRain() -- called from inside drawGL(), not frame() -- can read it
+// without threading a new parameter through drawGL()'s own signature,
+// same idea as RALPHA below being a frame()-loop output read elsewhere.
+let FRAME_DT = 0.016;
 const CAUTION_FF_RATE = 8;   // sim-seconds per real second once a caution has run its opening beat
 function frame(ts){
   requestAnimationFrame(frame);
   if(!last){ last=ts; return; }
   let dt = Math.min(0.25, (ts-last)/1000); last=ts;
+  FRAME_DT = dt;
   if(S.mode==='race' || S.mode==='pace' || S.mode==='qual' || S.mode==='victory'){
     // fast-forward through the boring part of a caution: give the player a
     // couple of real seconds to register the yellow (S.yellowT still runs at
@@ -4612,6 +4753,11 @@ function startRace(){
   S.oneToGo = false; S.pitsOpen = true; S.cautionMaxSlot = -1;
   S.finishLaps = S.laps; S.gwcState = 'none'; S.gwcAttempts = 0; S.gwcMarkLap = -1;
   if(CAR_MAT_AMBER) CAR_MAT_AMBER.emissiveIntensity = 1.2;
+  // Step 5: re-roll weather every race (independent of track choice), then
+  // immediately re-apply lighting/fog/sky/wet-tint/rain so it's correct
+  // from the green flag, not just on the next track rebuild.
+  S.weather = pickWeather();
+  applyWeather();
   S.mode='pace';
 }
 function startQualifying(){
