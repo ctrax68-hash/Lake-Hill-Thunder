@@ -73,10 +73,23 @@
   // frame -- indistinguishable from "still loading" to whoever's holding
   // the device, and with no console visible on a phone there's no way to
   // learn why. This surfaces the actual reason on-screen instead.
+  // #lht-fatal is a fully opaque, full-viewport, higher-z-index overlay
+  // than #lht-log (see the CSS above) -- which means the moment this
+  // fires, it visually hides the exact trace lines that led up to the
+  // failure, even though they're still sitting in the DOM underneath. A
+  // real bug this exact scenario hit: an on-device abort() with the trace
+  // log gated behind ?debug=1 produced a screenshot with only the generic
+  // "native code called abort()" message and nothing else, since the
+  // log's own content was covered up rather than actually missing. Tail
+  // (not head) of the log, since the lines immediately before the crash
+  // are what matters, not the ones from page load.
   function lhtShowFatal(msg) {
     var el = document.getElementById('lht-fatal');
     if (el.style.display === 'block') return; // first error wins, don't overwrite it
-    el.textContent = 'Lake Hill Thunder failed to start:\n\n' + msg;
+    var log = lhtLogEl.textContent;
+    var logTail = log.length > 4000 ? '...(truncated)...\n' + log.slice(-4000) : log;
+    el.textContent = 'Lake Hill Thunder failed to start:\n\n' + msg +
+      (log ? '\n\n--- trace log ---\n' + logTail : '');
     el.style.display = 'block';
   }
 
