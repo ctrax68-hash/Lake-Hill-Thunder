@@ -66,7 +66,10 @@ struct LoopState {
     bool touchLeft = false, touchRight = false, touchGas = false, touchBrake = false;
     bool portrait = false;
     bool running = true;
-    bool chaseCam = false;
+    // Matches Renderer::cameraMode_'s own default (Chase, not TopDown --
+    // see renderer.h's comment) so the `c` key's first press actually
+    // toggles away from the default instead of redundantly re-selecting it.
+    bool chaseCam = true;
     int frame = 0;
     double simAcc = 0.0;
     Uint64 perfFreq = 0;
@@ -110,6 +113,15 @@ void togglePlayerPit(LoopState& S) {
     if (player && S.state.mode == "race" && !player->done && player->pit == 0) {
         player->pitReq = !player->pitReq;
     }
+}
+
+// Shared by the `c` key handler and the touch-accessible CAM button
+// (bC, added alongside the default-camera fix) -- both need the exact same
+// two-line toggle, so this is factored out rather than duplicated.
+void toggleChaseCam(LoopState& S) {
+    S.chaseCam = !S.chaseCam;
+    S.renderer.setCameraMode(S.chaseCam ? Renderer::CameraMode::Chase
+                                         : Renderer::CameraMode::TopDown);
 }
 
 // Mirrors JS's startRace() (index.html:4604-4614): gridStart() placement,
@@ -240,11 +252,7 @@ void mainLoopTick(void* argPtr) {
         if (ev.type == SDL_QUIT) S.running = false;
         if (ev.type == SDL_KEYDOWN) {
             if (ev.key.keysym.sym == SDLK_ESCAPE) S.running = false;
-            if (ev.key.keysym.sym == SDLK_c && !ev.key.repeat) {
-                S.chaseCam = !S.chaseCam;
-                S.renderer.setCameraMode(S.chaseCam ? Renderer::CameraMode::Chase
-                                                     : Renderer::CameraMode::TopDown);
-            }
+            if (ev.key.keysym.sym == SDLK_c && !ev.key.repeat) toggleChaseCam(S);
             // Debug-only: JS has no keyboard binding for pit at all (bP is
             // touch/click-only) -- desktop-testing convenience, same
             // rationale as LHT_FORCE_RACE/LHT_START_CHASE.
@@ -299,6 +307,10 @@ void mainLoopTick(void* argPtr) {
                 if (pointInRect(x, y, S.touchRegions.bG)) S.touchGas = true;
                 if (pointInRect(x, y, S.touchRegions.bB)) S.touchBrake = true;
                 if (pointInRect(x, y, S.touchRegions.bP)) togglePlayerPit(S);
+                // Touch/mobile-accessible equivalent of the desktop-only `c`
+                // key (added alongside the default-camera fix) -- a single
+                // toggle on press, same "click, not hold" precedent as bP.
+                if (pointInRect(x, y, S.touchRegions.bC)) toggleChaseCam(S);
             }
         }
         if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_LEFT) {
@@ -316,6 +328,10 @@ void mainLoopTick(void* argPtr) {
                 if (pointInRect(x, y, S.touchRegions.bG)) S.touchGas = true;
                 if (pointInRect(x, y, S.touchRegions.bB)) S.touchBrake = true;
                 if (pointInRect(x, y, S.touchRegions.bP)) togglePlayerPit(S);
+                // Touch/mobile-accessible equivalent of the desktop-only `c`
+                // key (added alongside the default-camera fix) -- a single
+                // toggle on press, same "click, not hold" precedent as bP.
+                if (pointInRect(x, y, S.touchRegions.bC)) toggleChaseCam(S);
             }
         }
         if (ev.type == SDL_FINGERUP) {

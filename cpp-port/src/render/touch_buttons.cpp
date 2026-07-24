@@ -46,4 +46,9 @@ void drawTouchButtons(const TouchRegions& regions, std::vector<PosColorVertex>& 
     drawButton(regions.bB, Theme::kRed, "BRAKE", uiOut);
     drawButton(regions.bG, Theme::kYellow, "GAS", uiOut);
     drawButton(regions.bP, Theme::kOrange, "PIT", uiOut);
+
+    // Camera-mode toggle: a neutral (non-drive-control) border color, since
+    // it isn't one of JS's own steer/brake/gas/pit colors -- mirrors JS's
+    // own CAM button being visually distinct from the drive controls too.
+    drawButton(regions.bC, Theme::kGraycool, "CAM", uiOut);
 }

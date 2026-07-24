@@ -106,7 +106,13 @@ public:
 
 private:
     int width_ = 0, height_ = 0;
-    CameraMode cameraMode_ = CameraMode::TopDown;
+    // Default is Chase, not TopDown: matches index.html's own default
+    // `camMode:'chase'` (index.html:607), and TopDown is a literal
+    // orthographic projection (see renderFrame()'s TopDown branch) -- zero
+    // perspective by construction, so it's the wrong first thing for a real
+    // visitor to see regardless of how good the car mesh/lighting/stadium
+    // work around it is.
+    CameraMode cameraMode_ = CameraMode::Chase;
     int chaseCarIdx_ = 0;
 
     // Set by setTrack(); needed by the chase camera's corner-lookahead bias

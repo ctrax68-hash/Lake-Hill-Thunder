@@ -4477,3 +4477,38 @@ elsewhere in the same run.
   nose/fender/greenhouse/roof silhouette in place of the old box, with
   wheel/suspension animation still tracking correctly at each car corner,
   including on a damaged car.
+
+  **Default-camera fix -- the live site was flat, not just the box car.**
+  After the G1 mesh shipped, the user reported the live site still "appears
+  flat and 2d -- flat oval track with 2d cars on top." Root cause, found by
+  reading `Renderer::renderFrame()`'s two camera branches directly:
+  `cameraMode_` defaulted to `CameraMode::TopDown` (`renderer.h`), and
+  TopDown's own implementation is a literal **orthographic** straight-down
+  projection (`bx::mtxOrtho`, `renderer.cpp`'s own comment: "a static
+  overview of the whole track"). Orthographic projection has zero
+  perspective by construction -- no car mesh, shading, or shadow work from
+  here on would ever read as 3D through it, which is exactly why every
+  screenshot taken so far (including this session's own G1 verification)
+  looked flat by default. `index.html:607` defaults to `camMode:'chase'`,
+  not top-down -- the C++ port's own perspective chase camera
+  (`renderer.cpp`'s `CameraMode::Chase` branch, a faithful port of that
+  same JS default, complete with banking lean/corner lookahead/two-rate
+  smoothing) was fully correct, just never selected by default.
+  Fixed: `cameraMode_`'s default flipped to `CameraMode::Chase`
+  (`renderer.h`); `main.cpp`'s `LoopState::chaseCam` initial value flipped
+  from `false` to `true` to match (so the `c` key's first press actually
+  toggles away from the new default instead of redundantly re-selecting
+  it); factored the `c` key's two-line toggle into a shared
+  `toggleChaseCam()` helper. Also added a touch/click-accessible camera
+  toggle (`TouchRegions::bC`, top-right corner, drawn via the existing
+  Roadmap-Phase-0 `touch_buttons.cpp` pattern) since the only way to reach
+  Chase/TopDown before this was the desktop-only `c` key -- mobile
+  visitors (this project's primary target platform) had no way to switch
+  cameras at all, mirroring JS's own always-visible "CAM: <mode>" button
+  that the C++ port had no equivalent of.
+  **Verified**: native `ctest` 29/29; WASM build + a genuinely fresh page
+  load (no env vars/query params, matching a real live-site visitor) shows
+  a real perspective chase view immediately after Start, not the flat
+  orthographic overview; tapping the new CAM button switches to TopDown
+  and back, confirmed via screenshot at each step; zero page errors
+  throughout.
