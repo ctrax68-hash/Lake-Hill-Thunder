@@ -4512,3 +4512,61 @@ elsewhere in the same run.
   orthographic overview; tapping the new CAM button switches to TopDown
   and back, confirmed via screenshot at each step; zero page errors
   throughout.
+
+  **The real reason none of this session's fixes ever reached the live
+  site.** After the camera fix above, the user refreshed the deployed site
+  and reported it still looked identical -- their screenshot showed the
+  exact same unconditional bgfx-trace debug overlay that was gated behind
+  `?debug=1` in an earlier session, i.e. something from *before* any of
+  today's four pushes. Root cause, confirmed against both the local repo
+  and the actual remote `main` branch (fetched
+  `raw.githubusercontent.com/.../cpp-port/web/sw.js` directly, bypassing
+  any local cache): `web/sw.js` is a cache-first service worker whose only
+  cache-busting mechanism is a hand-maintained `CACHE_NAME` constant, and
+  that constant had sat at `'lht-v4'` across every real feature deploy this
+  session (and, by the same mechanism, likely several sessions before). A
+  cache-first `fetch` handler means once a client's service worker is
+  installed, it serves whatever was cached the first time, forever --
+  browsers only re-check a service-worker *script* for byte differences on
+  their own throttled schedule, and only if the script's bytes actually
+  changed. Since `sw.js` itself had never been touched by any real feature
+  commit, an already-installed client had no trigger to ever notice
+  anything changed, no matter how many times the underlying deploy did.
+  This is not a new failure mode for this project -- PORT_PROGRESS.md
+  already has a prior incident of exactly this class ("Diagnose iOS Safari
+  black-screen bug" -> "Fix stale service-worker cache masking the
+  black-screen fix"), fixed at the time with a one-time manual
+  `CACHE_NAME` bump -- which is precisely why it recurred: nothing stopped
+  the next commit from being forgotten the same way.
+  **Fix, aimed at the class of bug, not just this instance**: renamed
+  `web/sw.js` -> `web/sw.js.in` (`CACHE_NAME = 'lht-@LHT_CACHE_VERSION@'`);
+  `CMakeLists.txt`'s Emscripten branch now runs `git rev-parse --short
+  HEAD` (falling back to a timestamp if `git` isn't available) and
+  `configure_file()`s the real `sw.js` into the build tree from that
+  template, so every `emcmake cmake -B build-web` -- which `pages.yml` runs
+  fresh on every deploy -- bakes in the commit actually being built. The
+  existing Phase 7b POST_BUILD staging step now sources `sw.js` from the
+  generated build-tree path instead of `web/` directly; `manifest.json`/
+  `icons/` are untouched. The generated file is deliberately not written
+  back into the tracked source tree or committed (unlike
+  `tools/gen_car_rig.py`'s output) -- the version string is only meaningful
+  for the commit currently being built, so baking it into a tracked file
+  would just be commit noise every push. The cache-first strategy itself
+  is untouched -- it was never the wrong choice for an installable
+  offline-capable PWA, only the versioning meant to invalidate it was
+  never actually real.
+  **Verified**: `emcmake cmake -B build-web` locally, confirmed the
+  generated `build-web/sw.js`'s `CACHE_NAME` really does contain the
+  current commit's short SHA (`lht-80be76d`, not a static string); native
+  `ctest` 29/29 (a CMake-only change, confirmed zero regression elsewhere);
+  a cold Playwright context (no prior service-worker/cache state,
+  simulating a first-ever visit) against the locally built
+  `lht_port.html` confirmed the resulting `caches.keys()` is exactly
+  `["lht-80be76d"]` -- direct proof the versioned name is what actually
+  gets created, not just what the template says -- with zero page errors.
+  Told the user their specific device will likely need one real hard
+  reset (fully closing the tab/app, or clearing site data) rather than a
+  plain pull-to-refresh, since their *currently installed* service worker
+  is the same stale one that caused this and won't necessarily notice the
+  new `sw.js` bytes on its own schedule -- every deploy after this fix
+  should update itself automatically without that.

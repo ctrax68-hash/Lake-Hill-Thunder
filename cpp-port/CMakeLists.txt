@@ -399,6 +399,33 @@ if(EMSCRIPTEN)
     "--shell-file=${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html"
   )
 
+  # Service-worker cache-busting: bakes the currently-checked-out commit's
+  # short SHA into sw.js's CACHE_NAME (see web/sw.js.in) so every real
+  # deploy is automatically cache-busting -- a live-site bug this project
+  # hit more than once was a hand-maintained CACHE_NAME string sitting
+  # unchanged across several real feature deploys, so a browser with an
+  # already-installed service worker (whose fetch handler is cache-first)
+  # never noticed anything changed and kept serving its original cached
+  # shell indefinitely, no matter how many times the underlying deploy
+  # actually changed. Falls back to a timestamp if `git` isn't available
+  # (e.g. a source tarball with no .git) rather than failing the build.
+  execute_process(
+    COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE LHT_CACHE_VERSION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE LHT_GIT_RESULT
+  )
+  if(NOT LHT_GIT_RESULT EQUAL 0 OR LHT_CACHE_VERSION STREQUAL "")
+    string(TIMESTAMP LHT_CACHE_VERSION "%Y%m%d%H%M%S")
+  endif()
+  # Written into the build tree, not back into web/ -- unlike
+  # tools/gen_car_rig.py's committed output, this value is only meaningful
+  # for the commit currently being built, so baking it into a tracked file
+  # would just be pointless commit noise every push.
+  configure_file(${CMAKE_CURRENT_SOURCE_DIR}/web/sw.js.in
+                  ${CMAKE_CURRENT_BINARY_DIR}/generated_sw/sw.js @ONLY)
+
   # ---- Phase 7b: PWA installability wrapper (PORT_PROGRESS.md) ----
   # emcc's own output mechanism only ever produces lht_port.html/.js/.wasm --
   # there's no existing static-asset-copy step in this file to piggyback on,
@@ -409,7 +436,7 @@ if(EMSCRIPTEN)
   add_custom_command(TARGET lht_port POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_CURRENT_SOURCE_DIR}/web/manifest.json
-            ${CMAKE_CURRENT_SOURCE_DIR}/web/sw.js
+            ${CMAKE_CURRENT_BINARY_DIR}/generated_sw/sw.js
             $<TARGET_FILE_DIR:lht_port>
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_CURRENT_SOURCE_DIR}/web/icons
