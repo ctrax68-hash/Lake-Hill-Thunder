@@ -140,14 +140,21 @@ async function main() {
   console.log(`Navigating to ${url} ...`);
   await page.goto(url, { waitUntil: 'load' });
 
-  // Phase 7b: service worker registration check.
+  // Phase 7b: service worker registration check. `navigator.serviceWorker.ready`
+  // never rejects on its own -- if registration silently never completes
+  // (seen in this sandbox's headless Chromium), it hangs forever with no
+  // signal. Race it against a fixed timeout so a stuck/failed registration
+  // is reported as a failure instead of hanging the whole script.
   let swResult;
   try {
-    swResult = await page.evaluate(async () => {
-      if (!('serviceWorker' in navigator)) return { ok: false, reason: 'serviceWorker not in navigator' };
-      const reg = await navigator.serviceWorker.ready;
-      return { ok: true, scope: reg.scope };
-    });
+    swResult = await Promise.race([
+      page.evaluate(async () => {
+        if (!('serviceWorker' in navigator)) return { ok: false, reason: 'serviceWorker not in navigator' };
+        const reg = await navigator.serviceWorker.ready;
+        return { ok: true, scope: reg.scope };
+      }),
+      new Promise((resolve) => setTimeout(() => resolve({ ok: false, reason: 'timed out after 10s' }), 10000)),
+    ]);
   } catch (e) {
     swResult = { ok: false, reason: String(e) };
   }

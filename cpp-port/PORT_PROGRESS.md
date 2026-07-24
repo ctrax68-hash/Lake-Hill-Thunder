@@ -4309,3 +4309,107 @@ elsewhere in the same run.
   a car at `v=0` (out of scope for this step), not something the new rig's
   model-matrix math introduced -- the derived `mat4RotateY(-ch)` formula
   positions/orients the new rig exactly where the old quad used to be.
+
+### Step 4: full verification sweep (commit `14b7192` and after)
+
+  Repeats every check this session's own established discipline calls for,
+  now with the complete Step 1/1b/1c/2/3 stack in place together for the
+  first time -- tire model, drivetrain/suspension, glTF import, and the
+  physics-driven rig all running as one build, not verified separately.
+
+  **Native `ctest`**: 29/29 (unchanged from Step 3's own count -- Step 4
+  added no new sources/tests, only re-ran the existing suite).
+
+  **4-track headless smoke test** (`LHT_FORCE_RACE=1 LHT_HEADLESS_FAST=1
+  LHT_MAX_FRAMES=3000`): `wreckCount=0` on all 4 tracks, matching every
+  prior step's baseline, re-confirmed a second time on the final committed
+  state (not just the pre-commit working tree).
+
+  **Natural-start fleet regression** (track 0, `LHT_NATURAL_START=1
+  LHT_MAX_FRAMES=20000`): `wreckCount=0`, 2/20 destroyed -- same result as
+  Step 3's own regression pass, confirming nothing shifted between that
+  commit and this verification pass.
+
+  **End-to-end suspension/spin verification (temporary debug hook, added
+  and removed within this pass -- no diff left behind, confirmed via `git
+  status` after)**: the placeholder rig's wheels are plain boxes with a
+  square cross-section, so a *visual* "does the wheel look like it's
+  spinning" screenshot check is fundamentally uninformative -- a square
+  box viewed from any angle looks identical every 90 degrees of rotation.
+  Instead, added a one-line env-var-gated print of `(v, fzFront, fzRear,
+  spinAngle, suspFront, suspRear)` inside `renderFrame()`'s car loop,
+  ran a real forced race for one car, and inspected the trace directly:
+  `spinAngle` increases monotonically and smoothly with `v` exactly as
+  `computeWheelTransforms()`'s integration should (already unit-tested in
+  isolation, this confirms it also behaves correctly wired into the real
+  per-frame render loop against live sim state). More tellingly, a hard
+  braking event partway through produced a textbook forward-weight-transfer
+  signature: `fzFront` jumped to 8867 / `fzRear` dropped to 5869 for one
+  tick, and `suspFront` swung from negative (front riding high under
+  acceleration) to `+0.0755` while `suspRear` swung to `-0.0744` in the
+  same tick -- the suspension model responding to a real, live braking
+  event, not just the synthetic step inputs `tire_model_test.cpp` already
+  covers. Deleted the hook immediately after (`git status` confirms
+  `renderer.cpp` has zero diff from the Step 3 commit).
+
+  **Headless screenshots** (`LHT_SCREENSHOT`, `TopDown` and
+  `LHT_START_CHASE=1`): field renders without crashing, rig geometry and
+  livery texture both visible, matching Step 3's own screenshot findings --
+  no new visual regressions from re-running against the final committed
+  state.
+
+  **WASM rebuild + Playwright check** (`emcmake`/`emmake` against
+  `build-web`, `tests/wasm_verify.js`): the full `lht_port` source list
+  (including `wheel_animation.cpp`, `mesh_import.cpp`, `skinned_mesh.cpp`)
+  compiles clean under Emscripten. Running the existing Playwright harness
+  surfaced a real, pre-existing bug in the *harness itself*, unrelated to
+  Step 3's own code: `await navigator.serviceWorker.ready` (Phase 7b's own
+  SW-ready check) has no timeout guard, and hung indefinitely rather than
+  failing when the service worker didn't reach ready in this container's
+  headless Chromium -- confirmed via `ps` showing the browser process
+  still pinned at continuous CPU after 45+ minutes with no forward
+  progress. Fixed by racing that check against a 10s timeout
+  (`Promise.race`), so a stuck/failed registration now reports as a
+  failure instead of hanging the whole script forever -- a necessary fix
+  to make this step's own verification possible, not scope creep.
+  With that fix, the harness completed and confirmed: manifest.json and
+  all 3 icon files fetch and validate correctly, the page navigates and
+  loads with **zero console errors and zero page errors**, and screenshots
+  captured across the full menu -> click-start -> race -> forced-done ->
+  results -> back-to-menu -> second-race flow (`wasm_menu.png`,
+  `wasm_shot1.png`/`wasm_shot2.png`, `wasm_results.png`,
+  `wasm_menu_again.png`, `wasm_second_race.png`) all show a correctly
+  rendered scene -- the race screenshots show the field, HUD, minimap, and
+  leaderboard all rendering identically to the native build, confirming
+  `bimg`/skinning/the new rig all work under WebAssembly too, not just
+  natively.
+
+  **New finding, logged but explicitly not fixed this pass (out of
+  scope)**: the service worker itself never actually registers within this
+  container's headless run (`navigator.serviceWorker.getRegistrations()`
+  returns empty a few seconds after load), even though `shell.html`'s
+  unconditional, unguarded `navigator.serviceWorker.register('sw.js')` call
+  is confirmed present and unconditionally reached. Registering manually
+  via `page.evaluate()` *after* the page has fully settled succeeds
+  immediately (`{ok: true, installing: true}`), which rules out a
+  fundamental environment block (secure-context/feature-detection all
+  checked out fine: `isSecureContext: true`, `'serviceWorker' in
+  navigator: true`) and points instead at a startup-timing interaction
+  between Emscripten's module bootstrap and the very-early inline
+  registration call in `shell.html`. This is a Phase 7b (PWA
+  installability) concern, not a Step 1-4 (tire model/rig animation)
+  concern -- shell.html/sw.js were untouched by this entire combined plan
+  -- so it's recorded here as a known gap for a future PWA-focused pass
+  rather than investigated further under this step's own scope.
+
+  **Verified**: native `ctest` 29/29; 4-track smoke test clean; natural-
+  start regression unchanged (`wreckCount=0`, 2/20 destroyed); live
+  suspension/spin response confirmed against real per-tick sim state; WASM
+  build compiles and runs cleanly (zero console/page errors across the
+  full UI flow); one real pre-existing test-harness bug found and fixed
+  (SW-ready hang -> bounded timeout); one real pre-existing product bug
+  found and logged, not fixed (SW never actually registers in this
+  container) as a distinct, out-of-scope Phase 7b follow-up.
+
+  This closes out the combined tire-model + Unreal-authored-animation
+  plan's Step 4, and with it the whole 4-step plan.
