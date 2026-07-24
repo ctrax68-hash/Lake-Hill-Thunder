@@ -199,6 +199,22 @@
 <button id="camBtn" class="ctl" style="display:none;
   top:calc(var(--ctlGap) + var(--safeT)); right:calc(var(--ctlGap) + var(--safeR));
   width:72px; height:32px; font-size:11px; letter-spacing:0.5px;">CAM</button>
+<!-- Step 7 (pit strategy depth): stacked below CAM -- pick which services
+     the NEXT stop performs before requesting it with PIT. Each defaults
+     pressed (full service, matching every prior version's only behavior);
+     un-pressing one skips that service and shortens the stop (see
+     stepCar()'s c.pit===2 branch). Only editable while P.pit===0 (same
+     "can't change your mind mid-stop" rule the PIT button's own click
+     handler already enforces). -->
+<button id="svcTire" class="ctl pressed" style="display:none;
+  top:calc(var(--ctlGap) + var(--safeT) + 40px); right:calc(var(--ctlGap) + var(--safeR));
+  width:72px; height:24px; font-size:9px; letter-spacing:0.5px;">TIRES</button>
+<button id="svcFuel" class="ctl pressed" style="display:none;
+  top:calc(var(--ctlGap) + var(--safeT) + 68px); right:calc(var(--ctlGap) + var(--safeR));
+  width:72px; height:24px; font-size:9px; letter-spacing:0.5px;">FUEL</button>
+<button id="svcRepair" class="ctl pressed" style="display:none;
+  top:calc(var(--ctlGap) + var(--safeT) + 96px); right:calc(var(--ctlGap) + var(--safeR));
+  width:72px; height:24px; font-size:9px; letter-spacing:0.5px;">REPAIR</button>
 
 <div id="rotate"><div class="phone"></div><p>ROTATE YOUR PHONE</p></div>
 
@@ -494,6 +510,12 @@ function makeCar(isPlayer, idx){
     pitch:0,
     spinT:0, spinDir:1, spinCd:0,
     pit:0, pitT:0, pitReq:false,
+    // Step 7 (roadmap, pit strategy depth): which services the next stop
+    // actually performs -- player-toggleable via the svcTire/svcFuel/
+    // svcRepair HUD buttons (AI cars never touch these, so `!==false`
+    // checks in stepCar() below treat their permanently-true default as
+    // "do everything", identical to this game's pre-Step-7 behavior).
+    pitTires:true, pitFuel:true, pitRepair:true,
     fuel:1, dmg:0, out:false,
     cautionSlot:-1, gridSlot:-1, gridLane:0,
     progHist:[],    // rolling {t,prog} samples for the live leaderboard gap (see gapTimeAt())
@@ -754,11 +776,28 @@ function stepCar(c){
       vT = Math.min(22, Math.max(0, ds*0.35));
       if(ds < 2.0 && c.v < 0.8){
         c.pit=2;
-        c.pitT = 4 + (c.fuel<0.3 ? 2 : 0) + (c.dmg>0.3 ? 3 : 0);   // tires + fuel fill + repairs
+        // Step 7: pitTires/pitFuel/pitRepair default true (AI never sets
+        // them, so `!==false` always holds for AI -- this formula reduces
+        // to the exact old "4 + (fuel<0.3?2:0) + (dmg>0.3?3:0)" whenever
+        // all three are true, so AI stop duration/behavior is unchanged).
+        // The old flat 4s base is split into a 1.5s unconditional overhead
+        // (pulling in/out, crew touching the car) + a 2.5s tire change that
+        // a player choosing NOT to change tires can now skip outright --
+        // the actual "gas and go" strategy trade-off this step adds.
+        let pitT = 1.5;
+        if(c.pitTires!==false) pitT += 2.5;
+        if(c.pitFuel!==false && c.fuel<0.3) pitT += 2;
+        if(c.pitRepair!==false && c.dmg>0.3) pitT += 3;
+        c.pitT = pitT;
       }
     } else if(c.pit===2){
       vT = 0; c.pitT -= DT;
-      if(c.pitT<=0){ c.wear=0; c.fuel=1; c.dmg=Math.max(0, c.dmg-0.5); c.blown=false; c.pit=3; }
+      if(c.pitT<=0){
+        if(c.pitTires!==false) c.wear=0;
+        if(c.pitFuel!==false) c.fuel=1;
+        if(c.pitRepair!==false) c.dmg=Math.max(0, c.dmg-0.5);
+        c.blown=false; c.pit=3;
+      }
     } else if(c.pit===4){
       // drive-through penalty: pit-road speed the whole lane, no stop
       vT = 22;
@@ -4183,6 +4222,7 @@ function drawHUD(){
   cx.clearRect(0,0,W,H);
   refreshPitBtn();
   refreshCamBtn();
+  refreshSvcButtons();
   if(S.mode==='menu' || S.mode==='menuwait') return;
   const P = S.player;
   cx.textBaseline = 'middle';
@@ -4954,6 +4994,29 @@ function refreshPitBtn(){
   const show = S.mode==='race' && P && !P.done;
   bPitEl.style.display = show ? 'flex' : 'none';
   if(show) bPitEl.classList.toggle('pressed', !!(P.pitReq || P.pit));
+}
+// Step 7: pit-service choice toggles -- TIRES/FUEL/REPAIR, each defaulting
+// pressed (full service). Only actionable while P.pit===0, same rule the
+// PIT button's own click handler already enforces (once a stop is armed/
+// underway, the plan is locked in).
+const SVC_BUTTONS = [['svcTire','pitTires'], ['svcFuel','pitFuel'], ['svcRepair','pitRepair']];
+for(const [id, field] of SVC_BUTTONS){
+  const el = document.getElementById(id);
+  el.addEventListener('click', ()=>{
+    const P = S.player;
+    if(!P || S.mode!=='race' || P.done || P.pit!==0) return;
+    P[field] = !P[field];
+    el.classList.toggle('pressed', P[field]);
+  });
+}
+function refreshSvcButtons(){
+  const P = S.player;
+  const show = S.mode==='race' && P && !P.done;
+  for(const [id, field] of SVC_BUTTONS){
+    const el = document.getElementById(id);
+    el.style.display = show ? 'flex' : 'none';
+    if(show) el.classList.toggle('pressed', P[field]!==false);
+  }
 }
 // player-selectable camera modes: cockpit/helmet, fixed tower, blimp,
 // alongside the existing automatic chase cam. Only offered during actual
