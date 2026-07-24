@@ -1495,6 +1495,12 @@ function audioTick(){
   if(S.greenT>0) crowd = 0.030;
   else if(S.flag==='yellow') crowd = 0.014;
   else if(S.mode==='victory') crowd = 0.034;
+  // Step 8: the GWC white-flag lap builds toward a finish exactly like the
+  // real final lap does, but S.greenT (the restart-only swell above) has
+  // long since decayed by then -- give it its own rise, and a smaller one
+  // for the clean lap leading into it.
+  else if(S.gwcState==='white') crowd = 0.026;
+  else if(S.gwcState==='clean1') crowd = 0.018;
   if(nearest[0] && nearest[0].d < 12) crowd = Math.max(crowd, 0.020);
   crowdGain.gain.setTargetAtTime(S.sound && S.mode!=='menu' ? crowd : 0, AC.currentTime, 0.4);
   // drafting wind: louder the tighter the tow
@@ -3216,8 +3222,17 @@ function emitFX(dt){
   // On the menu (no race in progress) this instead runs at a low steady
   // ambient rate so the stadium behind the home-screen card reads as a
   // live, populated venue rather than a static backdrop.
+  // Step 8: was S.order[0].lap===S.laps-1 -- the scheduled final lap only,
+  // which stops matching once a green-white-checkered finish pushes the
+  // real final lap past S.laps (S.finishLaps grows, S.laps never does), so
+  // the crowd fell quiet for exactly the tensest laps of an OT finish.
+  // gwcState covers the restart/clean-lap/white-flag laps directly (more
+  // robust than lap arithmetic against the mark-lap offsets those states
+  // use internally); the finishLaps check catches the ordinary (non-OT)
+  // final lap the same way the old S.laps check did.
   const bigMoment = !inMenu && (S.greenT>0 || S.oneToGo || S.mode==='victory'
-    || (S.mode==='race' && S.order[0] && S.order[0].lap===S.laps-1));
+    || S.gwcState==='watch' || S.gwcState==='clean1' || S.gwcState==='white'
+    || (S.mode==='race' && S.order[0] && S.order[0].lap >= S.finishLaps-1));
   if((bigMoment || inMenu) && STAND_ZONES.length){
     const rate = (inMenu ? 1.1 : 6)*dt;
     for(let n=Math.floor(rate) + (rngP()<rate%1 ? 1:0); n>0; n--){
@@ -3604,7 +3619,17 @@ function updateCamera(){
   // victory lane: slow orbit around the winner
   if(S.mode==='victory'){
     const M = carModelMat(c);
-    const az = S.victoryT*0.85, r = 7.5;
+    // Step 8: a brief cinematic cutaway at the finish line as the checkered
+    // flag flies, before settling into the orbit below -- same "fixed
+    // trackside pad, live look-at" grammar the caution TV montage and
+    // tower cams already use, just held once instead of repeating cuts.
+    const CUTAWAY_DUR = 1.5;
+    if(S.victoryT < CUTAWAY_DUR){
+      const pC = pos3(TRACK.sFinish - 10, WALL_LAT + 6); pC[1] += 5.5;
+      const pL = [M[12], M[13]+0.6, M[14]];
+      return setHardCam(pC, pL);
+    }
+    const az = (S.victoryT - CUTAWAY_DUR)*0.85, r = 7.5;
     let px = M[12]+Math.cos(az)*r, pz = M[14]+Math.sin(az)*r;
     // clamp the orbit inside the track surface — a fixed radius sized for a
     // wide superspeedway can swing the camera through (or right up against)
@@ -4575,6 +4600,11 @@ function tick(){
       for(const c of S.cars){
         if(c.spinT > 0 && !c.done){                 // wreck on track → yellow
           S.flag='yellow'; S.yellowT = 0;
+          // Step 8: a spotter radio call for the flag drop itself, distinct
+          // from the on-screen CAUTION banner -- reuses spotterSay() (which
+          // already plays its own radio-blip sfx) exactly like the
+          // existing traffic/laps-to-go calls below.
+          spotterSay('CAUTION, CAUTION!');
           const lead = activeLead();
           S.cautionUntilLap = lead.lap + 2;
           PACE.state='lead'; PACE.lat=0; PACE.v=38;
@@ -4827,6 +4857,7 @@ function tick(){
           S.gwcMarkLap = gwcLead.lap;
           S.finishLaps = gwcLead.lap + 3;      // +1 restart-crossing artifact, +1 clean lap, +1 checkered lap
           S.gwcState = 'clean1';
+          spotterSay('GREEN FLAG, GO GO GO!');   // Step 8: the actual OT restart, not the earlier "overtime" notice
         }
       } else if(S.gwcState==='clean1'){
         if(S.flag==='yellow'){
@@ -4835,6 +4866,7 @@ function tick(){
           S.finishLaps = gwcLead.lap + 1;      // clean lap done: exactly one more lap to the checkered flag
           S.gwcState = 'white';
           S.msgTxt = 'WHITE FLAG — FINAL LAP'; S.msgT = 2.8;
+          spotterSay('WHITE FLAG, LAST LAP!');   // Step 8
         }
       } else if(S.gwcState==='white'){
         if(S.flag==='yellow') S.gwcState = 'none';   // fresh caution mid-white-flag-lap: abort, retry
@@ -4892,11 +4924,12 @@ function tick(){
       // once-per-race guard rather than adding a new RNG-gated timer.
       S.waveActive = true; S.waveT = 0;
     }
-    if(pl === S.laps-1 && S.whiteMsg!==1){ S.whiteMsg=1; S.msgTxt='WHITE FLAG — FINAL LAP'; S.msgT=2.8; }
+    if(pl === S.laps-1 && S.whiteMsg!==1){ S.whiteMsg=1; S.msgTxt='WHITE FLAG — FINAL LAP'; S.msgT=2.8; spotterSay('WHITE FLAG, LAST LAP!'); }
   }
   if(S.player.done && S.mode==='race'){
     if(S.finishOrder[0]===S.player){                // winner: burnout celebration first
       S.mode='victory'; S.victoryT = 0;
+      spotterSay('CHECKERED FLAG!');   // Step 8: only the winner hears this call (matches the burnout-celebration branch)
     } else {
       S.mode='done'; setTimeout(showResults, 900);
     }
