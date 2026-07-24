@@ -49,9 +49,12 @@
      silently discarded by ScreenshotCallback::traceVargs() -- directly on
      the page. Non-blocking (small, top-anchored, semi-transparent) so it
      doesn't hide a working game once the real bug is found and fixed.
-     Remove or gate behind a query param once this diagnostic pass is done. */
+     display:none by default, same toggle-via-inline-style pattern as
+     #lht-fatal above -- JS below only reveals it when ?debug=1 is present
+     (was unconditionally visible, which meant every real visitor to the
+     live deployed site saw raw engine trace spam instead of the game). */
   #lht-log {
-    position: fixed; top: 0; left: 0; right: 0; z-index: 9;
+    display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 9;
     max-height: 40vh; overflow: auto; margin: 0;
     background: rgba(0, 0, 0, 0.75); color: #6f6; font: 11px/1.4 monospace;
     padding: 6px 8px; box-sizing: border-box; white-space: pre-wrap;
@@ -78,6 +81,10 @@
   }
 
   var lhtLogEl = document.getElementById('lht-log');
+  // ?debug=1 opts into the on-screen trace log (see the #lht-log CSS
+  // comment above for why this exists at all); real players never pass
+  // this, so lhtLogEl just silently accumulates text off-screen for them.
+  if (/[?&]debug=1(&|$)/.test(location.search)) lhtLogEl.style.display = 'block';
   function lhtLog(line) {
     lhtLogEl.textContent += line + '\n';
     lhtLogEl.scrollTop = lhtLogEl.scrollHeight;
