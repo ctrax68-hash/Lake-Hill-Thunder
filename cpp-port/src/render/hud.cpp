@@ -4,6 +4,7 @@
 #include "leaderboard.h"
 #include "minimap.h"
 #include "status_bars.h"
+#include "touch_buttons.h"
 
 #include <bgfx/bgfx.h>
 
@@ -36,7 +37,7 @@ std::vector<const Car*> computeRaceOrder(const std::vector<Car>& cars) {
 
 void drawHud(const RaceState& state, const std::vector<Car>& cars, std::vector<PosColorVertex>& uiOut,
              const std::vector<std::pair<float, float>>& minimapOutline, float minimapBoundX,
-             float minimapBoundY, double trackTotal) {
+             float minimapBoundY, double trackTotal, int windowW, int windowH) {
     if (state.mode == "menu" || state.mode == "menuwait") return; // index.html:3931
 
     const Car* player = nullptr;
@@ -126,4 +127,10 @@ void drawHud(const RaceState& state, const std::vector<Car>& cars, std::vector<P
     const float minimapY = lbBox.y + lbBox.h + 8.0f;
     const MinimapBox minimapBox = {8.0f, minimapY, 180.0f, 110.0f};
     drawMinimap(minimapBox, minimapOutline, minimapBoundX, minimapBoundY, cars, state.t, uiOut);
+
+    // Roadmap Phase 0: steer/brake/gas/pit buttons, finally visible --
+    // computeTouchRegions() is the exact same region math main.cpp already
+    // hit-tests pointer/touch input against, so this can't drift out of
+    // sync with what's actually clickable.
+    drawTouchButtons(computeTouchRegions(windowW, windowH), uiOut);
 }

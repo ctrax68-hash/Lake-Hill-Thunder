@@ -43,11 +43,18 @@
 // same "pass the one scalar needed, not the whole Track type" rationale
 // as the minimap's own parameters.
 //
+// Roadmap Phase 0 (fixing invisible touch controls): `windowW`/`windowH`
+// feed computeTouchRegions() (src/ui/touch_controls.h) so the steer/brake/
+// gas/pit buttons can finally be drawn (touch_buttons.h) at the exact same
+// pixel rects main.cpp's input handling already hit-tests against -- was
+// input-recognized but never painted (touch_controls.h's own header
+// comment used to say so plainly).
+//
 // Caller is expected to have called bgfx::setDebug(BGFX_DEBUG_TEXT) once
 // at init and bgfx::dbgTextClear() once this frame before calling this.
 void drawHud(const RaceState& state, const std::vector<Car>& cars, std::vector<PosColorVertex>& uiOut,
              const std::vector<std::pair<float, float>>& minimapOutline, float minimapBoundX,
-             float minimapBoundY, double trackTotal);
+             float minimapBoundY, double trackTotal, int windowW, int windowH);
 
 // Phase 4g (PORT_PROGRESS.md): the same descending race-position sort key
 // tick() uses to build S.order (race.cpp:339-343, index.html:4192's own
