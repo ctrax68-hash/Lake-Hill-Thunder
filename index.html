@@ -137,6 +137,12 @@
       font-family:var(--font-head); font-size:22px; font-weight:bold; letter-spacing:2px; text-align:center;
       padding:var(--sp-2) var(--sp-4); box-shadow:var(--shadow-panel); }
 
+  /* ---- Step 10: career-mode season standings on the results screen ---- */
+  #careerStandingsTitle { color:var(--c-white); font-family:var(--font-head); font-size:14px;
+      font-weight:bold; letter-spacing:1.5px; text-align:center; margin-top:var(--sp-2); }
+  #careerStandingsList { column-count:2; column-gap:var(--sp-6); font-family:var(--font-data);
+      max-height:32vh; overflow-y:auto; }
+
   /* ---- Step 9: starting-grid graphic -- a real 2-wide grid layout (each
      row is one physical starting row, inside pole on the left, outside on
      the right), not just a ranked list -- distinct from #resList's plain
@@ -189,6 +195,9 @@
     <button id="trkTog" class="mbtn">TRACK: THUNDER OVAL</button>
     <button id="lapTog" class="mbtn">LAPS: 5</button>
     <button id="qualTog" class="mbtn">QUALIFYING: OFF</button>
+    <button id="careerTog" class="mbtn">CAREER: OFF</button>
+    <div class="hint" id="careerStatus" style="display:none;"></div>
+    <button id="careerReset" class="mbtn" style="display:none;">RESET CAREER</button>
     <button id="sndTog" class="mbtn">SOUND: ON</button>
     <div class="volRow"><span>VOLUME</span><input type="range" id="volSlider" min="0" max="100" value="100"></div>
     <button id="tiltTog" class="mbtn">TILT STEER: OFF</button>
@@ -201,6 +210,14 @@
 <div id="results" class="overlay">
   <div id="resTitle">RACE COMPLETE</div>
   <div id="resList"></div>
+  <!-- Step 10: career-mode season standings, shown alongside this race's
+       own results (resList above) -- see showResults(). Hidden outside
+       career mode, same display:none-by-default idiom as #gridScreen. -->
+  <div id="careerStandingsWrap" style="display:none;">
+    <div id="careerStandingsTitle">SEASON STANDINGS</div>
+    <div id="careerStandingsList"></div>
+  </div>
+  <button id="nextRaceBtn" class="mbtn" style="display:none;">NEXT RACE</button>
   <button id="againBtn" class="mbtn">BACK TO MENU</button>
 </div>
 
@@ -491,6 +508,38 @@ const ROSTER = [
   {name:'C. BJORNSTAD', num:88, col:CAR_PALETTE.silver, scheme:{stripe:3, mask:1, sponsor:1, acc2:CAR_PALETTE.blue}}
 ];
 const FIELD = ROSTER.length + 1;      // 19 AI + player
+
+// Step 10: career/season mode -- cumulative points across an ongoing
+// schedule that cycles through the 4 tracks, persisted so progress
+// survives a reload. Kept as its own top-level container (not folded into
+// S) since S gets its per-race fields reset by selectTrack()/startRace()
+// while career progress must outlive any single race, same reasoning as
+// PACE/TRACK living outside S.
+const CAREER_KEY = 'lht_career_v1';
+// position-based points (P1=FIELD+3, P2=FIELD-1, ... P(FIELD)=1) plus a
+// small win bonus -- a real, simple points table rather than NASCAR's own
+// much more elaborate stage-point/playoff system, which is out of scope here.
+function racePoints(position){ return (FIELD - position + 1) + (position===1 ? 3 : 0); }
+function loadCareer(){
+  try{
+    const raw = localStorage.getItem(CAREER_KEY);
+    if(raw){
+      const saved = JSON.parse(raw);
+      if(saved && Array.isArray(saved.points) && saved.points.length===FIELD && Number.isFinite(saved.raceIdx)){
+        return { raceIdx: saved.raceIdx, points: saved.points };
+      }
+    }
+  }catch(e){}
+  return { raceIdx: 0, points: new Array(FIELD).fill(0) };
+}
+let CAREER = loadCareer();
+function saveCareer(){
+  try{ localStorage.setItem(CAREER_KEY, JSON.stringify(CAREER)); }catch(e){}
+}
+function resetCareer(){
+  CAREER = { raceIdx: 0, points: new Array(FIELD).fill(0) };
+  try{ localStorage.removeItem(CAREER_KEY); }catch(e){}
+}
 function makeCar(isPlayer, idx){
   const p = TRACK.pointAt(0);
   return {
@@ -558,6 +607,7 @@ const S = {
   camMode:'chase',
   shakeT:0,
   qual:false, gridOrder:null, qualPos:0, qualLap1T:0,
+  career:false,
   flag:'green', yellowT:0, cautionUntilLap:-1, greenLockT:0, sinceGreenT:0,
   oneToGo:false, pitsOpen:true, cautionMaxSlot:-1,
   // green-white-checkered: finishLaps is the EFFECTIVE final lap (grows
@@ -4496,6 +4546,36 @@ function showResults(){
   });
   document.getElementById('resTitle').textContent =
     order[0]===S.player ? 'YOU WIN THE LAKE HILL 400!' : 'RACE COMPLETE';
+
+  // Step 10: career mode -- award points for this race (position-based,
+  // see racePoints()), persist, and show season standings + a NEXT RACE
+  // shortcut instead of only BACK TO MENU.
+  const careerWrap = document.getElementById('careerStandingsWrap');
+  const nextBtn = document.getElementById('nextRaceBtn');
+  if(S.career){
+    order.forEach((c,i)=>{ CAREER.points[c.idx] += racePoints(i+1); });
+    CAREER.raceIdx++;
+    saveCareer();
+    const standings = careerStandings();
+    const sList = document.getElementById('careerStandingsList');
+    sList.innerHTML = '';
+    standings.forEach((s,i)=>{
+      const isPlayer = s.idx===0;
+      const name = isPlayer ? 'YOU' : ROSTER[s.idx-1].name;
+      const num  = isPlayer ? 21 : ROSTER[s.idx-1].num;
+      const col  = isPlayer ? [1.0,0.82,0.24] : ROSTER[s.idx-1].col;
+      const d = document.createElement('div');
+      d.className = 'resRow' + (isPlayer?' me':'');
+      d.innerHTML = `<span>${i+1}.</span><span style="color:${colCSS(dispCol(col))}">#${num}</span>`+
+                    `<span>${name}</span><span>${s.pts} PTS</span>`;
+      sList.appendChild(d);
+    });
+    careerWrap.style.display = 'block';
+    nextBtn.style.display = 'block';
+  } else {
+    careerWrap.style.display = 'none';
+    nextBtn.style.display = 'none';
+  }
   el.style.display='flex';
 }
 
@@ -5087,7 +5167,10 @@ function showGridGraphic(){
   setTimeout(()=>{ el.style.display='none'; startRace(); }, 4000);
 }
 document.getElementById('qSkip').addEventListener('click', ()=> finishQualifying(null));
-document.getElementById('startBtn').addEventListener('click', async ()=>{
+// Step 10: shared by the menu's START RACE button and the results screen's
+// NEXT RACE button (career mode) -- both need the exact same fullscreen/
+// audio/overlay setup before handing off to qual or the race itself.
+async function beginRace(){
   await enterLandscapeFullscreen();
   if(S.tilt && window.DeviceOrientationEvent && DeviceOrientationEvent.requestPermission){
     try{ await DeviceOrientationEvent.requestPermission(); }catch(e){}
@@ -5097,10 +5180,44 @@ document.getElementById('startBtn').addEventListener('click', async ()=>{
   document.getElementById('results').style.display='none';
   S.gridOrder = null; S.qualPos = 0;
   if(S.qual) startQualifying(); else startRace();
+}
+document.getElementById('startBtn').addEventListener('click', ()=>{
+  // career mode picks its own track from the schedule, overriding whatever
+  // the TRACK toggle currently shows (LAPS is left alone -- career doesn't
+  // dictate lap count, just track order).
+  if(S.career) selectTrack(CAREER.raceIdx % TRACKS.length);
+  beginRace();
 });
 document.getElementById('qualTog').addEventListener('click', e=>{
   S.qual=!S.qual; e.target.textContent='QUALIFYING: '+(S.qual?'ON':'OFF');
 });
+// Step 10: career mode -- standings sorted descending by points, idx 0 is
+// the player's own roster slot (see makeCar()/CAREER_KEY's own comment).
+function careerStandings(){
+  return CAREER.points.map((pts,idx)=>({idx,pts})).sort((a,b)=>b.pts-a.pts);
+}
+function refreshCareerStatus(){
+  const el = document.getElementById('careerStatus');
+  const resetBtn = document.getElementById('careerReset');
+  if(!S.career){ el.style.display='none'; resetBtn.style.display='none'; return; }
+  el.style.display='block';
+  resetBtn.style.display = CAREER.raceIdx>0 ? 'block' : 'none';
+  const upNext = TRACKS[CAREER.raceIdx % TRACKS.length].name;
+  const standings = careerStandings();
+  const playerRank = standings.findIndex(s=>s.idx===0) + 1;
+  el.textContent = CAREER.raceIdx===0
+    ? `CAREER — RACE 1 AT ${upNext}`
+    : `CAREER — RACE ${CAREER.raceIdx+1} AT ${upNext} · YOU: ${CAREER.points[0]} PTS (P${playerRank} OF ${FIELD})`;
+}
+document.getElementById('careerTog').addEventListener('click', e=>{
+  S.career=!S.career; e.target.textContent='CAREER: '+(S.career?'ON':'OFF');
+  refreshCareerStatus();
+});
+document.getElementById('careerReset').addEventListener('click', ()=>{
+  resetCareer();
+  refreshCareerStatus();
+});
+refreshCareerStatus();
 const bPitEl = document.getElementById('bP');
 bPitEl.addEventListener('click', ()=>{
   const P = S.player;
@@ -5156,6 +5273,13 @@ document.getElementById('againBtn').addEventListener('click', ()=>{
   document.getElementById('results').style.display='none';
   document.getElementById('menu').style.display='flex';
   S.mode='menu';
+  refreshCareerStatus();   // Step 10: reflect the just-completed race's points/raceIdx
+});
+// Step 10: skip the menu entirely and jump straight into the next scheduled
+// career race -- CAREER.raceIdx was already advanced in showResults().
+document.getElementById('nextRaceBtn').addEventListener('click', ()=>{
+  selectTrack(CAREER.raceIdx % TRACKS.length);
+  beginRace();
 });
 document.getElementById('sndTog').addEventListener('click', e=>{
   S.sound=!S.sound; e.target.textContent='SOUND: '+(S.sound?'ON':'OFF');
