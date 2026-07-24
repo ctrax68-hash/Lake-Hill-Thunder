@@ -1,8 +1,15 @@
 // Phase 7b (PORT_PROGRESS.md): cache-first service worker for the WASM app
-// shell. Bump CACHE_NAME on any redeploy that changes these files -- the
-// activate handler below deletes anything not matching the current name,
-// so this is the whole cache-busting mechanism.
-const CACHE_NAME = 'lht-v4';
+// shell. CACHE_NAME bakes in the deployed commit's short git SHA (see this
+// file's own .in template + CMakeLists.txt's configure_file() call) so
+// every real deploy is automatically cache-busting -- the activate handler
+// below deletes anything not matching the current name, but that only
+// helps if the name actually changes every time, which a hand-maintained
+// string reliably failed to do (a real live-site bug this project hit
+// more than once: CACHE_NAME sat at 'lht-v4' across several real feature
+// deploys, so browsers with an already-installed service worker never had
+// a reason to notice anything changed and kept serving their original
+// cached shell indefinitely).
+const CACHE_NAME = 'lht-@LHT_CACHE_VERSION@';
 const APP_SHELL = [
   './index.html',
   './lht_port.js',
