@@ -725,6 +725,11 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         // everything, in its own lower-numbered view; it doesn't need to
         // participate in the world's depth buffer at all.
         bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+        // Diagnostic-only (PORT_PROGRESS.md): pinpoints which of this frame's
+        // several submit() calls was executing when a real device hit a
+        // fatal GL error this session's own Chromium testing never
+        // reproduced -- see this file's own bgfx-fatal investigation notes.
+        std::fprintf(stderr, "[submit] sky\n");
         bgfx::submit(kSkyView, skyProgram_);
     }
 
@@ -891,6 +896,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         bgfx::setTransform(identity);
         bgfx::setVertexBuffer(0, groundVb_, 0, groundVertexCount_);
         bgfx::setState(state);
+        std::fprintf(stderr, "[submit] ground\n"); // diagnostic-only, see the sky submit's own comment
         bgfx::submit(kView, litProgram_);
     }
 
@@ -898,6 +904,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         bgfx::setTransform(identity);
         bgfx::setVertexBuffer(0, trackVb_, 0, trackVertexCount_);
         bgfx::setState(state);
+        std::fprintf(stderr, "[submit] track\n"); // diagnostic-only, see the sky submit's own comment
         bgfx::submit(kView, litProgram_);
     }
 
@@ -909,6 +916,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         bgfx::setTransform(identity);
         bgfx::setVertexBuffer(0, stadiumVb_, 0, stadiumVertexCount_);
         bgfx::setState(state);
+        std::fprintf(stderr, "[submit] stadium\n"); // diagnostic-only, see the sky submit's own comment
         bgfx::submit(kView, litProgram_);
     }
 
@@ -920,6 +928,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         bgfx::setVertexBuffer(0, stadiumTexturedVb_, 0, stadiumTexturedVertexCount_);
         bgfx::setTexture(0, uSkyTexColor_, atlasTexture_);
         bgfx::setState(state);
+        std::fprintf(stderr, "[submit] stadiumTextured\n"); // diagnostic-only, see the sky submit's own comment
         bgfx::submit(kView, texturedLitProgram_);
     }
 
@@ -973,6 +982,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             SkinnedMesh::setBoneMatrices(boneFloats.data(), (int)bonePalette.size());
 
             const Mat4f model = mat4Mul(mat4Translate(wx, carY, wy), mat4RotateY(-ch));
+            std::fprintf(stderr, "[submit] car #%d\n", c.num); // diagnostic-only, see the sky submit's own comment
             carMesh_.draw(kView, model.data(), getOrBuildCarTexture(c));
         }
     }
@@ -1011,6 +1021,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             bgfx::setVertexBuffer(0, skyVb_, 0, 6);
             bgfx::setTexture(0, uSkyTexColor_, sceneColorTex);
             bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+            std::fprintf(stderr, "[submit] bloomBright\n"); // diagnostic-only, see the sky submit's own comment
             bgfx::submit(kBloomBrightView, bloomBrightProgram_);
         }
 
@@ -1027,6 +1038,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             bgfx::setVertexBuffer(0, skyVb_, 0, 6);
             bgfx::setTexture(0, uSkyTexColor_, bgfx::getTexture(bloomBrightFb_));
             bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+            std::fprintf(stderr, "[submit] bloomBlur\n"); // diagnostic-only, see the sky submit's own comment
             bgfx::submit(kBloomBlurView, bloomBlurProgram_);
         }
 
@@ -1054,6 +1066,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             bgfx::setTexture(0, uSkyTexColor_, sceneColorTex);
             bgfx::setTexture(1, uTexBloom_, bgfx::getTexture(bloomBlurFb_));
             bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+            std::fprintf(stderr, "[submit] gradeTonemap\n"); // diagnostic-only, see the sky submit's own comment
             bgfx::submit(kGradeTonemapView, gradeTonemapProgram_);
         }
     }
@@ -1124,6 +1137,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             // enabled now so that addition doesn't need a second state
             // variant later.
             bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_BLEND_ALPHA);
+            std::fprintf(stderr, "[submit] uiOverlay\n"); // diagnostic-only, see the sky submit's own comment
             bgfx::submit(kUiView, program_);
         }
     }
