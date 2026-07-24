@@ -378,8 +378,27 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
     const double dragMod = (1 - 0.25 * c.draftF) * (c.dirty ? 1.10 : 1) * (1 + 0.5 * c.dmg);
     const double drag = 0.5 * RHO * CAR.cdA * c.v * c.v * dragMod;
     const double roll = CAR.roll + (onGrass ? 900 : 0);
+
+    // Drivetrain upgrade: gearRpm() (src/render/gear_rpm.h) was previously
+    // cosmetic-only (HUD readout + engine-audio pitch). Reused here verbatim
+    // (same gear breakpoints) to shape engFRaw's accel curve
+    // (torqueCurveMultiplier()) and to detect gear changes, which apply a
+    // brief force-reduction dip -- mirroring a real shift's momentary power
+    // interruption. On the tick a shift is detected, shiftCd is set to its
+    // full duration immediately (the dip is active that same tick); it only
+    // counts down on ticks where no new shift occurs.
+    const GearRpm gear = gearRpm(c.v);
+    if (gear.gear != c.prevGear) {
+        c.prevGear = gear.gear;
+        c.shiftCd = CAR.shiftDipDur;
+    } else if (c.shiftCd > 0) {
+        c.shiftCd -= DT;
+    }
+    const double shiftMult = c.shiftCd > 0 ? CAR.shiftDipMag : 1.0;
+
     const double engFRaw = c.thr * std::min(CAR.maxForce, CAR.power / std::max(4.0, c.v)) *
-                            (onGrass ? 0.75 : 1) * (1 - 0.3 * c.dmg) * (c.fuel > 0 ? 1 : 0.25);
+                            (onGrass ? 0.75 : 1) * (1 - 0.3 * c.dmg) * (c.fuel > 0 ? 1 : 0.25) *
+                            torqueCurveMultiplier(gear) * shiftMult;
     const double brkF = c.brk * CAR.brakeForce * muSurf;
 
     // Traction budget: the drive wheels can't transmit more longitudinal
@@ -398,7 +417,18 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
     // -- avoids a circular dependency (axleLoads() needs `a`, which needs
     // this cap first) at the cost of a one-tick-stale weight-transfer
     // estimate, self-correcting every tick.
-    const AxleLoads fz = axleLoads(CAR, c.v, c.aPrev, aeroEfficiency);
+    // Suspension upgrade: axleLoads() itself stays instantaneous/unmodified
+    // (preserves its own passing unit tests) -- lag its output here via a
+    // first-order filter (CarConstants::suspRate) so Fz has spring/damper-
+    // like settling time instead of jumping discontinuously every tick.
+    // Steady state is unaffected; only the transient response smooths out.
+    // Every downstream use of `fz` below (traction budget, fxFrac, the yaw
+    // integration, and the final c.fzFront/c.fzRear assignment) reads this
+    // lagged value, not axleLoads()'s raw instantaneous one.
+    const AxleLoads fzRaw = axleLoads(CAR, c.v, c.aPrev, aeroEfficiency);
+    c.fzFrontLag = suspensionLag(c.fzFrontLag, fzRaw.front, CAR.suspRate, DT);
+    c.fzRearLag = suspensionLag(c.fzRearLag, fzRaw.rear, CAR.suspRate, DT);
+    const AxleLoads fz{c.fzFrontLag, c.fzRearLag};
     const double engF = std::min(engFRaw, muEff * fz.rear);
 
     double a = (engF - drag - roll * sign(c.v != 0 ? c.v : 1) - brkF * (c.v > 0 ? 1 : 0)) / CAR.mass;

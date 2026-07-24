@@ -209,6 +209,34 @@ int main() {
                "slipMagAvg roughly substep-count-invariant (n=4 vs n=8)");
     }
 
+    // ---- torqueCurveMultiplier(): peaks at 1.0 mid-band, tapers at both
+    // edges, never exceeds 1.0 or goes non-positive ----
+    {
+        const double lowEdge = torqueCurveMultiplier({1, 0.25});
+        const double mid = torqueCurveMultiplier({1, 0.70});
+        const double highEdge = torqueCurveMultiplier({1, 1.0});
+        expectNear("torqueCurveMultiplier mid-band plateau is 1.0", mid, 1.0, 1e-9);
+        expect(lowEdge < mid, "torqueCurveMultiplier tapers down just after a shift (low rpm)");
+        expect(highEdge < mid, "torqueCurveMultiplier tapers down near redline (high rpm)");
+        expect(lowEdge > 0.0 && highEdge > 0.0, "torqueCurveMultiplier never goes non-positive");
+        for (double rpm = 0.25; rpm <= 1.0; rpm += 0.05) {
+            expect(torqueCurveMultiplier({1, rpm}) <= 1.0 + 1e-9, "torqueCurveMultiplier never exceeds 1.0");
+        }
+    }
+
+    // ---- suspensionLag(): converges to target, doesn't fully jump in one
+    // step (transient smoothing, not a snap) ----
+    {
+        const double rate = 10.0, dt = 0.02;
+        double fz = 0.0;
+        for (int i = 0; i < 500; ++i) fz = suspensionLag(fz, 7000.0, rate, dt);
+        expectNear("suspensionLag converges to target", fz, 7000.0, 1.0);
+
+        const double firstStep = suspensionLag(0.0, 7000.0, rate, dt);
+        expect(firstStep > 0.0 && firstStep < 7000.0,
+               "suspensionLag doesn't fully jump to target in a single step");
+    }
+
     if (g_failures == 0) {
         std::printf("tire_model_test: axleLoads/slipAngles/axleLateralForce all correct.\n");
         return 0;

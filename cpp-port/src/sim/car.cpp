@@ -85,6 +85,31 @@ YawIntegrationResult integrateYawDynamics(const CarConstants& c, double vy0, dou
     return {vy, r, hdgDelta, slipMagSum / substeps, pastLimitAny};
 }
 
+// Drivetrain upgrade: piecewise-linear torque-curve shape within one gear's
+// rpm band. Plateaus at 1.0 across most of the band on purpose (see this
+// function's declaration comment in car.h) -- only the near-edge regions
+// taper down.
+double torqueCurveMultiplier(const GearRpm& g) {
+    constexpr double kLowRpm = 0.25, kLoPlateau = 0.45, kHiPlateau = 0.90, kHighRpm = 1.0;
+    constexpr double kLowMult = 0.90, kPlateauMult = 1.0, kHighMult = 0.95;
+    if (g.rpm <= kLoPlateau) {
+        const double t = std::max(0.0, std::min(1.0, (g.rpm - kLowRpm) / (kLoPlateau - kLowRpm)));
+        return kLowMult + (kPlateauMult - kLowMult) * t;
+    }
+    if (g.rpm >= kHiPlateau) {
+        const double t = std::max(0.0, std::min(1.0, (g.rpm - kHiPlateau) / (kHighRpm - kHiPlateau)));
+        return kPlateauMult + (kHighMult - kPlateauMult) * t;
+    }
+    return kPlateauMult;
+}
+
+// Suspension upgrade: exponential-smoothing lag toward `target` at rate
+// `rate` (1/s) over `dt` seconds.
+double suspensionLag(double current, double target, double rate, double dt) {
+    const double alpha = 1.0 - std::exp(-rate * dt);
+    return current + (target - current) * alpha;
+}
+
 // ROSTER (index.html:431-451)
 const std::array<RosterEntry, 19> ROSTER{{
     {"B. HOLLISTER", 28, CarPalette::Red, {0, 0, 0, CarPalette::White}},

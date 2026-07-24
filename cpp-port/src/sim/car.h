@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../render/gear_rpm.h"
 #include "constants.h"
 #include "rng.h"
 #include "track.h"
@@ -72,6 +73,24 @@ struct CarConstants {
     // instead and rejected: it suppressed the divergence but crippled
     // legitimate cornering response fleet-wide.
     int yawSubsteps = 4;
+
+    // Drivetrain upgrade: gearRpm() (src/render/gear_rpm.h) was previously
+    // cosmetic-only (HUD readout + engine-audio pitch, src/audio/mixer.cpp).
+    // Reused verbatim here (same gear breakpoints, no new gear ratios
+    // invented) to shape the accel curve -- see torqueCurveMultiplier() --
+    // and to time a brief power-interruption dip around each gear change.
+    double shiftDipDur = 0.2;  // s, how long a gear change reduces engine force
+    double shiftDipMag = 0.6;  // multiplier applied to engFRaw while shiftCd > 0
+
+    // Suspension upgrade: axleLoads() computes weight transfer
+    // instantaneously every tick (no spring/damper dynamics). suspRate is a
+    // first-order lag rate (1/s) applied to its output in step_car.cpp --
+    // alpha = 1-exp(-suspRate*DT) gives ~100ms settling time, a stiff
+    // race-car spring/damper feel, not a soft road-car one. Steady-state Fz
+    // is unchanged; only the transient response smooths out, so this is
+    // deliberately NOT folded into axleLoads() itself (preserves its
+    // existing passing unit tests, which assert on its instantaneous value).
+    double suspRate = 10.0;
 };
 inline const CarConstants CAR{};
 
@@ -120,6 +139,22 @@ struct YawIntegrationResult {
 YawIntegrationResult integrateYawDynamics(const CarConstants& c, double vy0, double r0, double vDyn,
                                            double vSafe, double steerAngle, const AxleLoads& fz, double muEff,
                                            double fxFracFront, double fxFracRear, double dt, int substeps);
+
+// Drivetrain upgrade: shapes engine force within gearRpm()'s reused
+// breakpoint table -- peaks at 1.0 in the middle of each gear's rpm band,
+// tapers down toward both edges (mimicking real torque falling off just
+// after a shift and again near redline before the next one). The plateau
+// deliberately covers most of the band so the band-averaged multiplier stays
+// close to 1.0, preserving CarConstants::maxForce's existing tuning -- this
+// reshapes the accel curve, it isn't meant to change overall pace.
+double torqueCurveMultiplier(const GearRpm& g);
+
+// Suspension upgrade: first-order lag (exponential smoothing) toward
+// `target`, used to smooth axleLoads()'s instantaneous per-tick output into
+// a value with spring/damper-like settling time instead of a discontinuous
+// jump. Steady state (current == target held) is unaffected -- only the
+// transient response changes.
+double suspensionLag(double current, double target, double rate, double dt);
 
 // CAR_PALETTE (index.html:413-423)
 namespace CarPalette {
@@ -268,6 +303,21 @@ struct Car {
     // step_car.cpp's traction-budget comment) -- breaks what would otherwise
     // be a circular dependency between engine force and weight transfer.
     double aPrev = 0;
+
+    // Drivetrain upgrade: tracks the last tick's gearRpm(c.v).gear so
+    // step_car.cpp can detect a gear change and apply a brief force-reduction
+    // dip (CarConstants::shiftDipDur/shiftDipMag). Defaults to 1, not 0 --
+    // gearRpm(0).gear is already 1, so a real "unset" sentinel of 0 would
+    // spuriously read as a gear change (and trigger a dip) on every car's
+    // very first tick.
+    int prevGear = 1;
+    double shiftCd = 0; // s remaining in the current shift's force-reduction dip
+
+    // Suspension upgrade: axleLoads()'s per-axle Fz output, lagged (see
+    // suspensionLag()) to give it spring/damper-like settling time instead of
+    // jumping discontinuously every tick. Zero-defaulted like fzFront/fzRear
+    // above -- first real value arrives on the first stepCar() tick.
+    double fzFrontLag = 0, fzRearLag = 0;
 };
 
 // makeCar() (index.html:453-503). `track` supplies TRACK.pointAt(0) for the

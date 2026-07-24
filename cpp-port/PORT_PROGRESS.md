@@ -3997,3 +3997,77 @@ elsewhere in the same run.
   occurs). `Cf`/`Cr`/`aeroBalanceF`/etc. retuning remains deferred, per the
   original regression pass's own reasoning, now that the structural physics
   bugs are resolved.
+
+### Real drivetrain (gear/torque curve) + suspension (load-lag) models
+
+  A follow-up evaluation of this port against the user's own reference
+  architecture doc (a Papyrus/NR2003-style engine writeup) identified two
+  remaining physics gaps beyond the tire model itself: `gearRpm()`
+  (`src/render/gear_rpm.h`/`.cpp`) was confirmed pure cosmetic -- consumed
+  only by `src/audio/mixer.cpp` (engine pitch) and `src/render/hud.cpp`
+  (readout), never physics, so acceleration was just a flat `power/v`
+  capped by `maxForce` with no gear/torque-curve shape at all; and
+  `axleLoads()` computes weight transfer *instantaneously* every tick with
+  no spring/damper lag, so `Fz` could jump discontinuously tick-to-tick.
+  Both are additive on top of the already-verified tire model, not
+  replacements for it.
+
+  **Drivetrain**: reused `gearRpm()`'s existing breakpoint table verbatim
+  (`{14, 26, 40, 70}` m/s, gears 1-4) rather than inventing new gear ratios.
+  New `torqueCurveMultiplier(GearRpm)` (`src/sim/car.h`/`.cpp`) shapes engine
+  force within each gear's rpm band: a piecewise-linear curve that plateaus
+  at `1.0` across the middle of the band and tapers down toward both edges
+  (mimicking real torque falling off just after a shift and again near
+  redline before the next one). New `Car` state `prevGear`/`shiftCd`
+  (`src/sim/car.h`) detects a gear change in `step_car.cpp` and applies a
+  brief (`CarConstants::shiftDipDur` = 0.2s) force-reduction dip
+  (`CarConstants::shiftDipMag` = 0.6), simulating a shift's momentary power
+  interruption; `prevGear` defaults to `1` (not `0`) specifically so a car's
+  very first tick doesn't read as a spurious gear change.
+
+  **Tuning correction found during verification**: the first taper values
+  tried (edges at `0.82`/`0.88`, plateau `[0.55, 0.85]`) were meant to keep
+  the band-averaged multiplier "close to 1.0", but a standalone straight-
+  line-acceleration probe (isolating the drivetrain shaping from the rest of
+  the tire model -- no cornering, no AI, full throttle from a stop) showed a
+  real, larger-than-intended pace cost: ~11% slower to reach 70 m/s, ~4%
+  less distance covered in 60s. The near-redline region turned out to get
+  disproportionate time-weight (acceleration flattens out as drag approaches
+  the available force there, so a car spends more time at high rpm than low
+  rpm within a gear), so the high-rpm taper mattered more than expected.
+  Retuned to a wider plateau (`[0.45, 0.90]`) with gentler edges
+  (`0.90`/`0.95`): re-measured at ~2% slower to reach 70 m/s and ~1.7% less
+  distance in 60s -- still a real, deliberate accel-curve shape (the point
+  of the change), not an accidental across-the-board pace regression.
+
+  **Suspension**: `axleLoads()` itself is untouched (preserves its own
+  passing unit tests) -- a first-order lag (`suspensionLag()`,
+  `src/sim/car.h`/`.cpp`, exponential smoothing at `CarConstants::suspRate`
+  = 10/s, ~100ms settling time) is applied to its output in `step_car.cpp`
+  immediately after the existing call, using new `Car` fields
+  `fzFrontLag`/`fzRearLag` (zero-defaulted, same convention as
+  `fzFront`/`fzRear`) in place of the raw values everywhere `fz` flows
+  downstream: the traction-budget cap, `fxFrac` calculations, the
+  `integrateYawDynamics()` call, and the final `c.fzFront`/`c.fzRear`
+  assignment. Steady state is unchanged; only the discontinuous per-tick
+  jump is smoothed into spring/damper-like settling.
+
+  **Build-system note**: `car.cpp` now calls `gearRpm()`, so every target
+  that links `car.cpp` needs `src/render/gear_rpm.cpp` too. Added it to
+  `SIM_SOURCES` (covering `race_sim_test`/`spotter_test`/`determinism_check`/
+  `lht_port`, removing `lht_port`'s now-redundant explicit entry) and
+  individually to the test targets that list `car.cpp` outside that
+  variable (`stadium_mesh_test`, `livery_test`, `pylon_mesh_test`,
+  `car_test`, `speed_model_test`, `tire_model_test`).
+
+  **Verified**: native `ctest` 27/27 (extended `tire_model_test.cpp` with
+  `torqueCurveMultiplier()`/`suspensionLag()` cases -- plateau/taper shape,
+  never exceeds 1.0, lag convergence and non-instant response). 4-track
+  smoke test (`LHT_FORCE_RACE=1 LHT_HEADLESS_FAST=1`, 3000 frames):
+  `wreckCount=0` on every track. Natural-start fleet-wide regression
+  (`LHT_NATURAL_START=1`, track 0, 20000 frames) against the finding-#5
+  baseline (3/20 destroyed, 6/20 at `dmg=0.000`): **2/20 destroyed, 6/20 at
+  `dmg=0.000`** -- same or better on both counts, `wreckCount=0`. The exact
+  destroyed cars differ from the documented baseline (expected: this is a
+  real physics change, not a cosmetic one, so downstream tick-by-tick
+  trajectories shift even though the aggregate outcome doesn't regress).

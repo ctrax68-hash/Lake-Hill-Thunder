@@ -114,11 +114,16 @@ if(EMSCRIPTEN)
   # an unrelated bimg file even after this -msse4.2 strip.
 endif()
 
+# Drivetrain upgrade: car.cpp now calls gearRpm() (src/render/gear_rpm.h/
+# .cpp, previously only a HUD/audio-side cosmetic helper) to shape engine
+# force, so it's part of the sim's own link closure now -- included here
+# rather than left to each target to remember separately.
 set(SIM_SOURCES
   src/sim/track.cpp
   src/sim/car.cpp
   src/sim/step_car.cpp
   src/sim/race.cpp
+  src/render/gear_rpm.cpp
 )
 
 # ---- Phase 2 shaders ----
@@ -313,7 +318,6 @@ add_executable(lht_port
   src/render/digit_mesh.cpp
   src/render/fmt_time.cpp
   src/render/gap_time.cpp
-  src/render/gear_rpm.cpp
   src/render/hill_silhouette.cpp
   src/render/hud.cpp
   src/render/leaderboard.cpp
@@ -422,8 +426,9 @@ add_test(NAME sky_texture_test COMMAND sky_texture_test)
 # Phase 5d (PORT_PROGRESS.md): stadium_mesh_test exercises buildStandMesh()/
 # buildPitRoadMesh()/buildOuterWallMesh()'s pure geometry, bgfx-free (links
 # track.cpp + track_surface.cpp + car.cpp for pitStallS()/FIELD).
+# gear_rpm.cpp: car.cpp now calls gearRpm() (drivetrain upgrade).
 add_executable(stadium_mesh_test tests/stadium_mesh_test.cpp src/sim/track.cpp src/sim/car.cpp
-  src/render/track_surface.cpp src/render/stadium_mesh.cpp)
+  src/render/track_surface.cpp src/render/stadium_mesh.cpp src/render/gear_rpm.cpp)
 add_test(NAME stadium_mesh_test COMMAND stadium_mesh_test)
 
 # Phase 5e (PORT_PROGRESS.md): atlas_texture_test exercises buildAtlasPixels()'s
@@ -433,7 +438,9 @@ add_test(NAME atlas_texture_test COMMAND atlas_texture_test)
 
 # Phase 5f (PORT_PROGRESS.md): livery_test exercises buildLiveryPixels()'s
 # pure pixel math, bgfx-free (links track.cpp/car.cpp for ROSTER data).
-add_executable(livery_test tests/livery_test.cpp src/sim/track.cpp src/sim/car.cpp src/render/livery.cpp)
+# gear_rpm.cpp: car.cpp now calls gearRpm() (drivetrain upgrade).
+add_executable(livery_test tests/livery_test.cpp src/sim/track.cpp src/sim/car.cpp src/render/livery.cpp
+  src/render/gear_rpm.cpp)
 add_test(NAME livery_test COMMAND livery_test)
 
 # Phase 5g (PORT_PROGRESS.md): digit_mesh_test exercises addDigitQuads()/
@@ -446,8 +453,9 @@ add_test(NAME digit_mesh_test COMMAND digit_mesh_test)
 # Phase 5g (PORT_PROGRESS.md): pylon_mesh_test exercises buildPylonMesh()/
 # buildJumbotronMesh()'s per-track gating (empty mesh unless
 # stadium.pylon/.jumbotron is set) and non-empty geometry for Big Sable.
+# gear_rpm.cpp: car.cpp now calls gearRpm() (drivetrain upgrade).
 add_executable(pylon_mesh_test tests/pylon_mesh_test.cpp src/sim/track.cpp src/sim/car.cpp
-  src/render/track_surface.cpp src/render/digit_mesh.cpp src/render/pylon_mesh.cpp)
+  src/render/track_surface.cpp src/render/digit_mesh.cpp src/render/pylon_mesh.cpp src/render/gear_rpm.cpp)
 add_test(NAME pylon_mesh_test COMMAND pylon_mesh_test)
 
 # Phase 5g (PORT_PROGRESS.md): hill_silhouette_test exercises
@@ -472,17 +480,21 @@ add_executable(mixer_test tests/mixer_test.cpp src/audio/dsp.cpp src/audio/mixer
                 src/render/gear_rpm.cpp src/sim/car.cpp src/sim/track.cpp)
 add_test(NAME mixer_test COMMAND mixer_test)
 
-add_executable(car_test tests/car_test.cpp src/sim/track.cpp src/sim/car.cpp)
+# gear_rpm.cpp on all three below: car.cpp now calls gearRpm() (drivetrain
+# upgrade -- torqueCurveMultiplier()/step_car.cpp's shift-dip logic).
+add_executable(car_test tests/car_test.cpp src/sim/track.cpp src/sim/car.cpp src/render/gear_rpm.cpp)
 add_test(NAME car_test COMMAND car_test)
 
-add_executable(speed_model_test tests/speed_model_test.cpp src/sim/track.cpp src/sim/car.cpp)
+add_executable(speed_model_test tests/speed_model_test.cpp src/sim/track.cpp src/sim/car.cpp
+  src/render/gear_rpm.cpp)
 add_test(NAME speed_model_test COMMAND speed_model_test)
 
 # Tire-model upgrade: axleLoads()/slipAngles()/axleLateralForce() themselves
 # are pure math with no Track dependency, but car.cpp's other functions
 # (makeCar()/cornerSpeed()/targetSpeed()) call into Track, so track.cpp still
 # needs linking here too (same as car_test/speed_model_test above).
-add_executable(tire_model_test tests/tire_model_test.cpp src/sim/car.cpp src/sim/track.cpp)
+add_executable(tire_model_test tests/tire_model_test.cpp src/sim/car.cpp src/sim/track.cpp
+  src/render/gear_rpm.cpp)
 add_test(NAME tire_model_test COMMAND tire_model_test)
 
 # touch_controls_test only needs SDL2's headers (SDL_Rect) for the region
