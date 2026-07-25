@@ -4633,3 +4633,65 @@ elsewhere in the same run.
   confirmation requires the user to retest on their device once this is
   deployed and share the new fatal screen, which should now name the
   actual failing `bgfx::submit()` site directly.
+
+  **The user's retest came back `Last submit before crash: uiOverlay` --
+  and that turned out to be a red herring, not the answer.** Re-reading
+  `renderer.cpp`'s UI-overlay submit (lines 1116-1143) and `ui_draw.cpp`'s
+  vertex builders confirmed it never calls `setIndexBuffer()` at all (the
+  only such call in the whole codebase is `skinned_mesh.cpp:108`, the
+  per-car mesh draw) -- so it structurally cannot be the source of an
+  *indexed* `glDrawElementsInstanced` call. Reading the vendored bgfx
+  source directly (`third_party/bgfx.cmake/bgfx/src/bgfx.cpp`) ruled out
+  a cross-submit state leak too: every `submit()` here uses the default
+  `BGFX_DISCARD_ALL`, and `EncoderImpl::submit()` snapshots each draw's
+  state into its own render item *before* clearing the encoder
+  (`bgfx.cpp:1592-1594`), so nothing from the car draws' `setIndexBuffer()`
+  calls can bleed into the UI's own item. The real explanation: this bgfx
+  build is single-threaded, so `bgfx::frame()` executes an entire frame's
+  GL work synchronously and inline, strictly *after* our own C++
+  `renderFrame()` finishes encoding **every** `submit()` call for that
+  frame -- `uiOverlay` is always the last one encoded, so "last submit
+  tag" only ever proves encoding finished, true for *any* frame that
+  reaches `bgfx::frame()`, crash or not; it carries zero information about
+  which of that frame's queued draws actually faults during execution.
+  (The `VertexLayout`/`attr` trace immediately preceding the fatal is the
+  same kind of coincidence: `renderer_gl.cpp:3380-3385`'s
+  `createVertexLayout()` is itself a resource-creation command processed
+  during `bgfx::frame()`, on first use of a layout -- the UI's
+  `PosColorVertex` layout just happens to register late in that pass,
+  right before the crash, not because it's what's failing.) Patching the
+  vendored bgfx source directly to log the real `view` id at the actual
+  `glDrawElementsInstanced` call site (`renderer_gl.cpp:8753`, where the
+  `view` variable tracking the current view is already in scope) isn't
+  viable here: `third_party/bgfx.cmake` is a real git submodule pinned to
+  an upstream commit, and CI's `git submodule update` would silently
+  discard any local edit inside it on the next build.
+  **Fix -- since code analysis already narrows the only possible source of
+  an indexed draw to the per-car `SkinnedMesh::draw()`
+  (`skinned_mesh.cpp:104-116`, invoked from `renderer.cpp:986`), added a
+  binary experiment instead of more logging.** A new `?skipCars=1` URL
+  flag (real players never pass it, exactly like the existing `?debug=1`
+  gate) skips the car-mesh draw call entirely. Implemented via `EM_JS`
+  (`renderer.cpp`'s anonymous namespace, `lhtSkipCarsFlag()`) reading
+  `location.search` directly, since the existing `LHT_*` env-var debug
+  flags (`LHT_FORCE_RACE` etc., `main.cpp`) explicitly never reach a real
+  browser tab per that file's own comment (`std::getenv()` has nothing to
+  read from in a page loaded over HTTP) -- a real on-device test needs a
+  URL-readable flag. Native gets the equivalent `LHT_SKIP_CARS` env var
+  for local-testing consistency. `skipCarDraws()` is checked once
+  (function-local `static const bool`, matching the existing `LHT_*`
+  pattern) and gates only the draw call itself, not the per-car wheel/bone
+  animation math above it.
+  **Verified**: native `ctest` 29/29 (a CMake-untouched, `renderer.cpp`-only
+  change). WASM build + Playwright: loading with `?skipCars=1` produced
+  zero `[submit] car #` tags (vs. 620 in the same test without the flag)
+  and zero page/console errors either way -- confirming the flag genuinely
+  suppresses car draws and is otherwise inert. Real confirmation requires
+  the user to retest their real device at `?skipCars=1` once this
+  deploys: if the crash disappears, it conclusively confirms
+  `SkinnedMesh::draw()`'s indexed draw as the culprit (next step: what's
+  actually wrong with it under WebKit's stricter GL validation --
+  `vertex_skinned.h`/`vs_skinned.sc`'s attribute bindings, index buffer
+  creation in `skinned_mesh.cpp:50-61`, and the unnormalized Uint8
+  joint-index attribute are the leading suspects, not yet confirmed); if
+  the crash persists, cars are ruled out entirely and the search reopens.

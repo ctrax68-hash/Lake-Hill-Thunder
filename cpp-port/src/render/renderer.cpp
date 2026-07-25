@@ -22,6 +22,10 @@
 
 #include <bx/math.h>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -77,6 +81,30 @@ public:
     void captureEnd() override {}
     void captureFrame(const void*, uint32_t) override {}
 };
+
+#ifdef __EMSCRIPTEN__
+// Diagnostic-only: unlike main.cpp's LHT_* env-var flags (which never reach
+// a real browser tab -- std::getenv() has nothing to read from in a page
+// loaded over HTTP), this reads the page's own URL directly, so a real
+// on-device tester can opt in via ?skipCars=1. Added to conclusively test
+// whether SkinnedMesh::draw()'s indexed glDrawElementsInstanced (the only
+// code path in this game capable of an indexed draw) is the source of a
+// WebKit-only GL_INVALID_OPERATION abort seen after Start Race, without
+// needing to patch the vendored bgfx submodule (any such edit would be
+// silently discarded by CI's next `git submodule update`).
+EM_JS(int, lhtSkipCarsFlag, (), {
+    return /[?&]skipCars=1(&|$)/.test(location.search) ? 1 : 0;
+});
+#endif
+
+bool skipCarDraws() {
+#ifdef __EMSCRIPTEN__
+    static const bool skip = lhtSkipCarsFlag() != 0;
+#else
+    static const bool skip = std::getenv("LHT_SKIP_CARS") != nullptr;
+#endif
+    return skip;
+}
 
 // Step 3 (PORT_PROGRESS.md, physics-driven car rig animation): the car
 // rig's model matrix, built by hand (not bx::mtx*) for the same reason
@@ -982,8 +1010,10 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             SkinnedMesh::setBoneMatrices(boneFloats.data(), (int)bonePalette.size());
 
             const Mat4f model = mat4Mul(mat4Translate(wx, carY, wy), mat4RotateY(-ch));
-            std::fprintf(stderr, "[submit] car #%d\n", c.num); // diagnostic-only, see the sky submit's own comment
-            carMesh_.draw(kView, model.data(), getOrBuildCarTexture(c));
+            if (!skipCarDraws()) {
+                std::fprintf(stderr, "[submit] car #%d\n", c.num); // diagnostic-only, see the sky submit's own comment
+                carMesh_.draw(kView, model.data(), getOrBuildCarTexture(c));
+            }
         }
     }
     } // !showResults
