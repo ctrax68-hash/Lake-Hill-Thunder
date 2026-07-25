@@ -88,12 +88,18 @@
     if (el.style.display === 'block') return; // first error wins, don't overwrite it
     var log = lhtLogEl.textContent;
     var logTail = log.length > 4000 ? '...(truncated)...\n' + log.slice(-4000) : log;
-    el.textContent = 'Lake Hill Thunder failed to start:\n\n' + msg +
+    // lhtLastSubmitTag survives the tail truncation above: a busy frame's
+    // own trace output (e.g. bgfx logging a texture creation per car) can
+    // easily push the very submit tag we need past the last 4000 chars,
+    // even though it printed just moments earlier in the same frame.
+    var lastSubmit = lhtLastSubmitTag ? '\n\nLast submit before crash: ' + lhtLastSubmitTag : '';
+    el.textContent = 'Lake Hill Thunder failed to start:\n\n' + msg + lastSubmit +
       (log ? '\n\n--- trace log ---\n' + logTail : '');
     el.style.display = 'block';
   }
 
   var lhtLogEl = document.getElementById('lht-log');
+  var lhtLastSubmitTag = null;
   // ?debug=1 opts into the on-screen trace log (see the #lht-log CSS
   // comment above for why this exists at all); real players never pass
   // this, so lhtLogEl just silently accumulates text off-screen for them.
@@ -101,6 +107,8 @@
   function lhtLog(line) {
     lhtLogEl.textContent += line + '\n';
     lhtLogEl.scrollTop = lhtLogEl.scrollHeight;
+    var m = /^\[stderr\] \[submit\] (.+)/.exec(line);
+    if (m) lhtLastSubmitTag = m[1];
   }
 
   var canvas = document.getElementById('canvas');

@@ -4570,3 +4570,66 @@ elsewhere in the same run.
   is the same stale one that caused this and won't necessarily notice the
   new `sw.js` bytes on its own schedule -- every deploy after this fix
   should update itself automatically without that.
+
+  **Live-device WASM abort -- `[submit]` trace tags, and why they didn't
+  show up.** With the deploy pipeline finally trustworthy, the user hit a
+  new, real crash on their iOS Safari device after clicking Start Race:
+  `renderer.cpp`'s own `ScreenshotCallback::fatal()` (bgfx's `CallbackI`
+  hook, wired straight to `std::abort()`) fires on a `glDrawElementsInstanced`
+  call returning `GL_INVALID_OPERATION` -- a genuine, WebKit-specific GL
+  validation failure never reproduced in this sandbox's headless Chromium.
+  bgfx's own trace showed the failing draw's `VertexLayout` (stride-16,
+  Position+Color0 -- `PosColorVertex`, `vertex.h`) but not *which* of the
+  10 `bgfx::submit()` call sites in `renderer.cpp`/`skinned_mesh.cpp` was
+  responsible, since bgfx only logs a given layout hash once, on first
+  registration -- not proof of what the failing draw's own layout was.
+  Added a `std::fprintf(stderr, "[submit] <tag>\n");` immediately before
+  every `bgfx::submit()` call (sky/ground/track/stadium/stadiumTextured/
+  per-car/bloomBright/bloomBlur/gradeTonemap/uiOverlay), which routes
+  through Emscripten's `Module.printErr` into `shell.html`'s own on-page
+  trace log -- confirmed working locally (all 10 tags fire, no crash, via
+  Playwright reading `#lht-log`'s `textContent`, not `page.on('console',
+  ...)`, which never sees `printErr`/`print` output since `shell.html`'s
+  hooks only call the custom `lhtLog()` DOM function).
+  **But the user's real crash trace showed no `[submit]` tag anywhere,**
+  even after confirming the instrumented commit was the one actually
+  deployed. Root cause, found by reading `renderFrame()`'s structure
+  directly: bgfx is a deferred/command-buffer API -- `submit()` only
+  enqueues draw state into a view's list, and the real GL calls (and any
+  GL error) only happen inside the single `bgfx::frame()` call at the very
+  end of `renderFrame()`. So every `[submit]` tag for a frame fires in one
+  tight burst *before* any of that frame's actual GL work runs, never
+  interleaved with it. On the very first frame after Start Race,
+  `cars.size()` jumps from 0 to ~15 in one shot, and each of those 15
+  iterations calls the uninstrumented, lazily-caching `getOrBuildCarTexture()`
+  (`renderer.cpp`, the only call site), which itself emits a verbose
+  multi-line bgfx trace block per `bgfx::createTexture2D()` call. That
+  volume of trailing trace text, all landing *after* the last `[submit]`
+  tag in the same frame, is enough to blow past `lhtShowFatal()`'s blind
+  last-4000-character tail truncation (`log.slice(-4000)`) by the time
+  `onAbort()` builds the fatal overlay -- so the tags were real and firing
+  correctly, they just never survived the truncation, which defeated the
+  whole point of adding them.
+  **Fix**: rather than widen the truncation window (which just delays the
+  same failure for a busier frame), `shell.html`'s `lhtLog()` now also
+  matches each line against `/^\[stderr\] \[submit\] (.+)/` and remembers
+  the last match in a dedicated `lhtLastSubmitTag` variable, independent
+  of the log's own length; `lhtShowFatal()` now always splices a `"Last
+  submit before crash: <tag>"` line into the fatal message right after the
+  abort reason, immune to the tail truncation entirely.
+  **Verified**: rebuilt the WASM app (relink forced -- `shell.html` is
+  baked into `lht_port.html` via emcc's `--shell-file` at link time, not
+  copied verbatim, so a `make` with only source files as tracked
+  dependencies silently no-ops on a shell-only change unless the output is
+  removed first) and confirmed via `grep` that the new code is present in
+  the built `lht_port.html`. Playwright load + real Start-button click
+  (`104,184`, the same coordinates `tests/wasm_verify.js` uses) confirmed
+  818 `[submit]`-tagged lines appear in `#lht-log` across sky/ground/
+  track/stadium/stadiumTextured/15×car/bloomBright/bloomBlur/
+  gradeTonemap/uiOverlay, and that the new regex correctly captures the
+  last one (`uiOverlay`) from real log output -- confirming the tracking
+  mechanism itself works end-to-end, without needing a real WebKit-only
+  crash to trigger locally (not available in this sandbox). Next real
+  confirmation requires the user to retest on their device once this is
+  deployed and share the new fatal screen, which should now name the
+  actual failing `bgfx::submit()` site directly.
