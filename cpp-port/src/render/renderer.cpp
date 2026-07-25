@@ -106,6 +106,39 @@ bool skipCarDraws() {
     return skip;
 }
 
+// Builds a full RGBA8 box-filter mip chain (level 0 through 1x1) from a
+// square, power-of-two base image, concatenated in the order
+// bgfx::createTexture2D(_hasMips=true, ...) expects. Written by hand rather
+// than reused from bimg's own imageRgba8Downsample2x2 -- this codebase's
+// other texture-import code (texture_import.h's own comment) already opted
+// to bypass bimg's public API for a prior format-support reason, and this
+// is a small, self-contained, dependency-free alternative.
+std::vector<uint8_t> buildRgba8MipChain(const std::vector<uint8_t>& level0, int size) {
+    std::vector<uint8_t> chain = level0;
+    std::vector<uint8_t> prev = level0;
+    int prevSize = size;
+    while (prevSize > 1) {
+        const int nextSize = prevSize / 2;
+        std::vector<uint8_t> next((size_t)nextSize * nextSize * 4);
+        for (int y = 0; y < nextSize; ++y) {
+            for (int x = 0; x < nextSize; ++x) {
+                const int sx = x * 2, sy = y * 2;
+                for (int ch = 0; ch < 4; ++ch) {
+                    const int a = prev[((size_t)(sy) * prevSize + sx) * 4 + ch];
+                    const int b = prev[((size_t)(sy) * prevSize + sx + 1) * 4 + ch];
+                    const int c = prev[((size_t)(sy + 1) * prevSize + sx) * 4 + ch];
+                    const int d = prev[((size_t)(sy + 1) * prevSize + sx + 1) * 4 + ch];
+                    next[((size_t)y * nextSize + x) * 4 + ch] = (uint8_t)((a + b + c + d + 2) / 4);
+                }
+            }
+        }
+        chain.insert(chain.end(), next.begin(), next.end());
+        prev = std::move(next);
+        prevSize = nextSize;
+    }
+    return chain;
+}
+
 // Step 3 (PORT_PROGRESS.md, physics-driven car rig animation): the car
 // rig's model matrix, built by hand (not bx::mtx*) for the same reason
 // wheel_animation.cpp avoids it -- a quick read of bx's mtxMul left its
@@ -616,9 +649,19 @@ void Renderer::setTrack(const Track& track) {
         Mulberry32 atlasRng(777);
         const std::vector<uint8_t> atlasPixels =
             buildAtlasPixels(track.theme().wall, st.crowdPalette, st.crowdFill, atlasRng);
-        atlasTexture_ = bgfx::createTexture2D((uint16_t)kAtlasSize, (uint16_t)kAtlasSize, false, 1,
+        // hasMips=true (was false): the crowd-tile region (paintCrowdTile(),
+        // atlas_texture.cpp) is per-8px-cell random noise -- exactly the
+        // kind of high-frequency content that aliases badly under
+        // minification without a mip chain, reading as a big patch of
+        // TV-static-like flicker on real devices rather than subtle
+        // background crowd texture. Built by hand (buildRgba8MipChain())
+        // rather than requesting bgfx/bimg auto-generate it, since
+        // createTexture2D's hasMips flag only documents "texture already
+        // contains a full mip chain in _mem" -- it doesn't generate one.
+        const std::vector<uint8_t> atlasMips = buildRgba8MipChain(atlasPixels, kAtlasSize);
+        atlasTexture_ = bgfx::createTexture2D((uint16_t)kAtlasSize, (uint16_t)kAtlasSize, true, 1,
                                                bgfx::TextureFormat::RGBA8, 0,
-                                               bgfx::copy(atlasPixels.data(), (uint32_t)atlasPixels.size()));
+                                               bgfx::copy(atlasMips.data(), (uint32_t)atlasMips.size()));
     }
 
     // Phase 4f (PORT_PROGRESS.md): the minimap's outline, built eagerly
@@ -753,11 +796,6 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         // everything, in its own lower-numbered view; it doesn't need to
         // participate in the world's depth buffer at all.
         bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
-        // Diagnostic-only (PORT_PROGRESS.md): pinpoints which of this frame's
-        // several submit() calls was executing when a real device hit a
-        // fatal GL error this session's own Chromium testing never
-        // reproduced -- see this file's own bgfx-fatal investigation notes.
-        std::fprintf(stderr, "[submit] sky\n");
         bgfx::submit(kSkyView, skyProgram_);
     }
 
@@ -885,7 +923,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         const bx::Vec3 up = {(float)upBlend.x, (float)upBlend.y, (float)upBlend.z};
         bx::mtxLookAt(view, eye, at, up);
         const float aspect = (height_ > 0) ? (float)width_ / (float)height_ : 1.0f;
-        // FOV 60, near 0.5, far 1500 -- matches JS's own
+        // FOV 60 (vertical), near 0.5, far 1500 -- matches JS's own
         // `new THREE.PerspectiveCamera(60, 1, 0.5, 1500)` exactly. bx's
         // `mtxProj(fovy, aspect, ...)` overload takes `_fovy` in DEGREES
         // and converts internally (`toRad(_fovy)` inside math.cpp) -- do
@@ -893,7 +931,30 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         // near-zero effective FOV (a real bug hit and fixed this session:
         // it manifested as the entire frame being covered by whatever
         // geometry was nearest the camera, with ~75x too much magnification).
-        bx::mtxProj(proj, 60.0f, aspect, 0.5f, 1500.0f, homogeneousDepth);
+        //
+        // Holding vertical FOV fixed at 60 while deriving horizontal FOV
+        // from `aspect` (the standard convention) works fine for
+        // desktop-ish aspects, but a real phone in landscape with the
+        // browser chrome eating vertical space can reach an aspect as
+        // extreme as ~2.7:1 -- at that ratio 60 vertical implies a ~115
+        // horizontal FOV, a near-fisheye view where nearby ground/wall
+        // geometry looms huge and fills most of the frame while distant
+        // things (the track ahead, other cars) shrink toward the center --
+        // exactly the "huge close-up color bands, no visible cars, doesn't
+        // look 3D" complaint a real device reported. Cap horizontal FOV at
+        // kMaxFovXDeg by shrinking vertical FOV instead once `aspect`
+        // exceeds the point where 60-vertical would already blow past it;
+        // narrower/normal aspects are completely unaffected (fovY stays 60).
+        constexpr float kBaseFovYDeg = 60.0f;
+        constexpr float kMaxFovXDeg = 100.0f;
+        float fovYDeg = kBaseFovYDeg;
+        const float halfFovYBase = bx::toRad(kBaseFovYDeg) * 0.5f;
+        const float fovXAtBaseDeg = bx::toDeg(bx::atan(bx::tan(halfFovYBase) * aspect)) * 2.0f;
+        if (fovXAtBaseDeg > kMaxFovXDeg) {
+            const float halfFovXCap = bx::toRad(kMaxFovXDeg) * 0.5f;
+            fovYDeg = bx::toDeg(bx::atan(bx::tan(halfFovXCap) / aspect)) * 2.0f;
+        }
+        bx::mtxProj(proj, fovYDeg, aspect, 0.5f, 1500.0f, homogeneousDepth);
         bgfx::setViewTransform(kView, view, proj);
     } else {
         // TopDown: unchanged framing/purpose (a static overview of the
@@ -924,7 +985,6 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         bgfx::setTransform(identity);
         bgfx::setVertexBuffer(0, groundVb_, 0, groundVertexCount_);
         bgfx::setState(state);
-        std::fprintf(stderr, "[submit] ground\n"); // diagnostic-only, see the sky submit's own comment
         bgfx::submit(kView, litProgram_);
     }
 
@@ -932,7 +992,6 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         bgfx::setTransform(identity);
         bgfx::setVertexBuffer(0, trackVb_, 0, trackVertexCount_);
         bgfx::setState(state);
-        std::fprintf(stderr, "[submit] track\n"); // diagnostic-only, see the sky submit's own comment
         bgfx::submit(kView, litProgram_);
     }
 
@@ -944,7 +1003,6 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         bgfx::setTransform(identity);
         bgfx::setVertexBuffer(0, stadiumVb_, 0, stadiumVertexCount_);
         bgfx::setState(state);
-        std::fprintf(stderr, "[submit] stadium\n"); // diagnostic-only, see the sky submit's own comment
         bgfx::submit(kView, litProgram_);
     }
 
@@ -956,7 +1014,6 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         bgfx::setVertexBuffer(0, stadiumTexturedVb_, 0, stadiumTexturedVertexCount_);
         bgfx::setTexture(0, uSkyTexColor_, atlasTexture_);
         bgfx::setState(state);
-        std::fprintf(stderr, "[submit] stadiumTextured\n"); // diagnostic-only, see the sky submit's own comment
         bgfx::submit(kView, texturedLitProgram_);
     }
 
@@ -1016,7 +1073,6 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
                 // rejects ("Uniform ... was already set for this draw call") -- a real bug in
                 // this diagnostic gate itself, not evidence about the crash it's meant to isolate.
                 SkinnedMesh::setBoneMatrices(boneFloats.data(), (int)bonePalette.size());
-                std::fprintf(stderr, "[submit] car #%d\n", c.num); // diagnostic-only, see the sky submit's own comment
                 carMesh_.draw(kView, model.data(), getOrBuildCarTexture(c));
             }
         }
@@ -1056,7 +1112,6 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             bgfx::setVertexBuffer(0, skyVb_, 0, 6);
             bgfx::setTexture(0, uSkyTexColor_, sceneColorTex);
             bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
-            std::fprintf(stderr, "[submit] bloomBright\n"); // diagnostic-only, see the sky submit's own comment
             bgfx::submit(kBloomBrightView, bloomBrightProgram_);
         }
 
@@ -1073,7 +1128,6 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             bgfx::setVertexBuffer(0, skyVb_, 0, 6);
             bgfx::setTexture(0, uSkyTexColor_, bgfx::getTexture(bloomBrightFb_));
             bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
-            std::fprintf(stderr, "[submit] bloomBlur\n"); // diagnostic-only, see the sky submit's own comment
             bgfx::submit(kBloomBlurView, bloomBlurProgram_);
         }
 
@@ -1101,7 +1155,6 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             bgfx::setTexture(0, uSkyTexColor_, sceneColorTex);
             bgfx::setTexture(1, uTexBloom_, bgfx::getTexture(bloomBlurFb_));
             bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
-            std::fprintf(stderr, "[submit] gradeTonemap\n"); // diagnostic-only, see the sky submit's own comment
             bgfx::submit(kGradeTonemapView, gradeTonemapProgram_);
         }
     }
@@ -1172,7 +1225,6 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             // enabled now so that addition doesn't need a second state
             // variant later.
             bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_BLEND_ALPHA);
-            std::fprintf(stderr, "[submit] uiOverlay\n"); // diagnostic-only, see the sky submit's own comment
             bgfx::submit(kUiView, program_);
         }
     }

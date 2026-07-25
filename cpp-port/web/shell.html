@@ -36,7 +36,14 @@
 <meta name="apple-mobile-web-app-title" content="Lake Hill Thunder">
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
-  canvas { display: block; width: 100vw; height: 100vh; outline: none; }
+  /* 100dvh (dynamic viewport height), not 100vh: iOS Safari resolves
+     100vh to the *largest* possible viewport (address bar/toolbar
+     collapsed), not what's actually visible -- with overflow:hidden
+     above, that oversized bottom slice (exactly where the GAS/BRAKE/
+     steering touch buttons live, touch_controls.cpp) renders behind
+     Safari's own chrome whenever it's showing, unreachable. 100vh is
+     kept only as a fallback for engines without dvh support. */
+  canvas { display: block; width: 100vw; height: 100vh; height: 100dvh; outline: none; }
   #lht-fatal {
     display: none; position: fixed; inset: 0; z-index: 10;
     background: #000; color: #f55; font: 14px/1.5 monospace;

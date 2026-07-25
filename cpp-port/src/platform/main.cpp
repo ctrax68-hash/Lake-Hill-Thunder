@@ -281,6 +281,13 @@ void mainLoopTick(void* argPtr) {
         if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_RESIZED) {
             S.width = ev.window.data1;
             S.height = ev.window.data2;
+            // SDL2's own Emscripten backend (SDL_emscriptenvideo.c) already
+            // detects the canvas's real CSS size at window-creation time --
+            // reading it back here (rather than assuming it works) is cheap
+            // (fires only on real resize events, not every frame) and gives
+            // a directly-confirmable answer for the next real-device debug
+            // session instead of re-deriving it from source each time.
+            std::fprintf(stderr, "[lht] resize: %dx%d\n", S.width, S.height);
             S.renderer.resize(S.width, S.height);
             S.touchRegions = computeTouchRegions(S.width, S.height);
             S.portrait = isPortrait(S.width, S.height);

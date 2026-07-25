@@ -4723,3 +4723,91 @@ elsewhere in the same run.
   now the real, valid version of the `?skipCars=1` experiment -- the
   previous retest's result doesn't count, since it never got past this
   self-inflicted bug to test the actual question.
+
+  **Game confirmed running on the user's real device (no more abort) --
+  new quality complaints, most traced to one shared root cause.** With the
+  WASM abort resolved, the user's next screenshot showed the game actually
+  running but looking broken: "Cameras are off. No way to drive cars.
+  Can't even see cars. Lots of camera shake. Not 3d like nascar thunder."
+  Investigated with three parallel Explore agents (camera math, touch
+  controls, texture/lighting), then confirmed directly:
+  - **Real root cause of the touch-control and framing complaints**:
+    `main.cpp`'s web build never queried the real device/canvas size at
+    all -- `LoopState::width/height` hardcoded to 1280x720, no
+    `emscripten_get_canvas_element_size`/resize bridge anywhere. Compounded
+    by `shell.html`'s canvas CSS using static `height: 100vh` (not
+    `100dvh`) with `overflow: hidden` -- the classic iOS Safari bug where
+    `100vh` resolves to the *largest* (chrome-collapsed) viewport height,
+    so whenever Safari's toolbar is showing, the bottom-anchored
+    GAS/BRAKE/steering buttons (`touch_controls.cpp`'s layout) render
+    behind/below Safari's own chrome, unreachable -- while top-anchored
+    CAM and higher-up-in-the-stack PIT survive, exactly matching the
+    screenshot. **Fixed**: `shell.html`'s canvas CSS now cascades
+    `height: 100vh` then `height: 100dvh` (dvh wins where supported,
+    100vh stays as a fallback). Turned out SDL2's own vendored Emscripten
+    backend (`SDL_emscriptenvideo.c`'s `Emscripten_CreateWindow`) already
+    auto-detects the canvas's real CSS size at window-creation time via
+    `emscripten_get_element_css_size()` and fires a synchronous
+    `SDL_WINDOWEVENT_RESIZED` -- no new bridge code was needed, just the
+    CSS fix so that detected size is actually correct. Added a one-line
+    `[lht] resize: WxH` diagnostic log at the existing resize handler
+    (`main.cpp`) so this is directly confirmable on the next real-device
+    session instead of assumed from source reading.
+  - **Camera math itself: no bug found**, confirmed by an Explore agent
+    reading `renderer.cpp`'s Chase branch in full -- position/lookAt/FOV
+    values are all ordinary at typical speeds, grid position 20/20 isn't
+    special-cased, and the earlier "~75x magnification" bug's fix is
+    confirmed present. Added one real, independent improvement anyway:
+    vertical FOV was fixed at 60 with horizontal FOV derived from
+    `aspect`, which blows past ~110 at extreme phone-landscape aspect
+    ratios (~2.7:1, chrome-shrunk viewports) -- a near-fisheye view that
+    would make nearby geometry loom disproportionately large. Now caps
+    total horizontal FOV at 100 by shrinking vertical FOV instead once
+    `aspect` would exceed it; normal/desktop aspects are unaffected.
+  - **The crowd-tile "static" patch**: real, deliberate noise texture
+    (`atlas_texture.cpp`'s `paintCrowdTile()`), not corrupted memory --
+    but created with `hasMips=false`, so its high-frequency per-cell-random
+    content aliases badly under minification on real mobile GPUs. Added a
+    hand-written RGBA8 box-filter mip chain (`buildRgba8MipChain()`,
+    `renderer.cpp`) and switched the atlas texture to `hasMips=true` (no
+    bimg/bgfx auto-generation exists for a single-level source -- `_mem`
+    must already contain the full chain).
+  - **Cleanup**: removed all 10 `[submit] <tag>` diagnostic `fprintf`
+    calls added during the now-resolved WASM-abort investigation (dead
+    weight risking real per-frame stalls on-device, no longer needed).
+  - **Verified**: native `ctest` 29/29. WASM + Playwright at three
+    viewports (1280x720, 2622x971 matching the reported device, 844x390 a
+    smaller real iPhone-landscape size) confirmed the `[lht] resize:`
+    line reports the exact real size at the two non-default sizes (no
+    resize event fires at 1280x720 since it's already the initial size --
+    expected, not a failure) with zero page errors in all three cases.
+
+  **MAJOR FINDING, not yet fixed: the player's car crashes into the outer
+  wall almost immediately after every green flag, independent of
+  steering input.** While building a live repro to check the camera fix,
+  discovered this reproduces identically in this sandbox's own headless
+  Chromium too (previously assumed camera issues only showed on real
+  devices) -- meaning it was never actually screenshotted/looked at
+  visually in a recent session, only checked for console/page errors.
+  Added temporary debug prints of the player car's `s`/`lat`/`v` each
+  frame (since removed) and confirmed: `lat` (lateral offset from
+  centerline) rockets from a normal grid-start `2.6` to pinned against
+  the outer wall (`~11.0-11.5`, wall at `halfW=12.0`) within roughly
+  13 units of track distance -- under half a second at grid-start speed
+  -- and **this happens identically whether no input is given, mouse-held
+  steering, or keyboard-held steering from before the green flag**,
+  ruling out "player didn't react fast enough" or "input isn't reaching
+  the sim" (confirmed via `[lht] resize`-style direct instrumentation,
+  not guesswork). Once pinned at the wall, `s` and `v` both start
+  decreasing (car decelerating, stuck/embedded per the existing Step 2
+  "wall-collision fix (embedding + instant-stop)" behavior). This is
+  almost certainly the real, deeper explanation for "can't see cars,"
+  "camera looks broken," and "camera shake" -- not a camera or aspect-
+  ratio bug at all, but the player's own car wrecking into the wall
+  before a human could plausibly react, with the (correctly-implemented)
+  chase camera faithfully showing a view dominated by the wall/grass right
+  next to a stationary, wall-embedded car. NOT YET INVESTIGATED FURTHER:
+  the root cause in `race.cpp`/`step_car.cpp` (`gridStart()`'s green-flag
+  handoff, and why steering appears unable to prevent or correct this in
+  time) -- flagged to the user as a new, separate, higher-priority bug
+  than anything in this entry's fix list above.
