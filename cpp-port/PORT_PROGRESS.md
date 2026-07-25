@@ -4695,3 +4695,31 @@ elsewhere in the same run.
   creation in `skinned_mesh.cpp:50-61`, and the unnormalized Uint8
   joint-index attribute are the leading suspects, not yet confirmed); if
   the crash persists, cars are ruled out entirely and the search reopens.
+
+  **The `?skipCars=1` retest came back with a crash still happening -- but
+  a different bgfx fatal this time, `Uniform 11 (u_boneMatrices) was
+  already set for this draw call.` (`bgfx_p.h:3220`), not
+  `GL_INVALID_OPERATION`.** The trace confirmed `skipCars=1` genuinely
+  suppressed every car draw (zero `car #N` tags across the whole log, just
+  the non-car views repeating frame after frame) -- but this new crash
+  turned out to be a bug in the diagnostic gate itself, not a real signal
+  about the original crash. The per-car loop's `SkinnedMesh::setBoneMatrices()`
+  call (`bgfx::setUniform(g_uBoneMatrices, ...)`) was still unconditional,
+  sitting *before* the `if (!skipCarDraws())` guard, which only wrapped the
+  draw/submit call. Normally each car's `setBoneMatrices()` is immediately
+  followed by that same car's `draw()`/`submit()`, which flushes the
+  uniform state before the next car's `setBoneMatrices()` runs; with
+  `skipCars=1`, `submit()` never fires, so all ~15 cars' `setBoneMatrices()`
+  calls stacked up with no intervening `submit()` -- exactly what bgfx's
+  checked build flags. Fixed by moving `setBoneMatrices()` inside the same
+  guard as the draw call, so the entire per-car bgfx-touching block
+  (bone-matrix upload through the draw) is skipped together; the
+  CPU-only wheel/suspension animation math above it is untouched.
+  **Verified**: native `ctest` 29/29; WASM build + Playwright confirmed
+  `?skipCars=1` now produces zero `car #` tags, zero page errors, and no
+  uniform-double-set fatal (it wouldn't have shown up in Chromium before
+  either, since this validation runs in bgfx's checked build regardless
+  of GL backend -- confirmed silent now). Committed and pushed; this is
+  now the real, valid version of the `?skipCars=1` experiment -- the
+  previous retest's result doesn't count, since it never got past this
+  self-inflicted bug to test the actual question.

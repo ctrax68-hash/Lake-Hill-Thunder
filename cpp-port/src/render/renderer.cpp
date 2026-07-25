@@ -1007,10 +1007,15 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             for (size_t i = 0; i < bonePalette.size(); ++i) {
                 for (int k = 0; k < 16; ++k) boneFloats[i * 16 + k] = (float)bonePalette[i][k];
             }
-            SkinnedMesh::setBoneMatrices(boneFloats.data(), (int)bonePalette.size());
-
             const Mat4f model = mat4Mul(mat4Translate(wx, carY, wy), mat4RotateY(-ch));
             if (!skipCarDraws()) {
+                // setBoneMatrices() must stay paired with this same car's draw()/submit() --
+                // skipping only the draw while still calling setBoneMatrices() for every car
+                // stacks multiple bgfx::setUniform(u_boneMatrices, ...) calls with no
+                // intervening submit() to flush them, which bgfx's checked build correctly
+                // rejects ("Uniform ... was already set for this draw call") -- a real bug in
+                // this diagnostic gate itself, not evidence about the crash it's meant to isolate.
+                SkinnedMesh::setBoneMatrices(boneFloats.data(), (int)bonePalette.size());
                 std::fprintf(stderr, "[submit] car #%d\n", c.num); // diagnostic-only, see the sky submit's own comment
                 carMesh_.draw(kView, model.data(), getOrBuildCarTexture(c));
             }
