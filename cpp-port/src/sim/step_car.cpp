@@ -86,7 +86,10 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         const double txo = pTo.x - std::sin(pTo.hdg) * lane, tyo = pTo.y + std::cos(pTo.hdg) * lane;
         double dHo = wrapPi(std::atan2(tyo - c.y, txo - c.x) - c.hdg);
         const double cFo = track.pointAt(c.s + std::max(6.0, c.v * 0.3)).curv;
-        steerIn = yawCorrected((c.v * cFo) / std::max(0.05, c.v * 0.24) + dHo * 1.4, std::max(0.05, c.v * 0.24));
+        const double muNowO = CAR.mu * (1 - 0.12 * c.wear) + CAR.dfK * c.v * c.v;
+        const double yawLimO = std::min({1.3, std::max(0.05, c.v * 0.24),
+                                          cornerCap(muNowO, track.bankAt(c.s + 10)) / std::max(3.0, c.v) * 1.15});
+        steerIn = yawCorrected((c.v * cFo) / yawLimO + dHo * 1.4, yawLimO);
         thr = 0;
         brk = c.lat < -7 ? 0.9 : 0.25;
     } else if (c.spinT > 0) {
@@ -153,7 +156,10 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         const double txp = pTp.x - std::sin(pTp.hdg) * lane, typ = pTp.y + std::cos(pTp.hdg) * lane;
         double dHp = wrapPi(std::atan2(typ - c.y, txp - c.x) - c.hdg);
         const double cFF = track.pointAt(c.s + std::max(6.0, c.v * 0.3)).curv;
-        steerIn = yawCorrected((c.v * cFF) / std::max(0.05, c.v * 0.24) + dHp * 1.5, std::max(0.05, c.v * 0.24));
+        const double muNowP = CAR.mu * (1 - 0.12 * c.wear) + CAR.dfK * c.v * c.v;
+        const double yawLimP = std::min({1.3, std::max(0.05, c.v * 0.24),
+                                          cornerCap(muNowP, track.bankAt(c.s + 10)) / std::max(3.0, c.v) * 1.15});
+        steerIn = yawCorrected((c.v * cFF) / yawLimP + dHp * 1.5, yawLimP);
         if (c.v < vT - 0.3) {
             thr = 0.4;
             brk = 0;
@@ -202,7 +208,10 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         const double txy = pTy.x - std::sin(pTy.hdg) * lane, tyy = pTy.y + std::cos(pTy.hdg) * lane;
         double dHy = wrapPi(std::atan2(tyy - c.y, txy - c.x) - c.hdg);
         const double cFFy = track.pointAt(c.s + std::max(6.0, c.v * 0.3)).curv;
-        steerIn = yawCorrected((c.v * cFFy) / std::max(0.05, c.v * 0.24) + dHy * 1.3, std::max(0.05, c.v * 0.24));
+        const double muNowY = CAR.mu * (1 - 0.12 * c.wear) + CAR.dfK * c.v * c.v;
+        const double yawLimY = std::min({1.3, std::max(0.05, c.v * 0.24),
+                                          cornerCap(muNowY, track.bankAt(c.s + 10)) / std::max(3.0, c.v) * 1.15});
+        steerIn = yawCorrected((c.v * cFFy) / yawLimY + dHy * 1.3, yawLimY);
         if (c.v < vT - 0.3) {
             thr = std::min(1.0, 0.45 + (vT - c.v) * 0.04);
             brk = 0;
@@ -239,7 +248,10 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         const double tx = pT.x - std::sin(pT.hdg) * lane, ty = pT.y + std::cos(pT.hdg) * lane;
         double dHdg = wrapPi(std::atan2(ty - c.y, tx - c.x) - c.hdg);
         const double curvFF = track.pointAt(c.s + std::max(6.0, c.v * 0.3)).curv;
-        steerIn = yawCorrected((c.v * curvFF) / std::max(0.05, c.v * 0.24) + dHdg * 1.3, std::max(0.05, c.v * 0.24));
+        const double muNowC = CAR.mu * (1 - 0.12 * c.wear) + CAR.dfK * c.v * c.v;
+        const double yawLimC = std::min({1.3, std::max(0.05, c.v * 0.24),
+                                          cornerCap(muNowC, track.bankAt(c.s + 10)) / std::max(3.0, c.v) * 1.15});
+        steerIn = yawCorrected((c.v * curvFF) / yawLimC + dHdg * 1.3, yawLimC);
         if (c.v < vT - 0.3) {
             thr = 0.5;
             brk = 0;
@@ -374,6 +386,20 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
     const double muEff = CAR.mu * muSurf;
     const double aeroEfficiency = (c.dirty ? 0.85 : 1) * (1 - 0.35 * c.dmg);
 
+    // Tire-model upgrade regression-pass fix: cornerCap() (car.cpp) already
+    // accounts for banking's centripetal assist when planning a safe corner
+    // speed (targetSpeed()/yawLim in every stepCar() branch above) via
+    // G*(mu+tan(bank))/(1-mu*tan(bank)) -- but the actual tire-force
+    // integration below only ever received the flat, unbanked muEff, so a
+    // car driven at the speed a banked turn's targetSpeed() judged "safe"
+    // could never actually generate as much real lateral force as planning
+    // assumed. Mirrors cornerCap()'s own formula for the lateral-force
+    // integration specifically so planning and physics agree on how much
+    // banking is worth (longitudinal accel/brake traction below is left on
+    // the flat muEff -- banking's main effect is cornering grip).
+    const double bankTan = std::tan(bank);
+    const double muEffLateral = (muEff + bankTan) / std::max(0.25, 1.0 - muEff * bankTan);
+
     c.fuel = std::max(0.0, c.fuel - c.thr * c.v * DT * 5e-5);
     const double dragMod = (1 - 0.25 * c.draftF) * (c.dirty ? 1.10 : 1) * (1 + 0.5 * c.dmg);
     const double drag = 0.5 * RHO * CAR.cdA * c.v * c.v * dragMod;
@@ -490,7 +516,7 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         // divergence in this coupled oscillator at highway speed under
         // sustained full-lock steering (see CarConstants::yawSubsteps).
         const YawIntegrationResult yawInt = integrateYawDynamics(
-            CAR, c.vy, c.r, vDyn, vSafe, steerAngle, fz, muEff, fxFracFront, fxFracRear, DT, CAR.yawSubsteps);
+            CAR, c.vy, c.r, vDyn, vSafe, steerAngle, fz, muEffLateral, fxFracFront, fxFracRear, DT, CAR.yawSubsteps);
         c.vy = yawInt.vy;
         c.r = yawInt.r;
         c.hdg += yawInt.hdgDelta;

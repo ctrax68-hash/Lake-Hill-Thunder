@@ -4811,3 +4811,81 @@ elsewhere in the same run.
   handoff, and why steering appears unable to prevent or correct this in
   time) -- flagged to the user as a new, separate, higher-priority bug
   than anything in this entry's fix list above.
+
+  **Follow-up investigation ("dig into it"): partial fix shipped, deeper
+  root cause identified but NOT fixed -- needs its own dedicated pass.**
+
+  The crash is not player-specific and not tied to `state.mode` (it happens
+  entirely within `"pace"`, confirmed via geometry: the mode only flips to
+  `"race"` after a near-full lap, ~25-30s, far longer than the sub-second
+  crash). Comparative telemetry showed the AI car sharing the player's grid
+  row (row 9, back of the 20-car grid) crashes identically, ruling out
+  anything player-specific (`isPlayer` steering-filter weight, raw-input
+  branch, etc).
+
+  Root cause, confirmed via a chain of ablation tests in the native
+  `determinism_check` harness (`DEBUG_CAR_IDX`, temporarily instrumented):
+  `gridStart()`'s fixed `row*11` back-row spacing (`race.cpp`, unchanged --
+  protected by `race_sim_test.cpp`'s exact-value JS-parity check, and
+  present identically in the original JS, so not itself a portable bug)
+  places the back two rows (grid slots 18/19, row 9) **inside the real
+  curvature of turn 1** on every track (confirmed via direct segment-
+  geometry probing on all 4 `TRACKS` entries: the back row lands 41-59
+  units *before* the straight segment even begins). Any car started there
+  drifts wide of the turn and eventually reaches the wall-clamp boundary,
+  **regardless of steering**: ablation tests progressively stripped the
+  pace branch's control law down to (a) feedforward + feedback, (b)
+  feedforward only, (c) a small "correctly calibrated" constant curvature
+  trim with the old unclamped scale, and (d) a pure open-loop trim with
+  zero heading-error correction at all -- all four produced the
+  essentially identical wide-drift-to-the-wall trajectory. This rules out
+  every steering-law/gain hypothesis explored earlier in this file (the
+  `isPlayer` filter weight, `yawCorrGain`, the raw `c.v*0.24` yaw-rate
+  scale) as the primary driver.
+
+  **Shipped (this pass):** the `out/done`, `pit`, `yellow-flag`, and
+  `pace` branches' `steerIn` formulas used an unclamped `c.v*0.24` as
+  their yaw-rate scale -- a value the code's own comments say was
+  calibrated for the old (pre-tire-model) kinematic model, reused verbatim
+  after the bicycle-model tire upgrade. The AI-race branch already caps
+  this the same way `targetSpeed()`/`cornerCap()` do (`min(1.3, c.v*0.24,
+  cornerCap(mu,bank)/v*1.15)`) but the other four branches never got that
+  same fix. Applied the identical cap to all four, plus a second, related
+  fix: `cornerCap()`'s banked-corner-speed formula
+  (`G*(mu+tan(bank))/(1-mu*tan(bank))`) already assumes banking assists
+  cornering when *planning* a safe speed (`targetSpeed()`, used by every
+  branch), but the actual tire-force integration (`integrateYawDynamics()`)
+  only ever received the flat, unbanked `muEff` -- so a car driven at a
+  banked turn's "safe" planned speed could never generate as much real
+  lateral grip as the plan assumed. Added `muEffLateral` (mirroring
+  `cornerCap()`'s own formula) and threaded it through the lateral-force
+  integration specifically. Both fixes are real, principled, low-risk, and
+  verified (native `ctest` 29/29 unaffected -- `race_sim_test.cpp`'s exact
+  grid-geometry golden values are untouched since neither fix touches
+  `gridStart()` -- WASM + Playwright smoke test clean, zero page errors).
+
+  **NOT fixed, and out of scope for this pass: the underlying drift itself
+  persists even with both fixes applied.** Deeper ablation (temporarily
+  instrumented, not committed) traced it past the steering-law entirely:
+  with a small, sign-correct, curvature-matched constant steering trim and
+  *zero* closed-loop correction, the achieved yaw rate `r` (from
+  `integrateYawDynamics()`) does not track the required yaw rate
+  (`v*curv`) at all -- it initially grows in the *opposite* sign from what
+  the curvature demands, and after negating `steerAngle` as a diagnostic
+  probe, `r` gets the right sign but overshoots the required value by
+  roughly 2.5-3x and still eventually drifts wide. This points at a real
+  sign and/or calibration mismatch somewhere in the bicycle-model yaw
+  dynamics introduced during the tire-model upgrade (`slipAngles()`/
+  `integrateYawDynamics()` in `car.cpp`) -- plausibly affecting cornering
+  behavior more broadly than just this one grid slot, not only this
+  specific crash. This is too large and too uncertain a change to make
+  blind in this pass (it's the shared physics core for every car, every
+  corner, protected by `tire_model_test.cpp`/`speed_model_test.cpp`, and a
+  wrong fix here would be a much worse regression than the bug it targets)
+  -- flagged as a dedicated, properly-scoped follow-up: re-derive
+  `slipAngles()`/`integrateYawDynamics()`'s sign conventions against this
+  game's own global x/y/hdg frame (not just against a vehicle-dynamics
+  textbook's own implicit frame) and re-validate end-to-end (not just via
+  the existing isolated-unit tests) that a car given a curvature-matched
+  steering trim actually holds a stable circular path before considering
+  this closed.
