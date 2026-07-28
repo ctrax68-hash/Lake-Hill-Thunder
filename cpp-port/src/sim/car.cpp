@@ -42,9 +42,22 @@ SlipAngles slipAngles(const CarConstants& c, double vy, double r, double v, doub
 // is already spent (engine/brake force / muFz) -- reduces the lateral
 // capacity available, same physical effect as trail-braking or
 // power-on-oversteer in a real car.
+//
+// Regression-pass fix: this returned `-stiffness*slipAngle`, the wrong sign
+// for slipAngles()'s convention (alphaFront = steerAngle - atan2(vy+aF*r,v),
+// alphaRear = -atan2(vy-aR*r,v) -- the standard single-track-model
+// decomposition). Given this game's own hdg convention (c.hdg += r*dt,
+// x += cos(hdg)*v*dt -- increasing hdg is CCW, r is its rate by definition),
+// a positive alphaFront must produce a positive (same-direction) force for a
+// positive steer to yaw the car the same way it's steered. The negated sign
+// did the opposite: linearizing rDot/vyDot around zero shows the flipped
+// sign put a genuine unstable eigenvalue in the pre-saturation yaw dynamics
+// (not just a numerical/discretization issue) -- confirmed as the real
+// mechanism behind cars drifting wide of any sustained real curvature
+// regardless of steering-law tuning (see PORT_PROGRESS.md).
 double axleLateralForce(double stiffness, double slipAngle, double mu, double fz, double fxFrac) {
     const double fyMax = mu * fz * std::sqrt(std::max(0.0, 1.0 - fxFrac * fxFrac));
-    const double fyWanted = -stiffness * slipAngle;
+    const double fyWanted = stiffness * slipAngle;
     return std::max(-fyMax, std::min(fyMax, fyWanted));
 }
 

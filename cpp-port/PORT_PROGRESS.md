@@ -4864,28 +4864,59 @@ elsewhere in the same run.
   grid-geometry golden values are untouched since neither fix touches
   `gridStart()` -- WASM + Playwright smoke test clean, zero page errors).
 
-  **NOT fixed, and out of scope for this pass: the underlying drift itself
-  persists even with both fixes applied.** Deeper ablation (temporarily
-  instrumented, not committed) traced it past the steering-law entirely:
-  with a small, sign-correct, curvature-matched constant steering trim and
-  *zero* closed-loop correction, the achieved yaw rate `r` (from
-  `integrateYawDynamics()`) does not track the required yaw rate
-  (`v*curv`) at all -- it initially grows in the *opposite* sign from what
-  the curvature demands, and after negating `steerAngle` as a diagnostic
-  probe, `r` gets the right sign but overshoots the required value by
-  roughly 2.5-3x and still eventually drifts wide. This points at a real
-  sign and/or calibration mismatch somewhere in the bicycle-model yaw
-  dynamics introduced during the tire-model upgrade (`slipAngles()`/
-  `integrateYawDynamics()` in `car.cpp`) -- plausibly affecting cornering
-  behavior more broadly than just this one grid slot, not only this
-  specific crash. This is too large and too uncertain a change to make
-  blind in this pass (it's the shared physics core for every car, every
-  corner, protected by `tire_model_test.cpp`/`speed_model_test.cpp`, and a
-  wrong fix here would be a much worse regression than the bug it targets)
-  -- flagged as a dedicated, properly-scoped follow-up: re-derive
-  `slipAngles()`/`integrateYawDynamics()`'s sign conventions against this
-  game's own global x/y/hdg frame (not just against a vehicle-dynamics
-  textbook's own implicit frame) and re-validate end-to-end (not just via
-  the existing isolated-unit tests) that a car given a curvature-matched
-  steering trim actually holds a stable circular path before considering
-  this closed.
+  **Follow-up (root cause found and fixed): the underlying drift was a
+  single stray sign in `axleLateralForce()` (`car.cpp`).** It computed
+  `fyWanted = -stiffness * slipAngle`. `slipAngles()`'s convention
+  (`alphaFront = steerAngle - atan2(vy+aF*r, v)`, `alphaRear =
+  -atan2(vy-aR*r, v)`, the standard single-track-model decomposition)
+  requires the opposite sign for consistency with this game's own hdg
+  convention (`c.hdg += r*dt`, `x += cos(hdg)*v*dt` -- increasing hdg is
+  CCW, `r` is its rate by definition): a positive front slip angle must
+  produce a positive (same-direction) force for a positive steer to yaw
+  the car the way it's steered. Verified two ways: (1) forward -- a small
+  positive steerAngle, worked through the negated formula, produces yaw
+  rate in the *opposite* direction initially, matching exactly what
+  telemetry showed; (2) backward -- linearizing `rDot`/`vyDot` around zero
+  shows the negated sign puts a genuine unstable eigenvalue in the
+  pre-saturation yaw dynamics (the rear axle *reinforces* an existing yaw
+  rate instead of damping it, an unphysical positive-feedback loop) --
+  not just a numerical/discretization issue. The corrected sign gives
+  proper damping and a closed-form understeer steady state consistent
+  with the tuned `cf`/`cr`/`wheelBase`/`weightDistF` constants, confirming
+  this was one isolated stray sign, not a broader miscalibration.
+  Independently re-derived and confirmed by a second pass before fixing.
+
+  Fix: `fyWanted = stiffness * slipAngle` (drop the negation) -- the only
+  production-code change, in the single shared per-axle force law used by
+  every car's cornering physics everywhere (not just grid starts). Updated
+  the one `tire_model_test.cpp` assertion that had hardcoded the buggy
+  sign as "expected," and added a new regression test that drives
+  `integrateYawDynamics()` with a sustained, non-saturating steer and
+  asserts the yaw rate settles to the correct sign and magnitude (matching
+  a closed-form steady state derived from the code's own equations) --
+  this is the exact property the bug violated and that no existing test
+  covered.
+
+  **Verified end-to-end, not just via unit tests.** Re-ran the same
+  ablation from earlier in this entry (`determinism_check` with
+  `DEBUG_CAR_IDX` on the back-row grid slots, all 4 tracks): the wall-
+  drift is gone on 3 of 4 tracks (`lat` now holds essentially exactly at
+  the ~2.6 lane offset for the full pace phase, zero drift). Track 1
+  (Milltown Bullring, the shortest track) still shows a slow, bounded
+  oscillation that can eventually approach the wall after ~20-30s --
+  consistent with that track's separately-documented, more severe
+  grid-spacing issue (its straight is too short to fit the back rows
+  outside the preceding turn's curvature at all, a `gridStart()` geometry
+  problem this fix deliberately did not touch, since it's protected by
+  `race_sim_test.cpp`'s exact-value JS-parity check and matches the
+  original JS's own grid geometry) -- but this is now a many-seconds-later,
+  bounded wobble, not the sub-second, guaranteed, every-car crash from
+  before. Also confirmed (via a pre-fix/post-fix comparison) that an
+  unrelated, pre-existing quirk in the *test-only* synthetic player brain
+  (`tests/test_driver_brain.h`, explicitly "NOT part of the shipped
+  game/sim") eventually stalls near a wall in `state.mode=="race"` --
+  this reproduces identically before and after the fix, so it's not a
+  regression, just a pre-existing property of that crude test stand-in
+  which was never in scope. Full native `ctest` 29/29 (including the
+  updated/new tire-model tests), WASM + Playwright smoke test clean, zero
+  page errors.

@@ -118,10 +118,14 @@ int main() {
     }
 
     // ---- axleLateralForce(): linear region, no clamping ----
+    // Regression-pass fix: was asserted as -stiffness*slipAngle, matching a
+    // stray negation that made the yaw dynamics linearly unstable (a positive
+    // steer produced yaw rate in the wrong direction) -- see car.cpp's own
+    // comment on axleLateralForce() and PORT_PROGRESS.md.
     {
         const double fy = axleLateralForce(/*stiffness=*/90000.0, /*slipAngle=*/0.02,
                                             /*mu=*/1.0, /*fz=*/7000.0, /*fxFrac=*/0.0);
-        expectNear("linear-region force = -stiffness*slipAngle", fy, -90000.0 * 0.02, 1e-6);
+        expectNear("linear-region force = stiffness*slipAngle", fy, 90000.0 * 0.02, 1e-6);
     }
 
     // ---- axleLateralForce(): clamps at the friction circle (fxFrac=0) ----
@@ -207,6 +211,55 @@ int main() {
                "slipMagAvg roughly substep-count-invariant (n=1 vs n=4)");
         expect(std::fabs(r4.slipMagAvg - r8.slipMagAvg) < 0.01,
                "slipMagAvg roughly substep-count-invariant (n=4 vs n=8)");
+    }
+
+    // ---- integrateYawDynamics(): a sustained, non-saturating steer input
+    // must settle to the CORRECT sign and magnitude of yaw rate, not just
+    // converge across substep counts. This is the property a stray sign flip
+    // in axleLateralForce() actually violated (see that function's own
+    // comment): with the bug, the linearized yaw dynamics had an unstable
+    // eigenvalue, so a car given a small, correctly-calibrated steer input
+    // never settled at all -- it developed yaw rate in the WRONG direction
+    // and grew until an unrelated nonlinearity (the friction ellipse) capped
+    // it. Neither existing test above would have caught this: the n=1/4/8/64
+    // comparison only checks the substeps agree with EACH OTHER, not with
+    // the physically correct answer, and the linear-region unit test above
+    // only checks axleLateralForce() in isolation, never that a sustained
+    // steer actually holds a matching curved path end-to-end.
+    //
+    // Expected steady state derived from this exact code's own linearization
+    // (not an external formula, so it can't smuggle in a different sign
+    // convention): at rDot=0, vyDot=0, r_ss = v*steerAngle / (L + Kus*v*v),
+    // where Kus = (mass/wheelBase) * (aR/cf - aF/cr) (understeer coefficient),
+    // aR = wheelBase*weightDistF, aF = wheelBase*(1-weightDistF).
+    {
+        const double v = 30.0;
+        const double steerAngle = 0.025; // mild, non-saturating (checked below)
+        const AxleLoads fz = axleLoads(c, v, 0.0);
+
+        const double aF = c.wheelBase * (1 - c.weightDistF);
+        const double aR = c.wheelBase * c.weightDistF;
+        const double Kus = (c.mass / c.wheelBase) * (aR / c.cf - aF / c.cr);
+        const double rSs = v * steerAngle / (c.wheelBase + Kus * v * v);
+
+        double vy = 0.0, r = 0.0;
+        double rAt150 = 0.0;
+        bool everPastLimit = false;
+        for (int t = 0; t < 200; ++t) {
+            YawIntegrationResult res =
+                integrateYawDynamics(c, vy, r, v, v, steerAngle, fz, c.mu, 0.0, 0.0, 0.02, c.yawSubsteps);
+            vy = res.vy;
+            r = res.r;
+            if (res.pastLimitAny) everPastLimit = true;
+            if (t == 149) rAt150 = r;
+        }
+
+        expect(!everPastLimit, "steady-state-tracking test stays in the linear (non-saturated) regime");
+        expect((r > 0) == (steerAngle > 0),
+               "sustained steer settles to yaw rate with the SAME sign as the steer input");
+        expect(std::fabs(r - rAt150) < 1e-4,
+               "yaw rate actually reaches steady state (not still diverging/oscillating at tick 200)");
+        expectNear("yaw rate converges to the closed-form understeer steady state", r, rSs, 0.01);
     }
 
     // ---- torqueCurveMultiplier(): peaks at 1.0 mid-band, tapers at both
