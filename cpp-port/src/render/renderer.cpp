@@ -106,6 +106,37 @@ bool skipCarDraws() {
     return skip;
 }
 
+#ifdef __EMSCRIPTEN__
+// Diagnostic-only, same rationale/pattern as ?skipCars=1 above: added to
+// bisect a "3D scene renders literally flipped/inverted" report seen only on
+// iPhone/iPad Safari (WebKit), never reproduced in this sandbox's headless
+// Chromium -- since the HUD (a separate view, drawn straight to the real
+// backbuffer, never routed through sceneFb_) reportedly still renders
+// correctly, the leading suspect is the sky/world -> offscreen sceneFb_ ->
+// bloom/grade/tonemap sampling round-trip (Phase 5h, PORT_PROGRESS.md)
+// behaving differently under Safari's own WebGL2 implementation than under
+// Chromium/ANGLE's -- a real, driver-level divergence an Explore agent found
+// no code-level explanation for (bgfx hardcodes originBottomLeft=true for
+// the whole GL/GLES/WebGL family, identically compiled into the one wasm
+// binary both browsers run; see PORT_PROGRESS.md for the full writeup).
+// ?skipPostFx=1 makes the sky/world views render straight to the backbuffer
+// and skips the bloom/grade/tonemap views entirely, so a real-device retest
+// can confirm (or rule out) that round-trip as the flip's actual source
+// before any blind fix is attempted.
+EM_JS(int, lhtSkipPostFxFlag, (), {
+    return /[?&]skipPostFx=1(&|$)/.test(location.search) ? 1 : 0;
+});
+#endif
+
+bool skipPostFx() {
+#ifdef __EMSCRIPTEN__
+    static const bool skip = lhtSkipPostFxFlag() != 0;
+#else
+    static const bool skip = std::getenv("LHT_SKIP_POSTFX") != nullptr;
+#endif
+    return skip;
+}
+
 // Builds a full RGBA8 box-filter mip chain (level 0 through 1x1) from a
 // square, power-of-two base image, concatenated in the order
 // bgfx::createTexture2D(_hasMips=true, ...) expects. Written by hand rather
@@ -750,6 +781,11 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     // -- confirmed via JS's own CSS that `#results`, unlike `#menu`, has no
     // semi-transparent override.
     const bool showResults = raceState.mode == "done";
+    // Diagnostic-only (see skipPostFx()'s own comment): when set, sky/world
+    // render straight to the real backbuffer and the bloom/grade/tonemap
+    // block below is skipped entirely, bypassing the offscreen sceneFb_
+    // round-trip altogether.
+    const bool bypassPostFx = skipPostFx();
     // Sequential: draw calls execute in submission order, not bgfx's default
     // sort-by-key order -- this Phase 2 scene has no depth buffer (see the
     // BGFX_STATE_* flags below), so "track first, cars on top" relies
@@ -762,7 +798,11 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     // chain below reads this as its input and writes the graded result to
     // the actual backbuffer. Set explicitly every frame (bgfx view state,
     // unlike the backbuffer itself, persists across frames until changed).
-    bgfx::setViewFrameBuffer(kView, sceneFb_);
+    if (bypassPostFx) {
+        bgfx::setViewFrameBuffer(kView, BGFX_INVALID_HANDLE);
+    } else {
+        bgfx::setViewFrameBuffer(kView, sceneFb_);
+    }
     // Phase 5c (PORT_PROGRESS.md): when the sky view already painted this
     // frame's color buffer, the world view must NOT clear color -- a
     // view's clear touches its ENTIRE viewport regardless of what that
@@ -783,7 +823,11 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     // Sky draws only when the world does (skipped during the results
     // screen, same as the ribbon/cars below it).
     if (skyPaintedThisFrame) {
-        bgfx::setViewFrameBuffer(kSkyView, sceneFb_);
+        if (bypassPostFx) {
+            bgfx::setViewFrameBuffer(kSkyView, BGFX_INVALID_HANDLE);
+        } else {
+            bgfx::setViewFrameBuffer(kSkyView, sceneFb_);
+        }
         bgfx::setViewRect(kSkyView, 0, 0, (uint16_t)width_, (uint16_t)height_);
         bgfx::setViewClear(kSkyView, BGFX_CLEAR_NONE);
         float skyIdentity[16];
@@ -1090,7 +1134,10 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     // EffectComposer, which has no "skip postfx this mode" branch either; a
     // black-cleared results scene simply stays black (plus a barely-visible
     // corner vignette) after the chain, no different in effect from before.
-    {
+    // Skipped entirely under ?skipPostFx=1 -- sky/world already wrote
+    // straight to the backbuffer above, so this chain would otherwise
+    // overwrite that with a stale/empty sceneFb_ read.
+    if (!bypassPostFx) {
         const bgfx::ViewId kBloomBrightView = 2;
         const bgfx::ViewId kBloomBlurView = 3;
         const bgfx::ViewId kGradeTonemapView = 4;

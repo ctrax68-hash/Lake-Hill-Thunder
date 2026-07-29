@@ -4987,3 +4987,55 @@ elsewhere in the same run.
   to frame as expected. The reverted camera-pitch experiment from the
   disproven theory above was checked out back to its original values --
   this fix requires no camera-code changes at all.
+
+  **Follow-up: user retested on the actual live site (confirmed hard-
+  refreshed, not a cache issue) and still reports the 3D scene "literally
+  flipped/inverted" -- but specifically on iPhone/iPad Safari.** This never
+  reproduces in this sandbox's headless Chromium, matches the project's
+  established pattern of genuine WebKit-only GL bugs (see the
+  `GL_INVALID_OPERATION` writeup above), and is a different symptom class
+  from the `uvec4` fix (that fixed draws being *rejected*; this is about
+  surviving draws being *misoriented*) -- so it isn't expected to be fixed
+  by that commit. The HUD (a separate view, drawn straight to the real
+  backbuffer, never routed through the offscreen scene framebuffer) reportedly
+  still renders correctly, narrowing the suspect to the sky/world ->
+  offscreen `sceneFb_` -> bloom/grade/tonemap sampling round-trip
+  (Phase 5h).
+
+  An Explore agent audited every plausible source of a Chromium-vs-Safari
+  divergence in that pipeline: `renderer.cpp`'s post-fx view/framebuffer
+  setup, `vs_sky.sc`/`fs_bloom_bright.sc`/`fs_bloom_blur.sc`/
+  `fs_grade_tonemap.sc` (all plain UV-passthrough, zero flip math anywhere),
+  framebuffer creation, the vendored bgfx `renderer_gl.cpp` (hardcodes
+  `g_caps.originBottomLeft = true` for the entire GL/GLES/WebGL family --
+  not queried per-driver), and `web/shell.html`'s WebGL context creation (no
+  explicit context attributes requested anywhere, identical Emscripten glue
+  in both browsers). **No code-level mechanism was found that could
+  legitimately differ between browsers** -- the same wasm binary, same bgfx
+  source, same shaders run in both. If real, this is very likely a genuine
+  Safari/WebKit GL driver bug in FBO-texture round-tripping, not something
+  visible in this source tree by inspection.
+
+  **Fix (diagnostic, not a claimed resolution)**: added a `?skipPostFx=1`
+  URL flag (`renderer.cpp`, same `EM_JS`/anonymous-namespace pattern as the
+  existing `?skipCars=1`, plus a native `LHT_SKIP_POSTFX` env var), following
+  the project's own established "binary experiment instead of more logging"
+  precedent from the earlier `GL_INVALID_OPERATION` investigation. When set,
+  `kSkyView`/`kView` render straight to the real backbuffer instead of into
+  `sceneFb_`, and the `kBloomBrightView`/`kBloomBlurView`/`kGradeTonemapView`
+  block is skipped entirely -- bypassing the offscreen round-trip that's the
+  leading suspect. This isolates two possibilities on a real retest: if the
+  flag fixes the flip on the user's iPhone, the bug is confirmed to be in
+  that sampling chain specifically (next step: an explicit Y-flip in the
+  postfx shaders/quad UVs, informed by that confirmation); if it's still
+  flipped even with the flag, the bug is somewhere more fundamental,
+  redirecting the investigation entirely.
+  **Verified**: native `ctest` 29/29 (view-setup-only change, no sim files
+  touched). WASM + Playwright: both the default path and `?skipPostFx=1`
+  render identically correctly in Chromium (full car pack visible, right-
+  side up, zero `GL_INVALID_OPERATION`) -- confirming the flag changes
+  nothing observable here, as expected, and doesn't regress the
+  already-correct desktop/Chromium behavior. Real confirmation requires the
+  user to retest `?skipPostFx=1` specifically on the same iPhone/iPad and
+  report what they see before any further (currently unconfirmed) fix is
+  attempted.
