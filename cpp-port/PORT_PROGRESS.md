@@ -5311,3 +5311,41 @@ previously flat body color -- a yellow car's dark side-window band and
 stripe are clearly visible below the roofline in the WASM screenshot,
 where before that same face would have shown plain yellow. Committed and
 pushed; next up is `G1c` (wheel/tire mesh upgrade).
+
+**G1c -- wheel/tire mesh upgrade.** Wheels were still `add_box()` (correct
+axle axis since an earlier session's fix, but still literally a box).
+Replaced with a new `add_wheel()` in `gen_car_rig.py`: a real radial/
+cylindrical mesh (10-sided by default) still thin along local Z (the
+axle axis, matching the rig's existing convention) -- two flat end-cap
+fans (`sides` tris each) plus a cylindrical tread band connecting them
+(`sides` quads, 2 tris each), 36 tris/wheel, ~2.9k tris total across a
+20-car field's 80 wheels, negligible next to the car body loft. End caps
+sample a `SW_SIDEWALL` UV, the tread band samples a `SW_TREAD` UV --
+reviving the concept of the original JS's `SW.*` solid-color swatches
+(`index.html`), which `livery.h`'s own comment had previously called
+"inapplicable" only because the car had no separate wheel geometry to
+sample them; that's no longer true. Both swatches are two small fixed-
+color patches painted into `livery.cpp`'s currently-unused `u in
+[0.85,0.95]` margin (body paint never reaches past `u=0.80`), painted
+*last* in `buildLiveryPixels()` -- after every other fill -- specifically
+so they can't be clobbered by any of the existing full-width rocker/
+hilite band fills regardless of paint order, rather than relying on a
+fragile "my fill happens to run before theirs" ordering assumption.
+**Verified geometrically** (screenshots at the available camera angles
+don't clearly show wheel silhouettes -- they sit tucked under the fenders
+by design, and are too small to read at `TopDown` zoom -- so this
+followed the same "don't trust eyeballing, get an authoritative check"
+discipline as earlier fixes this session): decoded the regenerated glTF's
+own vertex buffer and confirmed, for the FL wheel, exactly 42 vertices
+bound to its joint, every ring vertex at radius exactly `0.35` (the real
+`WHEEL_RADIUS`, not a degenerate box corner distribution), a Z-span
+matching `2 * half_width` exactly, and only the two expected swatch UVs
+in use -- direct proof this is a true cylinder of the correct size, not
+a box. Vertex/index count deltas (248->320 verts, 372->708 indices) were
+independently hand-computed against the new `add_wheel()` geometry before
+running and matched exactly. Native `ctest` 29/29 (no test assertions
+needed updating despite the vertex/index count change); WASM rebuild +
+Playwright, zero `GL_INVALID_OPERATION`. Committed and pushed. This closes
+out G1's own two self-flagged follow-ups (UV rework in G1b, wheel/tire
+mesh here) -- next up is `G5a` (track surface asphalt texture), moving
+from "cars first" into the track/stadium half of this overhaul.

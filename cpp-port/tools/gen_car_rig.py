@@ -7,10 +7,11 @@ import struct, json, base64, math
 # (blunt nose/tail, fender shoulders, a greenhouse that steps in narrower and
 # up from the beltline, a roof plateau) instead of a single rectangular prism.
 #
-# The wheels are still simple boxes (add_box(), unchanged) -- the plan's own
-# G1 section calls this an acceptable short-term simplification, since the
-# skinning/animation code addresses each wheel purely by joint index and
-# doesn't care what shape is bound to it.
+# The wheels were still simple boxes (add_box()) until G1c (below) replaced
+# them with a real radial tire mesh (add_wheel()) -- the skinning/animation
+# code addresses each wheel purely by joint index and doesn't care what
+# shape is bound to it, so that upgrade needed zero changes outside this
+# file.
 #
 # Critically, the joint/skin structure is untouched: everything the loft
 # generates below is bound to joint 0 ("chassis"), translation-only IBM,
@@ -41,6 +42,75 @@ FACES = [
     ((0, 0, 1), [(-1, -1, 1), (1, -1, 1), (1, 1, 1), (-1, 1, 1)]),   # +Z
     ((0, 0, -1), [(1, -1, -1), (-1, -1, -1), (-1, 1, -1), (1, 1, -1)]), # -Z
 ]
+
+# G1c (NASCAR-Thunder gap-analysis plan, wheel/tire mesh upgrade): two
+# small fixed-color swatches painted into livery.cpp's currently-unused
+# U margin (body paint only occupies u in [0.02,0.78]) -- reviving the
+# concept of JS's SW.* solid-color swatches (index.html) for wheel faces
+# to sample. These UV constants must match the swatch rects livery.cpp
+# paints (see its own G1c comment) -- not derived from a shared header
+# since this is a Python generator and a C++ file, same loose-sync
+# convention this codebase already uses for carU()/livery band constants.
+SW_TREAD = (0.90, 0.25)     # near-black rubber, cylindrical tread band
+SW_SIDEWALL = (0.90, 0.75)  # mid-gray sidewall, the two flat end caps
+
+def add_wheel(cx, cy, cz, radius, half_width, joint_idx, sides=10):
+    """A radial (cylindrical) tire mesh, replacing the placeholder box --
+    thin along local Z (the axle axis, matching the rig's existing
+    convention: a real tire is thin along its axle and full-radius in the
+    X-Y plane it rolls in). The two flat end caps (normal +-Z) sample
+    SW_SIDEWALL; the cylindrical tread band between them (normal radially
+    outward in X-Y) samples SW_TREAD -- geometry alone gives the wheel a
+    round silhouette from every angle, and the two swatches give it a
+    tread/sidewall color distinction without any new texture or sampler.
+    `sides` end-cap fan tris x2 + `sides` tread quads (2 tris each): with
+    the default sides=10 that's (10-2)*2 + 10*2 = 36 tris/wheel, ~2.9k
+    tris total across a 20-car field's 80 wheels -- negligible next to
+    the car body loft itself.
+    """
+    base = len(positions)
+    ring = [(math.cos(2 * math.pi * i / sides), math.sin(2 * math.pi * i / sides)) for i in range(sides)]
+
+    def add_vertex(pos, normal, uv):
+        positions.append(pos)
+        normals.append(normal)
+        uvs.append(uv)
+        joints0.append((joint_idx, 0, 0, 0))
+        weights0.append((1.0, 0.0, 0.0, 0.0))
+
+    # End caps (sidewalls): a center vertex + a ring, fanned into triangles.
+    # Normals/winding are hand-set per vertex (not derived from winding, as
+    # emit_quad() does), and this renderer applies no backface culling
+    # anywhere (renderer.cpp's own convention), so triangle winding here
+    # only needs to describe valid triangles, not a specific facing.
+    for side_sign in (1, -1):
+        z = cz + side_sign * half_width
+        center_idx = len(positions)
+        add_vertex((cx, cy, z), (0, 0, side_sign), SW_SIDEWALL)
+        ring_base = len(positions)
+        for (rx, ry) in ring:
+            add_vertex((cx + rx * radius, cy + ry * radius, z), (0, 0, side_sign), SW_SIDEWALL)
+        for i in range(sides):
+            i0, i1 = ring_base + i, ring_base + (i + 1) % sides
+            if side_sign > 0:
+                indices.extend([center_idx, i0, i1])
+            else:
+                indices.extend([center_idx, i1, i0])
+
+    # Cylindrical tread band connecting the two rings.
+    z0, z1 = cz - half_width, cz + half_width
+    ring0_base = len(positions)
+    for (rx, ry) in ring:
+        add_vertex((cx + rx * radius, cy + ry * radius, z0), (rx, ry, 0), SW_TREAD)
+    ring1_base = len(positions)
+    for (rx, ry) in ring:
+        add_vertex((cx + rx * radius, cy + ry * radius, z1), (rx, ry, 0), SW_TREAD)
+    for i in range(sides):
+        i2 = (i + 1) % sides
+        a0, a1 = ring0_base + i, ring0_base + i2
+        b0, b1 = ring1_base + i, ring1_base + i2
+        indices.extend([a0, b0, b1, a0, b1, a1])
+    return base
 
 def add_box(cx, cy, cz, hx, hy, hz, joint_idx, top_livery_uv):
     base = len(positions)
@@ -184,18 +254,16 @@ wheel_offsets = [
     (-WHEELBASE / 2.0, -TRACK_HALF), # RR
 ]
 for i, (wx, wz) in enumerate(wheel_offsets):
-    # Thin along local Z (lateral/axle direction), full radius in the X-Y
-    # (forward/vertical) rolling plane -- a real tire is thin along its axle
-    # and full-radius in the plane it rolls in. Previously this had hx/hz
-    # swapped (thin along forward X, full-radius along lateral Z), which
-    # built each wheel as a disc facing forward/backward instead of sideways
-    # -- combined with wheel_animation.cpp's matching (self-consistent but
-    # wrong) spin-about-X, this made wheels present their flat face to a
-    # roughly-forward-looking chase camera and spin like a turntable instead
-    # of rolling, reported as "tires run left to right" / cars "running in
-    # reverse".
-    add_box(wx, WHEEL_RADIUS, wz, WHEEL_RADIUS, WHEEL_RADIUS, WHEEL_RADIUS * 0.6,
-            joint_idx=i + 1, top_livery_uv=False)
+    # G1c (NASCAR-Thunder gap-analysis plan, wheel/tire mesh upgrade): a
+    # real radial tire mesh (add_wheel()) instead of a box -- still thin
+    # along local Z (lateral/axle direction), full radius in the X-Y
+    # (forward/vertical) rolling plane, same axis convention the box-wheel
+    # orientation fix already established (a real tire is thin along its
+    # axle and full-radius in the plane it rolls in). The box shape itself
+    # (as opposed to which axis it used) was always a placeholder --
+    # gen_car_rig.py's own module docstring called it "an acceptable
+    # short-term simplification" pending exactly this replacement.
+    add_wheel(wx, WHEEL_RADIUS, wz, WHEEL_RADIUS, WHEEL_RADIUS * 0.6, joint_idx=i + 1)
 
 def pack_f32(vals):
     return b"".join(struct.pack("<f", v) for tup in vals for v in tup)

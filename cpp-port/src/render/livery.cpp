@@ -190,7 +190,7 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // the shadow tone, the roof+hood band gets the highlight tone.
     constexpr double kShadowM = 0.70, kBaseM = 0.94, kHiliteM = 1.08;
     auto tone = [&](double m) { return std::array<double, 3>{body[0] * m, body[1] * m, body[2] * m}; };
-    c.fillRect(0, 0, 1.0, 1.0, tone(kBaseM));
+    c.fillRect(0, 0, 0.80, 1.0, tone(kBaseM));
     c.fillRect(0, 0.00, 1.0, 0.11, tone(kShadowM));
     c.fillRect(0, 0.89, 1.0, 0.11, tone(kShadowM));
     c.fillRect(0, 0.40, 1.0, 0.20, tone(std::min(1.0, kHiliteM)));
@@ -340,6 +340,21 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     drawNumber(c, num, TIu, TIv - 0.086, 0.05, white, dark);
     c.fillEllipse(TIu, TIv - 0.052, 0.018, 0.009, accent);
     c.fillRect(TIu - 0.0144, TIv - 0.0535, 0.0288, 0.003, tone(0.9));
+
+    // G1c (NASCAR-Thunder gap-analysis plan, wheel/tire mesh upgrade): two
+    // small fixed-color swatches in the U margin the body paint never
+    // reaches (every fill above stays within u in [0, 0.80]) -- reviving
+    // the concept of JS's SW.* solid-color swatches (index.html) for
+    // gen_car_rig.py's new add_wheel() tread/sidewall faces to sample,
+    // since livery.h's own comment previously called these "inapplicable"
+    // only because the car had no separate wheel geometry to sample them;
+    // that's no longer true. Painted last, after every other fill in this
+    // function, so nothing here can be overwritten regardless of paint
+    // order -- coordinates must match gen_car_rig.py's own
+    // SW_TREAD/SW_SIDEWALL constants (loose cross-file sync, same
+    // convention this codebase already uses for carU()/livery bands).
+    c.fillRect(0.85, 0.0, 0.10, 0.5, std::array<double, 3>{12 / 255.0, 12 / 255.0, 13 / 255.0});  // tire rubber
+    c.fillRect(0.85, 0.5, 0.10, 0.5, std::array<double, 3>{70 / 255.0, 70 / 255.0, 72 / 255.0});  // sidewall
 
     return downsampleBox(c.take(), kLiveryTextureSize * kSupersample, kSupersample);
 }
