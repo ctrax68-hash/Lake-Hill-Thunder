@@ -4920,3 +4920,70 @@ elsewhere in the same run.
   which was never in scope. Full native `ctest` 29/29 (including the
   updated/new tire-model tests), WASM + Playwright smoke test clean, zero
   page errors.
+
+  **Follow-up: user reported the chase camera view still looked broken
+  ("Cameras upside down no cars appearing") immediately at race start, on
+  the live deployed site running the tire-physics fix above.** Two camera-
+  side theories were tried first and both disproven by direct reproduction
+  before the real cause was found: (1) a degenerate `eye=(0,0,0)`/stale
+  `chaseInitialized_` state across race restarts -- ruled out, live-captured
+  eye/look-at values were sane, non-zero, and smoothly converging; (2) the
+  chase camera's pitch being too shallow, letting the ground plane dominate
+  the frame -- also ruled out, steepening the pitch (raising eye height,
+  shortening the look-ahead) produced screenshots visually identical to
+  before the change, even after a forced clean rebuild ruled out stale build
+  output.
+
+  **Real root cause, found by instrumenting the actual WebGL calls (not more
+  camera math):** every single per-car draw was silently failing.
+  `glDrawElementsInstanced` was firing `GL_INVALID_OPERATION: Vertex shader
+  input type does not match the type of the bound vertex attribute` on
+  *every* car, every frame -- a warning an earlier session (Roadmap Phase 5
+  G1 entry, above) had already spotted, on the menu screen no less, and
+  explicitly logged as "pre-existing... unrelated... not investigated
+  further." It was never actually inert: a Playwright test that monkey-
+  patched `WebGL2RenderingContext.prototype.vertexAttribPointer`/
+  `vertexAttribIPointer`/`drawElementsInstanced` to record the real bound
+  attribute state at the moment of the GL error confirmed `a_indices` (the
+  skinned mesh's joint-index attribute) was bound via
+  `glVertexAttribIPointer` -- an **integer** attribute -- while the compiled
+  `vs_skinned.sc` shader declared it a plain `vec4` (float) via
+  `varying_skinned.def.sc`. Reading `renderer_gl.cpp`'s
+  `ProgramGL::bindAttributes()` directly (the vendored bgfx source) showed
+  why: it picks `glVertexAttribIPointer` vs. `glVertexAttribPointer` purely
+  from the vertex layout's `type`/`normalized` fields
+  (`!isFloat(type) && !normalized` -> IPointer) -- the `_asInt` flag
+  `vertex_skinned.h`'s `.add(Attrib::Indices, 4, AttribType::Uint8)` call
+  leaves at its default is **never consulted by that decision at all**, only
+  by unrelated CPU-side `vertexPack`/`vertexConvert` helpers. So under
+  WebGL2/GLES3 this attribute is *always* bound as an integer, regardless of
+  `_asInt` -- the existing `varying_skinned.def.sc` comment's understanding
+  of bgfx's own behavior (added when this shader was first authored,
+  glTF skinned-mesh import pipeline) was simply backwards. The mismatch was
+  harmless on the desktop OpenGL driver used for every prior native
+  screenshot/spot-check in this project (permissive enough to let the draw
+  through anyway) but a hard validation failure under Chromium/WebKit's
+  stricter WebGL2 conformance checks, which silently drops the draw --
+  exactly "no cars ever appear," on every track, from the very first frame
+  of every race, independent of camera position -- which is exactly why
+  neither camera theory's fix ever changed anything.
+
+  **Fix**: `varying_skinned.def.sc`'s `a_indices` changed from `vec4` to
+  `uvec4`, matching the actual `GL_UNSIGNED_BYTE` + `IPointer` binding.
+  `vs_skinned.sc` needed no change -- its existing `int(a_indices.x)` casts
+  are still valid GLSL (`int(uint)` is a defined conversion). Rebuilt
+  `lht_shaders` (regenerating `generated_shaders/{essl,glsl,spirv}/
+  vs_skinned.sc.bin.h`, confirmed via a raw byte-string check that the ESSL
+  variant now emits `in highp uvec4 a_indices;`, GLSL ES 300's `in` instead
+  of the old GLSL ES 100 `attribute` keyword integer attributes require),
+  then the native binary and the WASM build (which reuses the native
+  build's shader output, per this file's own Phase 7 note).
+  **Verified**: native `ctest` 29/29. WASM + Playwright: the same
+  attribute-tracing instrumentation now reports zero `GL_INVALID_OPERATION`
+  across an entire race start, a forced results-screen-then-restart cycle,
+  and a second track (Cedar Valley); screenshots at each of those points
+  show the full car pack rendering normally in the chase camera (previously
+  zero cars ever appeared) with the player's grid position advancing frame
+  to frame as expected. The reverted camera-pitch experiment from the
+  disproven theory above was checked out back to its original values --
+  this fix requires no camera-code changes at all.
