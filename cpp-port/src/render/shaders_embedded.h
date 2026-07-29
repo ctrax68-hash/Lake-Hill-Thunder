@@ -79,6 +79,17 @@
 #include "glsl/vs_skinned.sc.bin.h"
 #include "essl/vs_skinned.sc.bin.h"
 
+// G2 (PORT_PROGRESS.md, NASCAR Thunder 2003 graphics overhaul): vs_car/
+// fs_car, car-specific shading (specular/Fresnel/fake-env-reflection on top
+// of the hemisphere+directional lighting fs_textured_lit.sc already has) --
+// split out so the added shine doesn't also land on the crowd-atlas stands.
+#include "spirv/vs_car.sc.bin.h"
+#include "spirv/fs_car.sc.bin.h"
+#include "glsl/vs_car.sc.bin.h"
+#include "glsl/fs_car.sc.bin.h"
+#include "essl/vs_car.sc.bin.h"
+#include "essl/fs_car.sc.bin.h"
+
 static const bgfx::EmbeddedShader s_embeddedShaders[] = {
     BGFX_EMBEDDED_SHADER(vs_flat),
     BGFX_EMBEDDED_SHADER(fs_flat),
@@ -92,5 +103,7 @@ static const bgfx::EmbeddedShader s_embeddedShaders[] = {
     BGFX_EMBEDDED_SHADER(fs_bloom_blur),
     BGFX_EMBEDDED_SHADER(fs_grade_tonemap),
     BGFX_EMBEDDED_SHADER(vs_skinned),
+    BGFX_EMBEDDED_SHADER(vs_car),
+    BGFX_EMBEDDED_SHADER(fs_car),
     BGFX_EMBEDDED_SHADER_END()
 };

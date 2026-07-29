@@ -159,6 +159,11 @@ private:
     bgfx::UniformHandle uSunColor_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uHemiSky_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uHemiGround_ = BGFX_INVALID_HANDLE;
+    // G2 (PORT_PROGRESS.md): world-space camera eye position, consumed by
+    // fs_car.sc to build a per-pixel view vector for its specular/Fresnel/
+    // fake-env-reflection terms -- nothing before G2 ever needed the camera's
+    // position on the GPU (the existing lit shaders are view-independent).
+    bgfx::UniformHandle uCamPos_ = BGFX_INVALID_HANDLE;
 
     // Phase 5b (PORT_PROGRESS.md): the resolved ENV_PRESETS values for the
     // current track (env_presets.h), computed once in setTrack() rather

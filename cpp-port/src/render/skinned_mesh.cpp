@@ -16,8 +16,12 @@ bgfx::UniformHandle g_sTexColor = BGFX_INVALID_HANDLE;
 void ensureSharedResources() {
     if (bgfx::isValid(g_program)) return;
     const bgfx::RendererType::Enum rendererType = bgfx::getRendererType();
-    bgfx::ShaderHandle vsh = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "vs_skinned");
-    bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "fs_textured_lit");
+    // G2 (PORT_PROGRESS.md): cars use their own vs_car/fs_car pair (not
+    // vs_skinned/fs_textured_lit) so the added specular/Fresnel/fake-env-
+    // reflection shading applies only to cars, not the crowd-atlas stand
+    // seats that fs_textured_lit.sc is still shared with elsewhere.
+    bgfx::ShaderHandle vsh = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "vs_car");
+    bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "fs_car");
     g_program = bgfx::createProgram(vsh, fsh, true);
     g_uBoneMatrices = bgfx::createUniform("u_boneMatrices", bgfx::UniformType::Mat4, SkinnedMesh::kMaxBones);
     g_sTexColor = bgfx::createUniform("s_texColor", bgfx::UniformType::Sampler);

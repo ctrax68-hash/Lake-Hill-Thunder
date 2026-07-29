@@ -271,6 +271,7 @@ bool Renderer::init(void* nativeDisplayHandle, void* nativeWindowHandle, int wid
     uSunColor_ = bgfx::createUniform("u_sunColor", bgfx::UniformType::Vec4);
     uHemiSky_ = bgfx::createUniform("u_hemiSky", bgfx::UniformType::Vec4);
     uHemiGround_ = bgfx::createUniform("u_hemiGround", bgfx::UniformType::Vec4);
+    uCamPos_ = bgfx::createUniform("u_camPos", bgfx::UniformType::Vec4);
 
     // Phase 5c (PORT_PROGRESS.md): sky program for the fullscreen textured
     // background quad.
@@ -400,6 +401,7 @@ void Renderer::shutdown() {
     if (bgfx::isValid(uSunColor_)) bgfx::destroy(uSunColor_);
     if (bgfx::isValid(uHemiSky_)) bgfx::destroy(uHemiSky_);
     if (bgfx::isValid(uHemiGround_)) bgfx::destroy(uHemiGround_);
+    if (bgfx::isValid(uCamPos_)) bgfx::destroy(uCamPos_);
     if (bgfx::isValid(skyProgram_)) bgfx::destroy(skyProgram_);
     if (bgfx::isValid(uSkyTexColor_)) bgfx::destroy(uSkyTexColor_);
     if (bgfx::isValid(skyVb_)) bgfx::destroy(skyVb_);
@@ -1014,6 +1016,8 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         }
         bx::mtxProj(proj, fovYDeg, aspect, 0.5f, 1500.0f, homogeneousDepth, bx::Handedness::Right);
         bgfx::setViewTransform(kView, view, proj);
+        const float camPos[4] = {eye.x, eye.y, eye.z, 0.0f};
+        bgfx::setUniform(uCamPos_, camPos);
     } else {
         // TopDown: unchanged framing/purpose (a static overview of the
         // whole track), still orthographic -- now looking straight down
@@ -1037,6 +1041,8 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         bx::mtxOrtho(proj, -halfW, halfW, -halfH, halfH, 0.1f, 1000.0f, 0.0f, homogeneousDepth,
                      bx::Handedness::Right);
         bgfx::setViewTransform(kView, view, proj);
+        const float camPos[4] = {eye.x, eye.y, eye.z, 0.0f};
+        bgfx::setUniform(uCamPos_, camPos);
     }
 
     // Phase 5b (PORT_PROGRESS.md): the ground plane draws first (painter's-

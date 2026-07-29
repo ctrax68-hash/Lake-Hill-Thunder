@@ -175,7 +175,8 @@ if(EMSCRIPTEN)
      OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_sky.sc.bin.h
      OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_textured_lit.sc.bin.h
      OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/fs_grade_tonemap.sc.bin.h
-     OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_skinned.sc.bin.h)
+     OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_skinned.sc.bin.h
+     OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_car.sc.bin.h)
     message(FATAL_ERROR
       "Phase 7 web build reuses the native build's already-compiled shader "
       "headers (see this file's own comment) instead of cross-compiling "
@@ -184,8 +185,9 @@ if(EMSCRIPTEN)
       "vs_lit/fs_lit, Phase 5c added vs_sky/fs_sky, Phase 5e added "
       "vs_textured_lit/fs_textured_lit, Phase 5h added "
       "fs_bloom_bright/fs_bloom_blur/fs_grade_tonemap (reusing vs_sky as "
-      "their vertex stage), and Step 2 (glTF skinned-mesh import) added "
-      "vs_skinned (reusing fs_textured_lit as its fragment stage), so a "
+      "their vertex stage), Step 2 (glTF skinned-mesh import) added "
+      "vs_skinned (reusing fs_textured_lit as its fragment stage), and G2 "
+      "(NASCAR Thunder 2003 graphics overhaul) added vs_car/fs_car, so a "
       "stale native build missing any of those will also hit this guard).")
   endif()
   set(LHT_GENERATED_SHADERS_DIR ${LHT_NATIVE_GENERATED_SHADERS})
@@ -320,11 +322,34 @@ else()
     AS_HEADERS
     OUT_FILES_VAR LHT_VS_SKINNED_OUTPUTS
   )
+  # G2 (PORT_PROGRESS.md, NASCAR Thunder 2003 graphics overhaul): vs_car/
+  # fs_car -- car-specific shading (specular/Fresnel/fake-env-reflection on
+  # top of the existing hemisphere+directional lighting), split out from
+  # vs_skinned/fs_textured_lit so the added shine doesn't also apply to the
+  # crowd-atlas-textured stand seats that fs_textured_lit.sc still serves.
+  bgfx_compile_shaders(
+    TYPE VERTEX
+    SHADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/vs_car.sc
+    VARYING_DEF ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/varying_car.def.sc
+    OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders
+    INCLUDE_DIRS ${LHT_SHADER_INCLUDE_DIRS}
+    AS_HEADERS
+    OUT_FILES_VAR LHT_VS_CAR_OUTPUTS
+  )
+  bgfx_compile_shaders(
+    TYPE FRAGMENT
+    SHADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/fs_car.sc
+    VARYING_DEF ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/varying_car.def.sc
+    OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders
+    INCLUDE_DIRS ${LHT_SHADER_INCLUDE_DIRS}
+    AS_HEADERS
+    OUT_FILES_VAR LHT_FS_CAR_OUTPUTS
+  )
   add_custom_target(lht_shaders DEPENDS ${LHT_VS_FLAT_OUTPUTS} ${LHT_FS_FLAT_OUTPUTS}
     ${LHT_VS_LIT_OUTPUTS} ${LHT_FS_LIT_OUTPUTS} ${LHT_VS_SKY_OUTPUTS} ${LHT_FS_SKY_OUTPUTS}
     ${LHT_VS_TEXTURED_LIT_OUTPUTS} ${LHT_FS_TEXTURED_LIT_OUTPUTS}
     ${LHT_FS_BLOOM_BRIGHT_OUTPUTS} ${LHT_FS_BLOOM_BLUR_OUTPUTS} ${LHT_FS_GRADE_TONEMAP_OUTPUTS}
-    ${LHT_VS_SKINNED_OUTPUTS})
+    ${LHT_VS_SKINNED_OUTPUTS} ${LHT_VS_CAR_OUTPUTS} ${LHT_FS_CAR_OUTPUTS})
   set(LHT_GENERATED_SHADERS_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders)
 endif()
 

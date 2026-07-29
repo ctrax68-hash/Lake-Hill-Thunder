@@ -5200,3 +5200,67 @@ elsewhere in the same run.
   `?skipPostFx=1` screenshots already showed, confirming the postfx chain
   now agrees with the raw scene instead of contradicting it. Committed and
   pushed; real confirmation requires the user to retest once deployed.
+
+## NASCAR Thunder 2003 graphics overhaul (G-series, continuing the Roadmap
+## Phase 5 "Graphics Enhancement Deep Dive" seeded earlier in this file)
+
+With the camera/wheel/postfx bugs above cleared, the user asked for a
+graphics overhaul to bring the look in line with EA Sports' **NASCAR
+Thunder 2003** (PS2/Xbox/GameCube, 2002) before doing more physics work --
+a fresh phone screenshot showed the actual visual style underneath those
+fixes is far more primitive than intended (flat unshaded box grandstands,
+plain gray track, matte cars with barely-visible livery). Research on the
+real Thunder 2003 (GameSpot/GTPlanet/Cutting Room Floor reviews and
+retrospectives, since no footage capture is available in this sandbox)
+confirmed a consistent pattern: cars were the game's visual strength
+(detailed paint, real-time lighting, chrome-like reflections, shadows cast
+onto the body) while track/crowd environment was criticized even at the
+time as flat and low-detail (non-3D crowd, "bland" textures). This sets
+the priority order for this whole series: cars first, track/stadium
+second, and track/stadium work targets "solid supporting visuals," not
+photorealism -- explicitly a precursor to more physics work, so the goal
+is legibility of what's happening on screen, not spectacle.
+
+**G2 -- car shader: specular + Fresnel + fake environment reflection.**
+Cars drew via `vs_skinned.sc` + `fs_textured_lit.sc` -- the exact same
+fragment shader the crowd-atlas grandstand seats use -- which is pure
+hemisphere-ambient + directional-diffuse (Lambertian) shading: zero
+specular, zero view-dependence, zero reflections anywhere, hence the
+flat/matte look. Added a new `vs_car.sc`/`fs_car.sc` pair (not an edit to
+`fs_textured_lit.sc` in place, so the stands are unaffected) that keeps
+the existing hemi+directional term but adds: a Blinn-Phong specular
+highlight (`pow(N.H, 48) * 0.6`) standing in for a glossy clearcoat; a
+Schlick-style Fresnel rim (`pow(1-N.V, 5)`); and a fake environment
+reflection -- since this renderer has no cubemap/IBL infrastructure
+anywhere, rather than inventing one, it reuses the two colors already
+used for the ambient hemisphere term (`u_hemiSky`/`u_hemiGround`), blended
+by the *reflection* vector's Y component instead of the surface normal's
+Y (`R = reflect(-V,N)`), mixed in by the Fresnel term. That reflection-Y
+vs. normal-Y distinction is what makes it read as a reflection sweep that
+moves across the body as the camera orbits, rather than just restating
+ambient. Needed a new `u_camPos` uniform (`renderer.h`/`renderer.cpp`) --
+nothing before G2 ever needed the camera's world position on the GPU,
+since every other lit shader here is view-independent -- set once per
+frame from whichever eye is active (chase or top-down, both already
+computed in `renderFrame()`), and a new `v_worldPos` varying
+(`varying_car.def.sc`) so the fragment stage can build a per-pixel view
+vector. `skinned_mesh.cpp`'s `ensureSharedResources()` now builds the car
+program from `"vs_car"`/`"fs_car"` instead. All shading constants (specular
+power/strength, Fresnel power, reflection mix weight) are tuned
+empirically, not derived from a physical model -- there's no measured
+reference BRDF to fit here, and a cheap, plausible look is the actual
+goal. New shader pair wired into `CMakeLists.txt` (own
+`bgfx_compile_shaders()` VERTEX/FRAGMENT blocks, added to the web-build
+native-reuse guard and `lht_shaders`'s `DEPENDS`) and
+`shaders_embedded.h` (new embed-table entries), following the exact
+pattern `vs_skinned` already established. **Verified**: native `ctest`
+29/29 (shader-only change, no sim/test files touched); WASM rebuild +
+Playwright, zero `GL_INVALID_OPERATION`; chase-view screenshots (native
+`xvfb-run` harness and WASM) both show a visible gradient/highlight sweep
+across car roofs and hoods -- bright cool-toned highlight up top blending
+toward a warmer, darker tone lower on the body, driven by the reflection
+vector rather than a flat rim -- a real, per-pixel view-dependent effect
+where before there was none. Grandstand seats (still on
+`fs_textured_lit.sc`) confirmed visually unchanged. Committed and pushed;
+next up is `G1b` (car UV/livery fix) so the livery painting actually
+becomes visible on these now-glossier side panels.
