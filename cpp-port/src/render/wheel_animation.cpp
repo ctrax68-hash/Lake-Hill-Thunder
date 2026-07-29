@@ -21,14 +21,24 @@ Mat4 mat4Translate(double x, double y, double z) {
     return m;
 }
 
-// Rotation about the local X axis (a wheel's own spin axis).
-Mat4 mat4RotateX(double angle) {
+// Rotation about the local Z axis (a wheel's true spin/axle axis -- the rig's
+// own convention, gen_car_rig.py: local X = nose/tail (forward), local Z =
+// left/right (lateral/axle); a wheel is thin along its axle and full-radius
+// in the X-Y (forward/vertical) plane it rolls in, so spinning it must
+// rotate that plane -- i.e. about Z, not X. An earlier version of this
+// rotated about X instead, self-consistent with the wheel box geometry
+// being built with the same axes swapped at the time (both fixed together),
+// but wrong relative to the rig's own forward/lateral convention -- the
+// wheel presented its flat disc face toward a roughly-forward-looking chase
+// camera and spun like a turntable instead of rolling, reported as "tires
+// run left to right" / cars "running in reverse".
+Mat4 mat4RotateZ(double angle) {
     Mat4 m = mat4Identity();
     const double c = std::cos(angle), s = std::sin(angle);
+    m[0] = c;
+    m[1] = s;
+    m[4] = -s;
     m[5] = c;
-    m[6] = s;
-    m[9] = -s;
-    m[10] = c;
     return m;
 }
 
@@ -84,7 +94,7 @@ std::vector<std::array<double, 16>> computeBonePalette(const std::vector<Importe
         Mat4 extra = mat4Identity();
         if (wheelForJoint[i] >= 0) {
             const WheelLocalTransform& wt = wheelTransforms[wheelForJoint[i]];
-            extra = mat4Mul(mat4Translate(0.0, wt.suspOffset, 0.0), mat4RotateX(wt.spinAngle));
+            extra = mat4Mul(mat4Translate(0.0, wt.suspOffset, 0.0), mat4RotateZ(wt.spinAngle));
         }
         const Mat4 jointLocal = mat4Mul(joints[i].localBindMatrix, extra);
         const Mat4 parentWorld = joints[i].parent >= 0 ? worldJoint[joints[i].parent] : mat4Identity();

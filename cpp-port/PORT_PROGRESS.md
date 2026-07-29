@@ -5039,3 +5039,58 @@ elsewhere in the same run.
   user to retest `?skipPostFx=1` specifically on the same iPhone/iPad and
   report what they see before any further (currently unconfirmed) fix is
   attempted.
+
+  **Follow-up: the camera is confirmed fixed (a fresh user screenshot shows
+  a correct chase view, sky/ground/car pack all properly oriented), but a
+  new, more specific complaint surfaced now that cars are finally
+  inspectable up close: "cars running in reverse" and "tires run left to
+  right not in normal pattern."** This isn't a regression -- it's a
+  pre-existing bug in the wheel rig that was simply never visible before
+  (either no cars rendered at all, or the camera itself was broken), only
+  noticeable now that both of those are fixed. Confirmed by an Explore
+  agent's static analysis and independently re-derived by hand: platform-
+  independent (pure CPU-side geometry generation + matrix math, executed
+  identically on every backend), so this was never a WebKit-only issue
+  despite surfacing right after the camera investigation.
+
+  Root cause, two matching bugs that made each other internally
+  "consistent" but both wrong relative to the rig's own documented
+  convention (`tools/gen_car_rig.py`'s own comment: local X = nose/tail
+  (forward), local Z = left/right (lateral), confirmed against how
+  `renderer.cpp` applies the car's world transform):
+  1. **Wheel box geometry had its axes swapped** (`gen_car_rig.py`'s wheel
+     `add_box()` call): thin half-extent (`0.6x` radius) was on X (forward)
+     and full radius was on Z (lateral) -- backwards from a real tire, which
+     is thin along its axle (lateral) and full-radius in its rolling plane
+     (forward-vertical). The wheel's flat disc face pointed forward/backward
+     instead of sideways.
+  2. **The spin rotation was applied about the same wrong axis**
+     (`wheel_animation.cpp`'s `computeBonePalette()`): `mat4RotateX()`
+     rotated about local X. Since the chase camera looks roughly down the
+     car's forward (X) axis, it viewed each wheel's disc nearly face-on, and
+     spinning that disc about X swept it like a coin/turntable in the
+     camera's own view plane -- read as tread "running left to right," and
+     -- combined with the disc-facing-camera shape -- plausibly also
+     described as cars looking like they're "running in reverse."
+  `tests/wheel_animation_test.cpp`'s own "Spin-only case" asserted the wrong
+  axis (`X`) as correct, confirming this was wrong since Step 3 shipped, not
+  a later regression.
+
+  **Fix**: swapped the wheel box's half-extents in `gen_car_rig.py` (thin on
+  Z, full on X) and regenerated the committed `car_rig_data.h`; replaced
+  `mat4RotateX()` with a new `mat4RotateZ()` in `wheel_animation.cpp`'s
+  `computeBonePalette()` (removed the now-dead `mat4RotateX()`, updated the
+  one comment elsewhere that referenced it by name); corrected
+  `wheel_animation_test.cpp`'s spin-axis test case and its expected values
+  (re-derived by hand, not just algebra-by-analogy -- a first attempt at the
+  new expected values was itself arithmetically wrong and caught by actually
+  working the matrix multiplication out before trusting it).
+  **Verified**: native `ctest` 29/29 including the corrected
+  `wheel_animation_test`. WASM + Playwright: zero `GL_INVALID_OPERATION`;
+  close-range chase-view screenshots now show each wheel as a thin, edge-on
+  shape tucked under the fender (matching real tire proportions) instead of
+  a flat disc facing the camera. Rotation *direction* itself isn't
+  verifiable from a still screenshot -- the corrected unit test (which
+  hand-verifies the actual matrix arithmetic, not just the axis choice) is
+  the authoritative check for the rotation math. Committed and pushed; real
+  confirmation requires the user to retest once deployed.

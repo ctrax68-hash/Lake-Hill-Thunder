@@ -123,21 +123,30 @@ int main() {
             expectNear("wheel hub z unaffected by suspension offset", z1, 0.0);
         }
 
-        // Spin-only case (suspOffset=0): a mesh vertex 1 unit along local Z
-        // from the hub should rotate around the wheel's local X axis.
+        // Spin-only case (suspOffset=0): a mesh vertex 1 unit along local X
+        // (forward -- the wheel's full-radius rolling-plane direction, per
+        // gen_car_rig.py's own convention) from the hub should rotate around
+        // the wheel's local Z axis (its true axle direction), not X -- an
+        // earlier version of this test asserted rotation about X instead,
+        // matching a since-fixed bug where the wheel box geometry and its
+        // spin rotation were both built about the wrong (forward, not
+        // lateral) axis.
         {
             std::array<WheelLocalTransform, 4> wt{};
             const double angle = M_PI / 2.0;
             wt[0] = {angle, 0.0};
             auto palette = computeBonePalette(joints, wt, wheelJointIndex);
             const auto& m1 = palette[1];
-            // Apply m1 to mesh-space point (1,0,1,1) (1 unit along +Z from the hub).
-            const double x1 = m1[0] * 1.0 + m1[8] * 1.0 + m1[12];
-            const double y1 = m1[1] * 1.0 + m1[9] * 1.0 + m1[13];
-            const double z1 = m1[2] * 1.0 + m1[10] * 1.0 + m1[14];
-            expectNear("spin rotation keeps hub-relative x fixed", x1, 1.0);
-            expectNear("spin rotation: point rotates -sin(angle) in y at 90deg", y1, -1.0, 1e-6);
-            expectNear("spin rotation: point rotates cos(angle) in z at 90deg", z1, 0.0, 1e-6);
+            // Apply m1 to mesh-space point (2,0,0,1) (1 unit along +X from
+            // the hub, which itself is bound at mesh-space x=1). Relative to
+            // the hub, rotateZ(90deg) maps offset (1,0,0) -> (0,1,0), then
+            // the hub's own +1 x-translation is re-added: expected (1,1,0).
+            const double x1 = m1[0] * 2.0 + m1[12];
+            const double y1 = m1[1] * 2.0 + m1[13];
+            const double z1 = m1[2] * 2.0 + m1[14];
+            expectNear("spin rotation: hub-relative offset rotates from x into y", x1, 1.0, 1e-6);
+            expectNear("spin rotation: hub-relative offset rotates from x into y", y1, 1.0, 1e-6);
+            expectNear("spin rotation keeps hub-relative z fixed", z1, 0.0);
         }
     }
 

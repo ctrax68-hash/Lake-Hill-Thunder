@@ -164,7 +164,17 @@ wheel_offsets = [
     (-WHEELBASE / 2.0, -TRACK_HALF), # RR
 ]
 for i, (wx, wz) in enumerate(wheel_offsets):
-    add_box(wx, WHEEL_RADIUS, wz, WHEEL_RADIUS * 0.6, WHEEL_RADIUS, WHEEL_RADIUS,
+    # Thin along local Z (lateral/axle direction), full radius in the X-Y
+    # (forward/vertical) rolling plane -- a real tire is thin along its axle
+    # and full-radius in the plane it rolls in. Previously this had hx/hz
+    # swapped (thin along forward X, full-radius along lateral Z), which
+    # built each wheel as a disc facing forward/backward instead of sideways
+    # -- combined with wheel_animation.cpp's matching (self-consistent but
+    # wrong) spin-about-X, this made wheels present their flat face to a
+    # roughly-forward-looking chase camera and spin like a turntable instead
+    # of rolling, reported as "tires run left to right" / cars "running in
+    # reverse".
+    add_box(wx, WHEEL_RADIUS, wz, WHEEL_RADIUS, WHEEL_RADIUS, WHEEL_RADIUS * 0.6,
             joint_idx=i + 1, top_livery_uv=False)
 
 def pack_f32(vals):

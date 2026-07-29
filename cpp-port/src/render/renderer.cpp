@@ -176,7 +176,7 @@ std::vector<uint8_t> buildRgba8MipChain(const std::vector<uint8_t>& level0, int 
 // row/column-major multiply-order convention unclear, and this project has
 // already paid once (Step 2's uvec4/vec4 attribute mismatch) for trusting
 // an unverified convention. mat4RotateY follows the same right-handed
-// cyclic-axis convention as wheel_animation.cpp's mat4RotateX (X->Y->Z->X):
+// cyclic-axis convention as wheel_animation.cpp's mat4RotateZ (X->Y->Z->X):
 // rotateY(theta) maps X' = X*cos+Z*sin, Z' = -X*sin+Z*cos, so matching the
 // flat quad's own world-space rotation (px = wx + lx*cos(ch) - ly*sin(ch),
 // py = wy + lx*sin(ch) + ly*cos(ch), with the rig's local X = nose-tail and
