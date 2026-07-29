@@ -84,28 +84,48 @@ def emit_quad(p0, p1, p2, p3, outward_hint, joint_idx=0):
     if it points the wrong way, so callers don't have to hand-verify winding
     order for every non-axis-aligned wall.
 
-    UV: a face is treated as "roof/hood/trunk deck" (get the nose-to-tail
-    livery band, same formula the old single-box roof face used) only when
-    its final normal points mostly up; every other face (sides, underbody,
-    end caps) samples the same flat body-color texel the placeholder always
-    used -- this stays a G1 mesh-only change, not a livery UV rework (that's
-    flagged in the plan as a separate follow-up).
+    UV (G1b, NASCAR-Thunder gap-analysis plan -- car UV/livery fix): every
+    face now gets a real wraparound UV, not just the roof/hood/trunk deck.
+    U is the same carU()-style nose-to-tail formula G1 already used for the
+    top faces (livery.cpp's own carU(), index.html:2249, ported verbatim --
+    this just extends it to every vertex instead of only "is_top" ones). V
+    is chosen by corner role so the mesh lines up with what livery.cpp
+    already paints at each V band: every station's bottom corners sit at
+    world Y == FLOOR_Y exactly (see CHASSIS_STATIONS below -- every station
+    tuple's `by` field is FLOOR_Y), so `p[1] == FLOOR_Y` reliably tells a
+    rocker/underbody corner from a beltline/roof one, for every face
+    (sides, top deck, underbody, nose/tail caps alike) without needing to
+    thread per-vertex role flags through the call sites:
+      - bottom corners (rocker/seam) -> v=0.945 (p[2]>0) / v=0.055
+        (p[2]<0), landing in livery.cpp's near-black rocker/seam bands
+        (v in [0,0.052] and [0.948,1.0]) and its wheel-arch shadow rings
+        (painted at v=0.055/0.945).
+      - top corners (beltline/greenhouse) -> v=0.7 (p[2]>0) / v=0.3
+        (p[2]<0), matching the side-window bands livery.cpp already paints
+        at v in [0.335,0.410] and [0.590,0.665) and the door-number
+        placements (v=0.235 right door, v=0.765 left door) -- both fall
+        inside the 0.3/0.7 side-shoulder region this maps onto.
+    Nose/tail cap faces mix both corner roles of one station -- no special
+    case needed, the same per-point rule naturally lands their bottom
+    corners in the rocker tone and top corners in the roof/hood tone, with
+    U already pinned near 0.02/0.78 (the nose/tail ends of livery.cpp's own
+    U range) since they're the extreme-X stations.
     """
     n = _norm(_cross(_sub(p1, p0), _sub(p3, p0)))
     if _dot(n, outward_hint) < 0:
         p0, p1, p2, p3 = p0, p3, p2, p1
         n = _norm(_cross(_sub(p1, p0), _sub(p3, p0)))
-    is_top = n[1] > 0.7
     base = len(positions)
     for p in (p0, p1, p2, p3):
         positions.append(p)
         normals.append(n)
-        if is_top:
-            u = 0.02 + (HALF_LEN - p[0]) / (2.0 * HALF_LEN) * 0.76
-            v = 0.5 + (0.20 if p[2] > 0 else (-0.20 if p[2] < 0 else 0.0))
-            uvs.append((u, v))
+        u = 0.02 + (HALF_LEN - p[0]) / (2.0 * HALF_LEN) * 0.76
+        is_bottom = abs(p[1] - FLOOR_Y) < 1e-9
+        if is_bottom:
+            v = 0.945 if p[2] > 0 else (0.055 if p[2] < 0 else 0.5)
         else:
-            uvs.append((0.4, 0.5))
+            v = 0.7 if p[2] > 0 else (0.3 if p[2] < 0 else 0.5)
+        uvs.append((u, v))
         joints0.append((joint_idx, 0, 0, 0))
         weights0.append((1.0, 0.0, 0.0, 0.0))
     indices.extend([base, base + 1, base + 2, base, base + 2, base + 3])

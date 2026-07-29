@@ -87,6 +87,36 @@ double carU(double x) {
     return 0.02 + (2.51 - x) / 5.02 * 0.76;
 }
 
+// G1b (NASCAR-Thunder gap-analysis plan, car UV/livery fix): every fill*
+// call above is fraction-based (fx/fy/fw/fh in [0,1]), so rendering into a
+// Canvas built larger than the final texture and box-filter-downsampling
+// afterward anti-aliases every hard rect/circle/ellipse edge for free --
+// no change needed to any individual paint call. Mirrors the box-filter
+// spirit of renderer.cpp's buildRgba8MipChain() (2x2 average), generalized
+// to an arbitrary integer factor since that helper halves repeatedly for
+// a mip chain rather than doing one fixed-factor reduction.
+constexpr int kSupersample = 2;
+
+std::vector<uint8_t> downsampleBox(const std::vector<uint8_t>& src, int srcSize, int factor) {
+    const int dstSize = srcSize / factor;
+    std::vector<uint8_t> dst((size_t)dstSize * dstSize * 4);
+    const int n = factor * factor;
+    for (int y = 0; y < dstSize; ++y) {
+        for (int x = 0; x < dstSize; ++x) {
+            int sums[4] = {0, 0, 0, 0};
+            for (int sy = 0; sy < factor; ++sy) {
+                for (int sx = 0; sx < factor; ++sx) {
+                    const size_t idx = ((size_t)(y * factor + sy) * srcSize + (x * factor + sx)) * 4;
+                    for (int ch = 0; ch < 4; ++ch) sums[ch] += src[idx + ch];
+                }
+            }
+            const size_t didx = ((size_t)y * dstSize + x) * 4;
+            for (int ch = 0; ch < 4; ++ch) dst[didx + ch] = (uint8_t)((sums[ch] + n / 2) / n);
+        }
+    }
+    return dst;
+}
+
 // A minimal 7-segment digit rasterizer standing in for JS's real
 // `drawNum()` font text (see livery.h's own simplification note #3).
 // Segments: 0=top,1=top-left,2=top-right,3=middle,4=bottom-left,
@@ -154,7 +184,7 @@ void drawFlameLick(Canvas& c, double baseU, double baseV, double len, double amp
 } // namespace
 
 std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, const LiveryScheme* scheme) {
-    Canvas c(kLiveryTextureSize);
+    Canvas c(kLiveryTextureSize * kSupersample);
 
     // Base + 3-tone flat panel shading (index.html:2597-2603): rockers get
     // the shadow tone, the roof+hood band gets the highlight tone.
@@ -311,5 +341,5 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     c.fillEllipse(TIu, TIv - 0.052, 0.018, 0.009, accent);
     c.fillRect(TIu - 0.0144, TIv - 0.0535, 0.0288, 0.003, tone(0.9));
 
-    return c.take();
+    return downsampleBox(c.take(), kLiveryTextureSize * kSupersample, kSupersample);
 }

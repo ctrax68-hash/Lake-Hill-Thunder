@@ -44,7 +44,13 @@
 //     are the livery's actual identity): contingency decal chips, hood
 //     pins, the fuel-filler ring.
 
-inline constexpr int kLiveryTextureSize = 256;
+// G1b (NASCAR-Thunder gap-analysis plan, car UV/livery fix): bumped
+// 256->512 now that side panels actually get real UVs (see
+// gen_car_rig.py's emit_quad()) and the painted stripes/numbers/glass are
+// finally visible on the body instead of mostly landing on the one flat
+// (0.4,0.5) texel every non-roof face used to sample -- still well under
+// JS's original 768, no pixel-exact-fidelity requirement.
+inline constexpr int kLiveryTextureSize = 512;
 
 // body: car.col (or CarPalette::White for a pace car -- not built here,
 // see this file's own note below). accent: auto-derived from body's

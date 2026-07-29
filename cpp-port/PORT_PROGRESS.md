@@ -5264,3 +5264,50 @@ where before there was none. Grandstand seats (still on
 `fs_textured_lit.sc`) confirmed visually unchanged. Committed and pushed;
 next up is `G1b` (car UV/livery fix) so the livery painting actually
 becomes visible on these now-glossier side panels.
+
+**G1b -- car UV/livery fix.** `gen_car_rig.py`'s `emit_quad()` only ever
+gave a real livery UV to faces whose final normal pointed mostly up
+(`is_top`); every side/nose/tail/underbody face sampled one flat texel
+`(0.4, 0.5)` -- meaning `livery.cpp`'s already-painted stripes, numbers,
+window glass, and wheel-arch shadow rings were mostly invisible on the
+actual 3D body, only ever showing up on the roof/hood/deck band. This
+wasn't a new bug -- `livery.h`'s own header comment already documented it
+as a known, accepted consequence of G1's box-to-loft mesh upgrade, and
+`livery.cpp` already ports the original JS's `carU()` wraparound-U formula
+verbatim in anticipation of a loft that could actually use it. Fix:
+extended the same U formula to every vertex (not just `is_top` ones), and
+assign V by corner role using a cheap, reliable per-vertex test -- every
+station in `CHASSIS_STATIONS` fixes its bottom-corner Y to `FLOOR_Y`
+exactly, so `p[1] == FLOOR_Y` distinguishes a rocker/underbody corner from
+a beltline/roof one for every face (sides, top deck, underbody, nose/tail
+caps alike) without threading extra role flags through call sites: bottom
+corners map to v=0.945/0.055 (landing in `livery.cpp`'s near-black
+rocker/seam bands and wheel-arch shadow rings), top corners map to
+v=0.7/0.3 (landing in its side-window bands and door-number placements).
+Verified geometrically (not just by eye) by decoding the regenerated
+glTF's own UV buffer: 41 distinct UV pairs across the mesh where before
+almost every non-roof vertex shared the same `(0.4,0.5)` pair -- direct
+proof the fix took effect, independent of how it happens to look from any
+one camera angle. Also bumped `kLiveryTextureSize` 256->512 now that side
+panels are actually visible up close, and added supersample-then-
+downsample anti-aliasing to `buildLiveryPixels()` (renders into a Canvas
+built at 2x the final resolution, then a new `downsampleBox()` box-filter
+-- same box-filter spirit as `buildRgba8MipChain()`, generalized to an
+arbitrary factor -- reduces it back down before returning), fixing the
+"hard-edged rects/ellipses, no AA" complaint cheaply since every existing
+paint call is already fraction-based and needed no changes. Livery texture
+upload also switched to `hasMips=true` (reusing `buildRgba8MipChain()`,
+same "aliases on real mobile GPU without a mip chain" lesson already
+learned once for the crowd atlas) now that oblique side-panel sampling is
+actually happening. Deliberately left out of scope: a real bitmap-font
+renderer for sponsor wordmarks -- both `livery.h` and `atlas_texture.h`
+already independently deferred this as separable decoration, not gating
+anything this precursor-to-physics-work overhaul actually needs. **Verified**:
+native `ctest` 29/29 (including `livery_test`/`mesh_import_test` against
+the new sizes/UVs, no assertions needed updating); WASM rebuild +
+Playwright, zero `GL_INVALID_OPERATION`; both native and WASM chase-view
+screenshots now show real window/stripe detail on car flanks that were
+previously flat body color -- a yellow car's dark side-window band and
+stripe are clearly visible below the roofline in the WASM screenshot,
+where before that same face would have shown plain yellow. Committed and
+pushed; next up is `G1c` (wheel/tire mesh upgrade).

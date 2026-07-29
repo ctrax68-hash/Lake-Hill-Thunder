@@ -758,9 +758,14 @@ bgfx::TextureHandle Renderer::getOrBuildCarTexture(const Car& car) {
     auto it = carTextures_.find(car.num);
     if (it != carTextures_.end()) return it->second;
     const std::vector<uint8_t> pixels = buildLiveryPixels(car.col, car.num, car.idx, car.scheme);
+    // G1b (NASCAR-Thunder gap-analysis plan, car UV/livery fix): mips now
+    // that side panels actually get sampled at oblique angles (real UVs
+    // instead of one flat texel) -- same "aliases on real mobile GPU
+    // without a mip chain" lesson already learned once for the crowd atlas.
+    const std::vector<uint8_t> liveryMips = buildRgba8MipChain(pixels, kLiveryTextureSize);
     const bgfx::TextureHandle tex =
-        bgfx::createTexture2D((uint16_t)kLiveryTextureSize, (uint16_t)kLiveryTextureSize, false, 1,
-                               bgfx::TextureFormat::RGBA8, 0, bgfx::copy(pixels.data(), (uint32_t)pixels.size()));
+        bgfx::createTexture2D((uint16_t)kLiveryTextureSize, (uint16_t)kLiveryTextureSize, true, 1,
+                               bgfx::TextureFormat::RGBA8, 0, bgfx::copy(liveryMips.data(), (uint32_t)liveryMips.size()));
     carTextures_[car.num] = tex;
     return tex;
 }
