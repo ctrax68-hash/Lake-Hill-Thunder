@@ -5094,3 +5094,55 @@ elsewhere in the same run.
   hand-verifies the actual matrix arithmetic, not just the axis choice) is
   the authoritative check for the rotation math. Committed and pushed; real
   confirmation requires the user to retest once deployed.
+
+  **Follow-up: user reported the whole race runs the wrong way around the
+  track ("should be left hand turns") and that player steering feels
+  inverted (left turns the car right on screen, right turns it left).**
+  Both turned out to be the *same* rendering-only bug, not a sim bug and
+  not two separate bugs. An Explore agent first ruled out the simulation:
+  `track.cpp`'s `addArc()`/`pointAt()` are line-for-line ports of the
+  original JS (`index.html:360,368-382`), and the native `determinism_check`
+  harness already diffs full per-tick `x/y/hdg` trajectories against a real
+  JS trace with a confirmed bit-for-bit match (documented earlier in this
+  file) -- a genuine direction/steering bug in `src/sim/` would have been
+  caught there. It wasn't, because the actual bug is in
+  `renderer.cpp`: both `bx::mtxLookAt()` calls (chase and top-down cameras)
+  omitted the handedness argument, silently defaulting to
+  `bx::Handedness::Left`. Reading `bx`'s own `mtxLookAt()` implementation
+  (`third_party/bgfx.cmake/bx/src/math.cpp:29-51`) shows `Left` computes
+  `right = cross(up, at-eye)` -- the *negation* of the standard right-handed
+  `right = cross(forward, up)` that every other piece of this project's
+  world-space math already assumes (`track_surface.cpp`'s `pos3()`/
+  `surfaceUp()`, and `mat4RotateY(-ch)`'s own derivation comment in
+  `renderer.cpp`, both independently right-handed by construction). That
+  single mismatch mirrored the camera's screen-X axis relative to every
+  other piece of world geometry -- explaining both complaints as one bug: a
+  real left-hand turn renders as an apparent right-hand turn, and pressing
+  left (which correctly turns the car's own heading left in the sim) then
+  renders as the car swinging right on screen.
+  **Fix**: pass `bx::Handedness::Right` explicitly to both `mtxLookAt()`
+  calls, and to their paired `mtxProj()`/`mtxOrtho()` calls -- handedness
+  isn't just an X-mirror, it also flips which view-space Z sign the
+  projection matrix expects, so the view and projection matrices must
+  agree or depth/perspective breaks. **Verified the fix direction, not just
+  its absence of visual breakage**: rather than trust eyeballing a
+  screenshot (genuinely ambiguous for CW/CCW without also fixing a viewing
+  convention), wrote a small standalone scratch program linking directly
+  against the project's own `track.cpp`, replicating `pos3()` and `bx`'s
+  exact `mtxLookAt(..., Handedness::Right)` formula, and computed
+  `dot(further-ahead-point - at, camera_right)` for a real point inside
+  Thunder Oval's first turn -- confirmed negative (reads as a left-hand
+  turn on screen), matching real NASCAR direction. Native `ctest` 29/29
+  (view-matrix-only change, no sim files touched). WASM + Playwright: zero
+  `GL_INVALID_OPERATION` across Thunder Oval and Cedar Valley, screenshots
+  show correct depth/occlusion (no z-fighting or inversion from the
+  handedness change) -- the visual is now a coherent mirror-corrected
+  render, not a broken one.
+
+  **Wheels "are blocks"**: confirmed expected, not a new regression --
+  `tools/gen_car_rig.py`'s own comment has documented "wheels are still
+  simple boxes ... unchanged, an acceptable short-term simplification"
+  since the loft-body upgrade, well before this session's wheel-orientation
+  fix (which only corrected which axis the box/rotation used, not its
+  shape). A real rounded tire mesh is a legitimate follow-up but a separate,
+  lower-priority visual task, not a bug fix.

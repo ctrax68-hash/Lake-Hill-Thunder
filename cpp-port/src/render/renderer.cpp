@@ -965,7 +965,21 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         const bx::Vec3 eye = {chaseEyeX_, chaseEyeY_, chaseEyeZ_};
         const bx::Vec3 at = {chaseLookX_, chaseLookY_, chaseLookZ_};
         const bx::Vec3 up = {(float)upBlend.x, (float)upBlend.y, (float)upBlend.z};
-        bx::mtxLookAt(view, eye, at, up);
+        // Right-handed explicitly: bx::mtxLookAt defaults to Handedness::Left,
+        // whose `right = cross(up, at-eye)` is the NEGATION of the standard
+        // right-handed `right = cross(forward, up)` this project's whole
+        // world-space convention already assumes (track_surface.cpp's
+        // pos3()/surfaceUp(), and mat4RotateY(-ch)'s own derivation comment
+        // above, both verified right-handed). Left the camera's screen-X
+        // axis mirrored relative to every other piece of world geometry --
+        // a real, user-reported bug ("going around the track backwards",
+        // steering feeling inverted), not a sim bug: the simulation's own
+        // left-hand-turn convention and player steering sign are both
+        // independently verified correct against the original JS (see
+        // PORT_PROGRESS.md). mtxProj below must use the same handedness --
+        // it isn't just an X-mirror, LH/RH also flips which view-space Z
+        // sign the projection matrix expects.
+        bx::mtxLookAt(view, eye, at, up, bx::Handedness::Right);
         const float aspect = (height_ > 0) ? (float)width_ / (float)height_ : 1.0f;
         // FOV 60 (vertical), near 0.5, far 1500 -- matches JS's own
         // `new THREE.PerspectiveCamera(60, 1, 0.5, 1500)` exactly. bx's
@@ -998,7 +1012,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             const float halfFovXCap = bx::toRad(kMaxFovXDeg) * 0.5f;
             fovYDeg = bx::toDeg(bx::atan(bx::tan(halfFovXCap) / aspect)) * 2.0f;
         }
-        bx::mtxProj(proj, fovYDeg, aspect, 0.5f, 1500.0f, homogeneousDepth);
+        bx::mtxProj(proj, fovYDeg, aspect, 0.5f, 1500.0f, homogeneousDepth, bx::Handedness::Right);
         bgfx::setViewTransform(kView, view, proj);
     } else {
         // TopDown: unchanged framing/purpose (a static overview of the
@@ -1017,8 +1031,11 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         const bx::Vec3 eye = {topCx_, 200.0f, topCy_};
         const bx::Vec3 at = {topCx_, 0.0f, topCy_};
         const bx::Vec3 up = {0.0f, 0.0f, -1.0f};
-        bx::mtxLookAt(view, eye, at, up);
-        bx::mtxOrtho(proj, -halfW, halfW, -halfH, halfH, 0.1f, 1000.0f, 0.0f, homogeneousDepth);
+        // Right-handed explicitly -- see the Chase branch's own comment
+        // above for why (matches this project's world-space convention).
+        bx::mtxLookAt(view, eye, at, up, bx::Handedness::Right);
+        bx::mtxOrtho(proj, -halfW, halfW, -halfH, halfH, 0.1f, 1000.0f, 0.0f, homogeneousDepth,
+                     bx::Handedness::Right);
         bgfx::setViewTransform(kView, view, proj);
     }
 
