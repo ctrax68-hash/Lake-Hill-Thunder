@@ -5146,3 +5146,57 @@ elsewhere in the same run.
   fix (which only corrected which axis the box/rotation used, not its
   shape). A real rounded tire mesh is a legitimate follow-up but a separate,
   lower-priority visual task, not a bug fix.
+
+  **Follow-up: user pointed at thumbnail screenshots visible in Claude
+  Code's own mobile chat transcript ("why is game still upside down in your
+  screenshots"), asking why the sky/ground composition still looked wrong
+  after the handedness fix -- the horizon-haze gradient was appearing at
+  the *bottom* of the frame instead of the top, with a gray track surface
+  nowhere in sight below the wall line.** This is a third, distinct bug,
+  unrelated to both the camera-mirroring fix and the wheel-axis fix above,
+  and it took several wrong turns to isolate. First ruled out:
+  a grandstand-color misread (Thunder Oval's stand palette includes a blue
+  similar to the sky's own zenith color -- disproven by viewing the full
+  screenshot, not just sampled pixels, and confirming the region is a
+  smooth textureless gradient matching the sky texture, not a blocky
+  grandstand); a bloom-pass-only flip (disproven by reading
+  `fs_grade_tonemap.sc`'s actual source -- both `s_texColor` and
+  `s_texBloom` samples used the identical, unflipped `v_texcoord0`, so a
+  differential bug there was structurally impossible); and a Safari/WebKit-
+  specific divergence (this session's own `?skipPostFx=1` diagnostic flag,
+  added earlier to bisect this exact complaint, reproduced the same
+  inverted-sky artifact in this sandbox's own Chromium once postfx was
+  re-enabled -- it's universal, not a mobile-Safari quirk).
+  **Root cause, confirmed empirically rather than guessed**: a temporary
+  diagnostic edit in `renderer.cpp` (substituting `skyProgram_`, a raw
+  passthrough shader, for `gradeTonemapProgram_` in the final submit call)
+  proved that `sceneFb_`'s raw contents -- *before* any bloom or grading
+  math runs -- already contain the inverted sky. The bug is in how the
+  post-processing chain *samples* `sceneFb_`/`bloomBrightFb_`/
+  `bloomBlurFb_` as textures, not in any of the grading/tonemap math
+  itself. This project's bloom/grade/tonemap passes are the only shaders
+  that sample a texture that was itself just rendered into by a prior pass
+  (as opposed to the sky's own `fs_sky.sc`, which samples a CPU-uploaded,
+  row-major 2D texture) -- and reading back a render-target's color
+  attachment in a later fullscreen pass comes back vertically flipped
+  relative to how it was rasterized, a real and apparently previously-
+  unexercised GL/WebGL2 behavior (this project's fullscreen-quad postfx
+  passes are the first place this codebase ever round-trips a render
+  target through a second draw call). **Fix**: flip the V coordinate
+  (`vec2 uv = vec2(v_texcoord0.x, 1.0 - v_texcoord0.y);`) before every
+  render-target sample in `fs_bloom_bright.sc`, `fs_bloom_blur.sc`, and
+  `fs_grade_tonemap.sc`. Two deliberate exceptions kept unflipped: the blur
+  shader's 3x3 tap offsets are applied relative to the corrected anchor
+  (the kernel itself is vertically symmetric, so only the anchor needed
+  correcting, not each offset); and the grade/tonemap pass's vignette term
+  still uses the original `v_texcoord0` since it's a screen-space effect
+  (distance from the frame center) rather than a texture sample, and must
+  track the fragment's real on-screen position. Native `ctest` 29/29
+  (shader-only change, no sim or test files touched). WASM + Playwright:
+  fresh chase-view screenshots on two separate runs now show the correct
+  composition -- blue sky occupying the top of the frame, a wall/horizon
+  line, and gray track surface filling the bottom, with cars clearly
+  visible sitting on the track -- matching what the earlier, pre-postfx
+  `?skipPostFx=1` screenshots already showed, confirming the postfx chain
+  now agrees with the raw scene instead of contradicting it. Committed and
+  pushed; real confirmation requires the user to retest once deployed.

@@ -43,8 +43,16 @@ vec3 acesFilm(vec3 x)
 
 void main()
 {
-	vec3 scene = texture2D(s_texColor, v_texcoord0).rgb;
-	vec3 bloom = texture2D(s_texBloom, v_texcoord0).rgb;
+	// s_texColor (sceneFb_) and s_texBloom (bloomBlurFb_) are both render
+	// targets, same V-flip-on-read issue as fs_bloom_bright.sc's own sample
+	// of sceneFb_ (see that shader's comment for the full explanation).
+	// The vignette term below deliberately keeps using v_texcoord0
+	// unflipped -- it's a screen-space effect (darken the actual rendered
+	// frame's corners), not a texture sample, so it must follow this
+	// fragment's real on-screen position, not the FBO-read correction.
+	vec2 uv = vec2(v_texcoord0.x, 1.0 - v_texcoord0.y);
+	vec3 scene = texture2D(s_texColor, uv).rgb;
+	vec3 bloom = texture2D(s_texBloom, uv).rgb;
 	vec3 color = scene + bloom * u_gradeParams1.x;
 
 	color = pow(max(vec3_splat(0.0), color * u_gradeParams1.y + vec3_splat(u_gradeParams1.z) ), vec3_splat(1.0 / u_gradeParams1.w) );
