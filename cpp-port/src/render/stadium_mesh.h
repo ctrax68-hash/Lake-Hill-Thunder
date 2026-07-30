@@ -72,10 +72,15 @@ StandMeshResult buildStandMesh(const Track& track, double sStart, double sEnd, i
 // atlas texture, Phase 5e/5f).
 std::vector<MeshVertex> buildPitRoadMesh(const Track& track, double pitOut, double pitIn);
 
-// The outer wall's face + white cap (index.html:1986-2000), flat-colored
-// with `theme.wall` -- the diamond/sponsor texture and the catch-fence
-// band above it are both deferred to Phase 5e.
+// The outer wall's face (index.html:1986-2000). G5b (NASCAR-Thunder
+// gap-analysis plan) wired this into the atlas's wall-diamond region
+// (kAtlasWall) -- real UVs now, not a flat color; the catch-fence band
+// above it remains deferred (no geometry pass exists for it at all).
 std::vector<MeshVertex> buildOuterWallMesh(const Track& track);
+
+// G5b: small sponsor-panel quads along each straightaway, cycling through
+// the atlas's 8 pre-painted sponsor-panel UV rects (atlasSponsorUV()).
+std::vector<MeshVertex> buildSponsorPanelsMesh(const Track& track);
 
 // G5a (NASCAR-Thunder gap-analysis plan, track surface texture): a
 // checkered start/finish stripe at s=0, flat vertex-colored (see this

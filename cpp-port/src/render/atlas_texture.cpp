@@ -86,12 +86,20 @@ void paintCrowdTile(Canvas& c, const AtlasRegion& r, const std::array<std::array
                      double fillProb, Mulberry32& rng) {
     c.fillRect(r.x, r.y, r.w, r.h, {38 / 255.0, 38 / 255.0, 42 / 255.0});
     constexpr int cell = 8;
+    // G5b (NASCAR-Thunder gap-analysis plan, crowd variety): a small
+    // neutral-toned "head" rect on top of each filled cell's own jersey-
+    // colored torso fill -- still 2 fillRect() calls per cell (no
+    // resolution/perf change), just enough to break up the single-flat-
+    // color-per-cell look without a texture-budget increase.
+    const std::array<double, 3> skin{0.55, 0.45, 0.38};
     for (int py = r.y; py < r.y + r.h; py += cell) {
         for (int px = r.x; px < r.x + r.w; px += cell) {
             if (rng.next() > fillProb) continue;
             const auto& col = palette[(size_t)(rng.next() * palette.size())];
             const double m = 0.7 + rng.next() * 0.4;
             c.fillRect(px, py, cell - 1, cell - 1, {col[0] * m, col[1] * m, col[2] * m});
+            const double headM = 0.85 + rng.next() * 0.3;
+            c.fillRect(px + 2, py, cell - 4, 3, {skin[0] * headM, skin[1] * headM, skin[2] * headM});
         }
     }
 }

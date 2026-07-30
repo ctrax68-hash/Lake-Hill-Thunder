@@ -5397,3 +5397,54 @@ start/finish stripe renders at the correct `s=0` location, crossing the
 full track width. Committed and pushed; next up is `G5b` (wiring the
 already-painted-but-unused wall diamond pattern and sponsor panel atlas
 regions into real geometry).
+
+**G5b -- stadium wall/sponsor atlas wiring + crowd variety.**
+`atlas_texture.cpp` already painted a wall diamond pattern (`kAtlasWall`)
+and 8 sponsor panels (`kAtlasSponsor`) -- confirmed via grep that neither
+was ever sampled by any mesh, dead weight sitting in the atlas since
+Phase 5e. `buildOuterWallMesh()` (`stadium_mesh.cpp`) is a single quad
+strip (unlike the stands, which split front-tier/back-tier), so no
+`WallMeshResult`-style struct was needed -- just switched its quads from
+`addQuad()` (flat color) to `addQuadUV()` with real `atlasUV(kAtlasWall)`
+coordinates, U wrapping `s / kWallTileLength` into the region's own
+`[u0,u1)` range in software (same technique the G5a asphalt ribbon
+already established) so hardware wrap never needs to see a value outside
+this one atlas region. New `buildSponsorPanelsMesh()` places small quads
+along each straightaway (front/back, `segs()[0]`/`segs()[2]`), cycling
+through the 8 pre-painted `atlasSponsorUV(i)` rects, sitting a hair proud
+of the wall (`wallLat() + 0.02`) to avoid two coplanar textured quads
+z-fighting. Both route into `texturedMesh` in `renderer.cpp`'s
+`setTrack()` via a new `appendTextured()` lambda (mirroring
+`appendStand()`'s existing `.textured`-output destination). Also gave
+`atlas_texture.cpp`'s `paintCrowdTile()` a small neutral-toned "head" rect
+on top of each filled cell's jersey-colored torso fill -- still 2
+`fillRect()` calls per cell, no resolution or perf change, just enough to
+break up the single-flat-color-per-cell look.
+
+`stadium_mesh_test`'s own `CMakeLists.txt` entry needed
+`src/render/atlas_texture.cpp` added to its link inputs (a new, real
+dependency now that `stadium_mesh.cpp` calls `atlasUV()`/`atlasSponsorUV()`
+directly) -- caught immediately by a linker error on the first build
+attempt, fixed before running anything. No existing test assertions
+needed updating: `stadium_mesh_test`'s own `buildOuterWallMesh()` check
+only inspects vertex normals/emptiness, not color, and `addQuadUV()`
+computes normals with the identical cross-product formula `addQuad()`
+already used, so the check stays valid unchanged.
+
+**Verified**: native `ctest` 29/29; WASM rebuild + Playwright, zero
+`GL_INVALID_OPERATION`. Chase-cam screenshots (native and WASM) show a
+real navy diamond-checkerboard wall pattern replacing the previous flat
+orange -- an unambiguous, easy-to-see change. The sponsor panels were
+harder to confirm visually (the specific camera framing captured didn't
+clearly show one in frame), so rather than keep hunting for the right
+screenshot angle, fell back to the same "decode the geometry directly"
+discipline used for the G1c wheel check: a standalone scratch program
+linking directly against `stadium_mesh.cpp`/`atlas_texture.cpp`/
+`track.cpp` confirmed `buildSponsorPanelsMesh()` emits 384 vertices (128
+triangles = 64 quads across both straightaways) with each successive
+panel's UV rect landing in a distinct sub-region of the sponsor atlas
+band (e.g. one triangle at u∈[0.504,0.559], the next at u∈[0.566,0.621])
+-- direct proof the panels exist with correctly-cycling UVs, independent
+of whatever one screenshot happened to frame. Committed and pushed; next
+up is `G5c` (sky/cloud improvement), the last car/track-side item before
+the optional, lowest-priority `G7` speed-blur polish.

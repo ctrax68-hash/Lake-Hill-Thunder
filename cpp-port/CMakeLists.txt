@@ -513,7 +513,8 @@ add_test(NAME sky_texture_test COMMAND sky_texture_test)
 # track.cpp + track_surface.cpp + car.cpp for pitStallS()/FIELD).
 # gear_rpm.cpp: car.cpp now calls gearRpm() (drivetrain upgrade).
 add_executable(stadium_mesh_test tests/stadium_mesh_test.cpp src/sim/track.cpp src/sim/car.cpp
-  src/render/track_surface.cpp src/render/stadium_mesh.cpp src/render/gear_rpm.cpp)
+  src/render/track_surface.cpp src/render/stadium_mesh.cpp src/render/gear_rpm.cpp
+  src/render/atlas_texture.cpp)
 add_test(NAME stadium_mesh_test COMMAND stadium_mesh_test)
 
 # Phase 5e (PORT_PROGRESS.md): atlas_texture_test exercises buildAtlasPixels()'s

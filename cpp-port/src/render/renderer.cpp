@@ -646,6 +646,14 @@ void Renderer::setTrack(const Track& track) {
         auto append = [&](std::vector<MeshVertex>&& v) {
             mesh.insert(mesh.end(), v.begin(), v.end());
         };
+        // G5b (NASCAR-Thunder gap-analysis plan): buildOuterWallMesh() and
+        // buildSponsorPanelsMesh() now carry real atlas UVs (wall-diamond/
+        // sponsor-panel regions) instead of a flat color, so their output
+        // goes into texturedMesh instead of the flat mesh -- same
+        // destination `appendStand()`'s own `.textured` output already uses.
+        auto appendTextured = [&](std::vector<MeshVertex>&& v) {
+            texturedMesh.insert(texturedMesh.end(), v.begin(), v.end());
+        };
         auto appendStand = [&](StandMeshResult&& r) {
             mesh.insert(mesh.end(), r.flat.begin(), r.flat.end());
             texturedMesh.insert(texturedMesh.end(), r.textured.begin(), r.textured.end());
@@ -683,7 +691,8 @@ void Renderer::setTrack(const Track& track) {
         // PIT_OUT/PIT_IN (index.html:1937): sized to hold both pit AI lanes
         // (moving lane at lat=-8.4, stall lane at lat=-10.5).
         append(buildPitRoadMesh(track, -7.2, -11.8));
-        append(buildOuterWallMesh(track));
+        appendTextured(buildOuterWallMesh(track));
+        appendTextured(buildSponsorPanelsMesh(track));
         // G5a (NASCAR-Thunder gap-analysis plan, track surface texture):
         // the checkered start/finish stripe, flat vertex-colored (see this
         // function's own comment in stadium_mesh.cpp for why).

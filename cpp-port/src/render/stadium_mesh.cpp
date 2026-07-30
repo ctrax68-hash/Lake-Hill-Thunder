@@ -1,5 +1,6 @@
 #include "stadium_mesh.h"
 
+#include "atlas_texture.h"
 #include "track_surface.h"
 
 #include "../sim/car.h" // FIELD, pitStallS()
@@ -211,20 +212,69 @@ std::vector<MeshVertex> buildPitRoadMesh(const Track& track, double pitOut, doub
     return out;
 }
 
+// G5b (NASCAR-Thunder gap-analysis plan, stadium wall/sponsor atlas
+// wiring): the wall diamond pattern (kAtlasWall) was already painted by
+// atlas_texture.cpp's paintWallPattern() but never sampled by any mesh --
+// confirmed dead via grep before this change. Since the wall is a single
+// quad strip (unlike the stands, which split front tiers textured / back
+// tiers flat), there's no flat/textured split needed here: the whole wall
+// just gets real UVs instead of a flat color, no new WallMeshResult-style
+// struct. U wraps `s / kWallTileLength` into the atlas region's own
+// [u0,u1) range in software (same technique renderer.cpp's ribbon build
+// already uses for the asphalt texture) so hardware texture wrap never
+// needs to see a value outside this one region; V spans the wall's own
+// height (0 at the ground, 1 at the top).
 std::vector<MeshVertex> buildOuterWallMesh(const Track& track) {
     std::vector<MeshVertex> out;
     const int N = 460;
     const double dS = track.total() / N;
     const double WALL_H = 1.35;
     const double wl = wallLat(track);
-    const auto& wallColor = track.theme().wall;
+    const std::array<double, 4> wallUV = atlasUV(kAtlasWall);
+    constexpr double kWallTileLength = 6.0;
+    auto wrapU = [&](double s) {
+        double t = std::fmod(s / kWallTileLength, 1.0);
+        if (t < 0.0) t += 1.0;
+        return wallUV[0] + t * (wallUV[2] - wallUV[0]);
+    };
     for (int i = 0; i < N; ++i) {
         const double s0 = i * dS, s1 = (i + 1) * dS;
         const Vec3 w00 = crossPt(track, s0, wl), w01 = crossPt(track, s1, wl);
         const Vec3 w10 = crossPt(track, s0, wl, WALL_H), w11 = crossPt(track, s1, wl, WALL_H);
+        const double u0 = wrapU(s0), u1 = wrapU(s1);
+        const double vTop = wallUV[1], vBottom = wallUV[3];
         // Reversed winding (w10,w11,w01,w00), matching JS's own fix so the
         // face is visible from the track side, not just from outside.
-        addQuad(out, w10, w11, w01, w00, wallColor);
+        addQuadUV(out, w10, w11, w01, w00, {u0, vTop}, {u1, vTop}, {u1, vBottom}, {u0, vBottom});
+    }
+    return out;
+}
+
+// G5b: small sponsor-panel quads along each straightaway, cycling through
+// the 8 pre-painted (but, before this change, never-sampled)
+// atlasSponsorUV() rects -- same "wire up already-painted-but-dead atlas
+// content" spirit as the wall above. Sits a hair proud of the wall face
+// (`wl + kProud`) to avoid z-fighting two coplanar textured quads.
+std::vector<MeshVertex> buildSponsorPanelsMesh(const Track& track) {
+    std::vector<MeshVertex> out;
+    constexpr double kProud = 0.02;
+    constexpr double kPanelH0 = 0.35, kPanelH1 = 1.15;
+    constexpr double kPanelLen = 8.0, kGap = 4.0, kPitch = kPanelLen + kGap;
+    const double wl = wallLat(track) + kProud;
+    const Seg& seg0 = track.segs()[0];
+    const Seg& seg2 = track.segs()[2];
+    int panelIdx = 0;
+    for (const Seg* seg : {&seg0, &seg2}) {
+        const int count = (int)(seg->len / kPitch);
+        for (int i = 0; i < count; ++i) {
+            const double sCenter = seg->s0 + (i + 0.5) * kPitch;
+            const double sa = sCenter - kPanelLen / 2.0, sb = sCenter + kPanelLen / 2.0;
+            const std::array<double, 4> uv = atlasSponsorUV(panelIdx % kAtlasSponsorCount);
+            const Vec3 pa0 = crossPt(track, sa, wl, kPanelH0), pb0 = crossPt(track, sb, wl, kPanelH0);
+            const Vec3 pa1 = crossPt(track, sa, wl, kPanelH1), pb1 = crossPt(track, sb, wl, kPanelH1);
+            addQuadUV(out, pa1, pb1, pb0, pa0, {uv[0], uv[1]}, {uv[2], uv[1]}, {uv[2], uv[3]}, {uv[0], uv[3]});
+            ++panelIdx;
+        }
     }
     return out;
 }
