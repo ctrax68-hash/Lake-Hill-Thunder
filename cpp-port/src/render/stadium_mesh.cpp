@@ -17,6 +17,8 @@ constexpr std::array<double, 3> kPitWall{0.86, 0.86, 0.88};
 constexpr std::array<double, 3> kPitStall{0.80, 0.16, 0.14};
 constexpr std::array<double, 3> kTire{0.05, 0.05, 0.06};
 constexpr std::array<double, 3> kChrome{0.75, 0.77, 0.80};
+constexpr std::array<double, 3> kCheckerWhite{0.92, 0.92, 0.92};
+constexpr std::array<double, 3> kCheckerBlack{0.05, 0.05, 0.06};
 
 Vec3 crossPt(const Track& track, double s, double lat, double raise = 0.0) {
     Vec3 p = pos3(track, s, lat);
@@ -223,6 +225,32 @@ std::vector<MeshVertex> buildOuterWallMesh(const Track& track) {
         // Reversed winding (w10,w11,w01,w00), matching JS's own fix so the
         // face is visible from the track side, not just from outside.
         addQuad(out, w10, w11, w01, w00, wallColor);
+    }
+    return out;
+}
+
+// G5a (NASCAR-Thunder gap-analysis plan, track surface texture): a
+// checkered start/finish stripe at s=0, alternating black/white quads
+// across the ribbon's full lateral width (matching the ribbon's own
+// -halfW..+halfW extent, not the wall/apron lateral bounds). Flat vertex-
+// colored (like the pit-road markings above), not part of the new asphalt
+// texture -- a deliberate simplification over a dedicated texture region
+// (the plan's original approach) since a handful of alternating quads
+// gives the same visible result with far less complexity, reusing this
+// file's existing addQuad()/crossPt() rather than introducing an atlas-
+// style multi-region UV layout for one small feature.
+std::vector<MeshVertex> buildStartFinishMesh(const Track& track) {
+    std::vector<MeshVertex> out;
+    constexpr int kCols = 10;
+    constexpr double kStripeLen = 2.4;
+    const double halfW = track.halfW();
+    const double cellW = (2.0 * halfW) / kCols;
+    constexpr double kRaise = 0.02; // sit just above the asphalt surface, no z-fighting
+    for (int i = 0; i < kCols; ++i) {
+        const double lat0 = -halfW + i * cellW, lat1 = lat0 + cellW;
+        const auto& color = (i % 2 == 0) ? kCheckerWhite : kCheckerBlack;
+        addQuad(out, crossPt(track, -kStripeLen / 2, lat0, kRaise), crossPt(track, kStripeLen / 2, lat0, kRaise),
+                crossPt(track, kStripeLen / 2, lat1, kRaise), crossPt(track, -kStripeLen / 2, lat1, kRaise), color);
     }
     return out;
 }

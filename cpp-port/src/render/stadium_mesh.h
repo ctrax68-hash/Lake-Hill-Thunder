@@ -76,3 +76,9 @@ std::vector<MeshVertex> buildPitRoadMesh(const Track& track, double pitOut, doub
 // with `theme.wall` -- the diamond/sponsor texture and the catch-fence
 // band above it are both deferred to Phase 5e.
 std::vector<MeshVertex> buildOuterWallMesh(const Track& track);
+
+// G5a (NASCAR-Thunder gap-analysis plan, track surface texture): a
+// checkered start/finish stripe at s=0, flat vertex-colored (see this
+// function's own comment in stadium_mesh.cpp for why this isn't part of
+// the new asphalt texture).
+std::vector<MeshVertex> buildStartFinishMesh(const Track& track);

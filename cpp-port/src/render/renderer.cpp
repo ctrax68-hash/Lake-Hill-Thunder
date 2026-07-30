@@ -11,6 +11,7 @@
 #include "pylon_mesh.h"
 #include "stadium_mesh.h"
 #include "track_surface.h"
+#include "track_surface_texture.h"
 #include "vertex.h"
 #include "vertex_lit.h"
 #include "vertex_textured.h"
@@ -307,6 +308,20 @@ bool Renderer::init(void* nativeDisplayHandle, void* nativeWindowHandle, int wid
     bgfx::ShaderHandle fshTexturedLit = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "fs_textured_lit");
     texturedLitProgram_ = bgfx::createProgram(vshTexturedLit, fshTexturedLit, true);
 
+    // G5a (NASCAR-Thunder gap-analysis plan, track surface texture): built
+    // once here, not per-track (see this texture's own member comment in
+    // renderer.h for why) -- hasMips=true from the start, same "aliases on
+    // real mobile GPU without a mip chain" lesson already learned once for
+    // the crowd atlas (the per-pixel speckle noise here is exactly that
+    // kind of high-frequency content).
+    {
+        const std::vector<uint8_t> asphaltPixels = buildAsphaltPixels();
+        const std::vector<uint8_t> asphaltMips = buildRgba8MipChain(asphaltPixels, kAsphaltTextureSize);
+        asphaltTexture_ = bgfx::createTexture2D((uint16_t)kAsphaltTextureSize, (uint16_t)kAsphaltTextureSize, true, 1,
+                                                 bgfx::TextureFormat::RGBA8, 0,
+                                                 bgfx::copy(asphaltMips.data(), (uint32_t)asphaltMips.size()));
+    }
+
     // Phase 5h (PORT_PROGRESS.md): the bloom+grade+tonemap postprocess
     // chain's 3 programs, each pairing a *fresh* vs_sky shader handle (a
     // second createEmbeddedShader() call, not the same handle skyProgram_
@@ -406,6 +421,7 @@ void Renderer::shutdown() {
     if (bgfx::isValid(uSkyTexColor_)) bgfx::destroy(uSkyTexColor_);
     if (bgfx::isValid(skyVb_)) bgfx::destroy(skyVb_);
     if (bgfx::isValid(skyTexture_)) bgfx::destroy(skyTexture_);
+    if (bgfx::isValid(asphaltTexture_)) bgfx::destroy(asphaltTexture_);
     if (bgfx::isValid(stadiumVb_)) bgfx::destroy(stadiumVb_);
     if (bgfx::isValid(texturedLitProgram_)) bgfx::destroy(texturedLitProgram_);
     if (bgfx::isValid(atlasTexture_)) bgfx::destroy(atlasTexture_);
@@ -524,12 +540,31 @@ void Renderer::setTrack(const Track& track) {
         return Vec3{nx, ny, nz};
     };
 
-    const uint32_t asphalt = packColor(0.25f, 0.25f, 0.27f);
-    std::vector<PosNormalColorVertex> verts;
+    // G5a (NASCAR-Thunder gap-analysis plan, track surface texture): the
+    // ribbon used to get one hardcoded flat vertex color (the old `asphalt`
+    // constant here) -- now it's UV'd into the tileable asphalt texture
+    // (track_surface_texture.h) instead, via texturedLitLayout_/
+    // texturedLitProgram_ (already existed for the crowd-atlas stand
+    // seats). U wraps `s / kAsphaltTileLength` into [0,1) IN SOFTWARE
+    // (std::fmod, not relying on hardware texture wrap) since this port
+    // never needs the GPU to see a U outside [0,1) -- V is the lateral
+    // fraction across the ribbon's own fixed width (0 = inner edge, 1 =
+    // outer/wall edge), matching where the asphalt texture's groove/apron
+    // bands are painted.
+    constexpr double kAsphaltTileLength = 8.0;
+    auto wrapU = [](double s) {
+        double t = std::fmod(s / kAsphaltTileLength, 1.0);
+        return t < 0.0 ? t + 1.0 : t;
+    };
+    std::vector<PosNormalUVVertex> verts;
     verts.reserve((size_t)n * 6);
     for (int i = 0; i < n; ++i) {
         const EdgePair& a = pts[i];
         const EdgePair& b = pts[(i + 1) % n];
+        const double sa = (double)i / n * total;
+        const double sb = (double)(i + 1) / n * total;
+        const double ua = wrapU(sa), ub = wrapU(sb);
+        constexpr double vInner = 0.0, vOuter = 1.0;
         // Two triangles per ribbon segment: (inner_a, outer_a, outer_b) and
         // (inner_a, outer_b, inner_b). Triangle list, not a strip -- a
         // closed loop's wraparound is simpler to get right this way, and a
@@ -537,21 +572,21 @@ void Renderer::setTrack(const Track& track) {
         const Vec3 n1 = faceNormal(a.inner, a.outer, b.outer);
         const Vec3 n2 = faceNormal(a.inner, b.outer, b.inner);
         verts.push_back({(float)a.inner.x, (float)a.inner.y, (float)a.inner.z,
-                          (float)n1.x, (float)n1.y, (float)n1.z, asphalt});
+                          (float)n1.x, (float)n1.y, (float)n1.z, (float)ua, (float)vInner});
         verts.push_back({(float)a.outer.x, (float)a.outer.y, (float)a.outer.z,
-                          (float)n1.x, (float)n1.y, (float)n1.z, asphalt});
+                          (float)n1.x, (float)n1.y, (float)n1.z, (float)ua, (float)vOuter});
         verts.push_back({(float)b.outer.x, (float)b.outer.y, (float)b.outer.z,
-                          (float)n1.x, (float)n1.y, (float)n1.z, asphalt});
+                          (float)n1.x, (float)n1.y, (float)n1.z, (float)ub, (float)vOuter});
         verts.push_back({(float)a.inner.x, (float)a.inner.y, (float)a.inner.z,
-                          (float)n2.x, (float)n2.y, (float)n2.z, asphalt});
+                          (float)n2.x, (float)n2.y, (float)n2.z, (float)ua, (float)vInner});
         verts.push_back({(float)b.outer.x, (float)b.outer.y, (float)b.outer.z,
-                          (float)n2.x, (float)n2.y, (float)n2.z, asphalt});
+                          (float)n2.x, (float)n2.y, (float)n2.z, (float)ub, (float)vOuter});
         verts.push_back({(float)b.inner.x, (float)b.inner.y, (float)b.inner.z,
-                          (float)n2.x, (float)n2.y, (float)n2.z, asphalt});
+                          (float)n2.x, (float)n2.y, (float)n2.z, (float)ub, (float)vInner});
     }
 
     trackVb_ = bgfx::createVertexBuffer(
-        bgfx::copy(verts.data(), (uint32_t)(verts.size() * sizeof(PosNormalColorVertex))), litLayout_);
+        bgfx::copy(verts.data(), (uint32_t)(verts.size() * sizeof(PosNormalUVVertex))), texturedLitLayout_);
     trackVertexCount_ = (uint32_t)verts.size();
 
     // Frame the static top-down camera to this track's bounding box (x/z,
@@ -649,6 +684,10 @@ void Renderer::setTrack(const Track& track) {
         // (moving lane at lat=-8.4, stall lane at lat=-10.5).
         append(buildPitRoadMesh(track, -7.2, -11.8));
         append(buildOuterWallMesh(track));
+        // G5a (NASCAR-Thunder gap-analysis plan, track surface texture):
+        // the checkered start/finish stripe, flat vertex-colored (see this
+        // function's own comment in stadium_mesh.cpp for why).
+        append(buildStartFinishMesh(track));
         // Phase 5g (PORT_PROGRESS.md): Big Sable's scoring pylon + jumbotron
         // (`stadium.pylon`/`stadium.jumbotron`) -- both no-op empty meshes on
         // every other track, so safe to call unconditionally.
@@ -1060,11 +1099,17 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         bgfx::submit(kView, litProgram_);
     }
 
-    if (trackVertexCount_ > 0) {
+    // G5a (NASCAR-Thunder gap-analysis plan, track surface texture): the
+    // ribbon is now UV'd into asphaltTexture_ (built once in init(), see
+    // its own member comment in renderer.h) instead of a flat vertex
+    // color -- same texturedLitProgram_/uSkyTexColor_ pattern the crowd-
+    // atlas stand seats already use below, just a different texture bound.
+    if (trackVertexCount_ > 0 && bgfx::isValid(asphaltTexture_)) {
         bgfx::setTransform(identity);
         bgfx::setVertexBuffer(0, trackVb_, 0, trackVertexCount_);
+        bgfx::setTexture(0, uSkyTexColor_, asphaltTexture_);
         bgfx::setState(state);
-        bgfx::submit(kView, litProgram_);
+        bgfx::submit(kView, texturedLitProgram_);
     }
 
     // Phase 5d (PORT_PROGRESS.md): stands + pit road + outer wall, drawn

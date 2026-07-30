@@ -197,6 +197,15 @@ private:
     bgfx::VertexBufferHandle stadiumTexturedVb_ = BGFX_INVALID_HANDLE;
     uint32_t stadiumTexturedVertexCount_ = 0;
 
+    // G5a (NASCAR-Thunder gap-analysis plan, track surface texture): the
+    // ribbon's asphalt texture (track_surface_texture.h) -- unlike the sky/
+    // atlas textures, its content doesn't vary per track (the original
+    // game's asphalt color is the same everywhere too), so it's built once
+    // in init() rather than rebuilt in every setTrack() call. The ribbon
+    // itself now uses texturedLitLayout_/texturedLitProgram_ (above)
+    // instead of litLayout_/litProgram_.
+    bgfx::TextureHandle asphaltTexture_ = BGFX_INVALID_HANDLE;
+
     // Phase 5c (PORT_PROGRESS.md): the sky background -- a fullscreen
     // textured quad (own unlit program/vertex layout/static NDC-space
     // vertex buffer, built once in init()) sampling a per-track texture

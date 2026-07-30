@@ -383,6 +383,7 @@ add_executable(lht_port
   src/render/texture_import.cpp
   src/render/touch_buttons.cpp
   src/render/track_surface.cpp
+  src/render/track_surface_texture.cpp
   src/render/ui_draw.cpp
   src/render/wheel_animation.cpp
   src/ui/menu.cpp

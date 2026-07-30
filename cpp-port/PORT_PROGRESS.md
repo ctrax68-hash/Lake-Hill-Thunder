@@ -5349,3 +5349,51 @@ Playwright, zero `GL_INVALID_OPERATION`. Committed and pushed. This closes
 out G1's own two self-flagged follow-ups (UV rework in G1b, wheel/tire
 mesh here) -- next up is `G5a` (track surface asphalt texture), moving
 from "cars first" into the track/stadium half of this overhaul.
+
+**G5a -- track surface texture.** The entire ribbon got one hardcoded flat
+vertex color (`packColor(0.25,0.25,0.27)`, the old `asphalt` constant) --
+zero texture, zero variation, the single biggest contributor to the "flat
+gray" complaint. New `src/render/track_surface_texture.h`/`.cpp`
+(`buildAsphaltPixels()`, 256x256, bgfx-free "pure logic" pattern matching
+`sky_texture.cpp`): a deterministic per-pixel hash (no RNG dependency,
+same closed-form-analytic style `atlas_texture.cpp`'s wall/fence patterns
+already use) gives the base gray a +-15% speckle jitter for aggregate
+texture, plus a soft darker "groove" band (tire-rubber buildup on the
+racing line, centered slightly inside the midline) and a lighter warm-
+tinted apron band near the inner edge. Switched the ribbon in
+`renderer.cpp`'s `setTrack()` from `PosNormalColorVertex`/`litLayout_` to
+the already-existing `PosNormalUVVertex`/`texturedLitLayout_` (previously
+only used by the crowd-atlas stand seats) -- no new shader needed. U
+wraps `s / kAsphaltTileLength` (8.0 world units/tile) into `[0,1)` in
+*software* via `std::fmod` rather than relying on hardware texture wrap,
+since the GPU never needs to see a U outside `[0,1)`; V is the lateral
+fraction across the ribbon's own fixed width. `asphaltTexture_` is built
+once in `init()` rather than per-track (unlike the sky/atlas textures) --
+its content doesn't vary by track in the original game either -- with
+`hasMips=true` from the start (the per-pixel speckle is exactly the kind
+of high-frequency content that aliased badly on the crowd atlas before
+mips were added there).
+
+The plan's original idea of a dedicated texture sub-region for the start/
+finish checkered stripe turned out to be more complexity than the feature
+warranted: implemented `buildStartFinishMesh()` in `stadium_mesh.h`/`.cpp`
+instead -- a handful of flat vertex-colored quads alternating black/white
+across the ribbon's full lateral width at `s=0`, reusing the file's
+existing `addQuad()`/`crossPt()` helpers exactly like the pit-road
+markings already do, appended into the same flat `mesh` vector in
+`setTrack()`. Same visible result, far less code. `buildPitRoadMesh()`'s
+own U/V wiring into the new asphalt region (also in the original plan) was
+dropped for scope control -- pit road stays flat-colored for now, a minor,
+explicitly logged trim given this phase's actual goal (fixing the main
+ribbon's flat-gray look) was already achieved.
+
+**Verified**: native `ctest` 29/29 (no existing test asserts ribbon vertex
+layout/count, so no updates needed); WASM rebuild + Playwright, zero
+`GL_INVALID_OPERATION`. Chase-cam screenshots (native `xvfb-run` and WASM)
+show a visibly textured surface -- speckle variation and a darker groove
+band along the racing line, a clear break from the previous flat solid
+gray. `TopDown` screenshot at the default track confirms the checkered
+start/finish stripe renders at the correct `s=0` location, crossing the
+full track width. Committed and pushed; next up is `G5b` (wiring the
+already-painted-but-unused wall diamond pattern and sponsor panel atlas
+regions into real geometry).
