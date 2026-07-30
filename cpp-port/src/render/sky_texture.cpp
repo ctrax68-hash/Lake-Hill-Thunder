@@ -70,24 +70,35 @@ std::vector<uint8_t> buildSkyPixels(const Sky& sky, const EnvPreset* sunPreset) 
         }
     }
 
-    // Two faint cloud streaks (index.html:3750-3762), using the same rng2
-    // seed (mulberry32(777), index.html:1737) as JS's scenery-only stream --
-    // this doesn't affect gameplay determinism (render-only data), same
-    // already-established "safe to have its own local RNG instance"
-    // precedent noted elsewhere in this port. **Logged simplification**:
-    // JS applies a real 5px canvas blur to each streak; approximated here
-    // with a small hand-rolled vertical alpha falloff instead of an actual
-    // Gaussian blur pass -- close enough for a faint (alpha 0.09), small
-    // screen-space backdrop element.
+    // G5c (NASCAR-Thunder gap-analysis plan, sky/cloud improvement):
+    // replaced two flat horizontal streaks with a handful of soft
+    // elliptical cloud-puff blobs, reusing the sun-glow blob's own radial-
+    // falloff technique above (`a` scaled by `1 - d/radius`) instead of
+    // inventing a new one -- still not real cloud silhouettes, but a much
+    // less obviously-artificial "two flat bars" tell than before. Same
+    // rng2 seed (mulberry32(777)) as JS's own scenery-only stream --
+    // render-only data, doesn't affect gameplay determinism, same already-
+    // established "safe to have its own local RNG instance" precedent
+    // noted elsewhere in this port.
     Mulberry32 rng2(777);
-    for (int i = 0; i < 2; ++i) {
-        const double cy = kSkyTextureHeight * (0.12 + 0.16 * i) + rng2.next() * kSkyTextureHeight * 0.08;
-        for (int dy = -4; dy <= 4; ++dy) {
-            const int y = (int)std::lround(cy) + dy;
-            if (y < 0 || y >= kSkyTextureHeight) continue;
-            const double falloff = std::max(0.0, 1.0 - std::abs(dy) / 4.0);
-            const double a = 0.09 * falloff;
-            for (int x = 0; x < kSkyTextureWidth; ++x) blendPixel(x, y, 1.0, 1.0, 1.0, a);
+    constexpr int kCloudCount = 5;
+    for (int i = 0; i < kCloudCount; ++i) {
+        const double cx = rng2.next() * kSkyTextureWidth;
+        const double cy = kSkyTextureHeight * (0.08 + rng2.next() * 0.40);
+        const double rx = kSkyTextureWidth * (0.18 + rng2.next() * 0.22);
+        const double ry = rx * (0.25 + rng2.next() * 0.15);
+        const double peakA = 0.08 + rng2.next() * 0.08;
+        const int x0 = std::max(0, (int)std::floor(cx - rx));
+        const int x1 = std::min(kSkyTextureWidth, (int)std::ceil(cx + rx));
+        const int y0 = std::max(0, (int)std::floor(cy - ry));
+        const int y1 = std::min(kSkyTextureHeight, (int)std::ceil(cy + ry));
+        for (int y = y0; y < y1; ++y) {
+            for (int x = x0; x < x1; ++x) {
+                const double dx = (x - cx) / rx, dy = (y - cy) / ry;
+                const double d = std::sqrt(dx * dx + dy * dy);
+                if (d >= 1.0) continue;
+                blendPixel(x, y, 1.0, 1.0, 1.0, peakA * (1.0 - d));
+            }
         }
     }
 

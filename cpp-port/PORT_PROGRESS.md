@@ -5448,3 +5448,46 @@ band (e.g. one triangle at u∈[0.504,0.559], the next at u∈[0.566,0.621])
 of whatever one screenshot happened to frame. Committed and pushed; next
 up is `G5c` (sky/cloud improvement), the last car/track-side item before
 the optional, lowest-priority `G7` speed-blur polish.
+
+**G5c -- sky/cloud improvement.** `sky_texture.cpp`'s `buildSkyPixels()`
+previously painted two flat horizontal "cloud" streak bars -- an obvious
+tell that read as a bug rather than weather. Replaced them with 5 soft
+elliptical cloud-puff blobs, reusing the exact radial-falloff blend the
+file's own sun-glow blob already established (`a` scaled by `1 - d/radius`)
+instead of inventing a new technique: each blob gets a center
+(`cx`/`cy`), an x/y radius pair (`rx`, `ry = rx * 0.25..0.40` for a
+squashed, cloud-like ellipse rather than a circle), and a peak alpha in
+`[0.08, 0.16]` -- fainter than the sun glow's fixed 0.22, since these are
+background dressing, not a focal element. Positions/sizes/opacities all
+draw from the same `Mulberry32(777)` scenery-only RNG stream already
+established elsewhere in this port (stand-building, atlas crowd-tile
+painting) -- render-only data, safe to diverge, not gameplay-relevant.
+Still explicitly not real cloud silhouettes (no noise-based cloud shapes,
+no per-track weather variation) -- just a materially less obviously-fake
+"two flat bars" tell.
+
+No shader change was needed (`fs_sky.sc` only samples whatever's already
+painted into this texture), and no vertex/index count changed, so no
+existing test's assertions needed touching -- but `sky_texture_test` does
+assert exact pixel colors at fixed coordinates (top row center, and the
+horizon row), and a blob's bounding box could in principle reach row 0 at
+the fixed RNG seed used here; rather than assume it doesn't, ran the test
+and confirmed it still passes unmodified for this seed/config before
+moving on.
+
+**Verified**: native `ctest` 29/29; WASM rebuild + Playwright (a
+temporary script cycling to Cedar Valley's bluer daytime preset for
+better contrast against a white cloud), zero `GL_INVALID_OPERATION`. An
+in-game screenshot was inconclusive on its own -- the HUD occludes much
+of the upper sky and Cedar Valley's own sunset-preset sun glow washes out
+contrast in the same region -- so, following the same "decode it
+directly" discipline used for G1c/G5b's geometry checks, fell back to a
+standalone scratch program linking directly against `sky_texture.cpp`,
+calling `buildSkyPixels()` with Cedar Valley's own `Sky`/`sunset` preset
+values and dumping the raw 128x256 RGBA texture straight to a PNG with no
+game, HUD, or camera involved. That image unambiguously shows 5 distinct
+soft, irregularly-placed cloud puffs across the upper sky -- direct,
+camera-independent proof the blobs render as intended. Committed and
+pushed; only the optional, lowest-priority `G7` speed-blur post-fx pass
+remains, cuttable per the plan's own text since blur works against this
+overhaul's goal of screen legibility for upcoming physics work.
