@@ -53,7 +53,7 @@ void main()
 	vec3 diffuse = texel * (ambient + u_sunColor.rgb * ndotl);
 
 	float ndoth = max(dot(n, halfDir), 0.0);
-	float spec = pow(ndoth, 48.0) * 0.6;
+	float spec = pow(ndoth, 180.0) * 0.35;
 
 	float ndotv = max(dot(n, viewDir), 0.0);
 	float fresnel = pow(1.0 - ndotv, 5.0);
@@ -62,6 +62,6 @@ void main()
 	float reflT = clamp(reflectDir.y * 0.5 + 0.5, 0.0, 1.0);
 	vec3 envColor = mix(u_hemiGround.rgb, u_hemiSky.rgb, reflT);
 
-	vec3 rgb = mix(diffuse, envColor, fresnel * 0.35) + u_sunColor.rgb * spec;
+	vec3 rgb = mix(diffuse, envColor, fresnel * 0.25) + u_sunColor.rgb * spec;
 	gl_FragColor = vec4(rgb, 1.0);
 }

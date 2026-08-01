@@ -5491,3 +5491,85 @@ camera-independent proof the blobs render as intended. Committed and
 pushed; only the optional, lowest-priority `G7` speed-blur post-fx pass
 remains, cuttable per the plan's own text since blur works against this
 overhaul's goal of screen legibility for upcoming physics work.
+
+**Bugfix -- G2's car shader used local-space position/normal as if they
+were world-space.** After the phases above shipped, cars looked
+"deformed with very jerky motions" in the browser build -- body panels
+looked stretched/twisted, wheels looked wrong, the whole car seemed to
+jitter. Two Explore-agent investigations first ruled out the obvious
+suspects: `gen_car_rig.py`'s G1c radial wheel mesh has correct, verified
+joint indices/weights; `renderer.cpp`'s per-car bone-palette computation
+and upload is freshly computed and correctly scoped per car (no bleed
+between cars, no stale buffers, no wrong-car indexing); wheel spin/
+steering/suspension transform math is correct; the only render-timing
+issue found was a pre-existing, unrelated fixed-timestep micro-stutter
+that predates this entire session.
+
+The real bug was in `vs_car.sc` (added by G2, commit `5f79ace`):
+```glsl
+vec4 worldPos = mul(skinMat, vec4(a_position, 1.0));
+gl_Position = mul(u_modelViewProj, worldPos);
+...
+v_worldPos = worldPos.xyz;
+```
+`skinMat` only applies each vertex's *skin* (bone) transform -- wheel
+spin/steering relative to the chassis -- not the per-car model matrix
+(world translation + heading) that `renderer.cpp` sets via
+`bgfx::setTransform()` before every car's draw call; that matrix was
+only ever folded into `gl_Position` via bgfx's built-in
+`u_modelViewProj`. So `worldPos` was actually **local rig space** --
+every car's body sat within a couple of units of local origin regardless
+of its true position/heading on track. This exact "worldPos" name/
+pattern already existed harmlessly in `vs_skinned.sc` (verified
+line-for-line identical) -- there it's only ever used to build
+`gl_Position`, never exposed as a varying. G2 copied the pattern into
+`vs_car.sc` but newly exported it as `v_worldPos` for `fs_car.sc`'s
+`viewDir = normalize(u_camPos.xyz - v_worldPos)`, where `u_camPos` is the
+*real* world-space chase-camera eye. Subtracting a near-origin local
+position from a true world-space camera position produced a wildly wrong
+`viewDir` for every car except roughly the one under the chase camera --
+and even that one was only right by coincidence (small chase offset vs.
+small local mesh extent happening to look plausible). The normal had the
+same problem: only skin-rotated, never rotated by the car's actual
+heading. Every frame, as cars moved and turned, this produced
+discontinuous specular/Fresnel/reflection-color blending across most of
+the field -- reading exactly like "deformed, jerky" shading even though
+no vertex position ever moved. G2's own verification screenshots didn't
+catch this because they only looked at the followed car close-up, the
+one place the bug was least visible.
+
+Fix: `vs_car.sc` now also applies bgfx's built-in per-object model
+matrix (`u_model[0]`, the same matrix `bgfx::setTransform()` sets, and
+confirmed present in `bgfx_shader.sh`) to both position and normal before
+exporting them, so `v_worldPos`/`v_normal` are genuinely world-space:
+```glsl
+vec4 trueWorldPos = mul(u_model[0], worldPos);
+v_normal = mul(u_model[0], vec4(mul(skinMat, vec4(a_normal, 0.0)).xyz, 0.0)).xyz;
+v_worldPos = trueWorldPos.xyz;
+```
+Fixing the math alone then exposed a second, related problem: G2's
+specular constants (`pow(ndoth,48.0)*0.6` and a `fresnel*0.35` reflection
+mix) were tuned empirically against the *broken* viewDir. With correct
+geometry, and given this car mesh is flat-shaded (each body panel is one
+flat quad with a single constant normal, so a specular highlight doesn't
+taper smoothly across a panel the way it would on a curved/smooth-shaded
+surface -- it's either on or off for the *entire* panel), several
+near-parallel panels (hood/roof/deck) satisfying the specular condition
+at once blew the whole visible car out to solid white on close-up chase
+views. Retuned `fs_car.sc`'s constants to a tighter, dimmer highlight
+(`pow(ndoth,180.0)*0.35`, reflection mix `0.25`) that keeps the sheen
+G2 was after without saturating flat panels.
+
+**Verified**: native `ctest` 29/29. Confirmed the root cause directly by
+temporarily reverting to the pre-fix `vs_car.sc` (`git stash`), rebuilding,
+and comparing screenshots side by side -- the near/followed car matched
+between builds (bug is least visible there), but the constants-only
+retune was verified by comparing the SAME fixed-`vs_car.sc` build before
+and after the `fs_car.sc` retune: the near car went from solid white
+back to its correct brown/cream livery with a subtle sheen, at a heavily
+changed heading (mid-spin, `dmg=0.35`) as well as normal forward travel,
+confirming the fix isn't angle-dependent. WASM rebuild + Playwright:
+zero `GL_INVALID_OPERATION`; chase-cam screenshots of the pack ahead of
+the player show clean, undistorted livery colors on every visible car;
+a top-down full-field screenshot shows no stray white/blown-out cars
+anywhere in the 20-car field.
