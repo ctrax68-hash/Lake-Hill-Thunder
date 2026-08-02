@@ -5748,3 +5748,42 @@ range of density values -- panel count rose monotonically from 24 at
 density 0.18 to 40 at density 0.35, direct proof the density parameter
 controls spacing correctly, independent of any confounding per-track
 geometry difference.
+
+**G12 -- turn/corner sponsor signage.** Real tracks plaster distinct
+large sponsor panels at each corner apex ("Turn 1 presented by X"),
+separate from straightaway signage -- `buildSponsorPanelsMesh()` only
+ever covers `seg0`/`seg2` (the straights), so corners were completely
+bare of any signage. Rather than extend the atlas with bitmap-font
+sponsor text (explicitly out of scope, per `atlas_texture.h`'s own
+simplification note #3 -- JS's `drawWord()` is a full custom bitmap-
+font renderer), reused this port's own existing numeric-display
+convention instead: `digit_mesh.h`'s `addNumber()` (already used for
+Big Sable's pylon/jumbotron car-number rows) renders real LED-segment
+geometry for a number, no texture involved.
+
+New `buildTurnSignageMesh(track)` in `stadium_mesh.cpp`/`.h`: one panel
+per corner (`seg1`/`seg3`), at the arc's own midpoint -- a flat dark
+bezel backing quad (matching the pylon/jumbotron's own bezel look)
+plus the corner's number (1, 2) rendered via `addNumber()`, using the
+same tan/lat-basis `PutFn` projection idiom `pylon_mesh.cpp` already
+establishes for placing LED-digit geometry in 3D. `stadium_mesh.cpp`
+now includes `digit_mesh.h`; `CMakeLists.txt`'s `stadium_mesh_test`
+target gained `src/render/digit_mesh.cpp` as a new link dependency.
+Wired into `renderer.cpp`'s `setTrack()` via the existing flat-color
+`append()` path (this mesh has no UVs, unlike the textured sponsor/
+wall/fence meshes).
+
+**Verified**: native `ctest` 29/29. WASM rebuild + Playwright, zero
+`GL_INVALID_OPERATION`. A chase-cam screenshot attempt didn't catch a
+corner in frame within a reasonable wait (the sim hadn't progressed
+that far from the green flag yet), so, per this port's "decode it
+directly" discipline, fell back to a standalone scratch program calling
+`buildTurnSignageMesh()` directly: 54 total vertices for the two
+panels, exactly matching a hand computation from `kSegBits`'s own
+segment-count table (digit "1" lights 2 segments, digit "2" lights 5,
+plus one 6-vertex bezel quad per panel -- `18 + 36 = 54`, an exact
+match). The vertex Y range (`1.10..8.469`) initially looked suspicious
+until cross-checked against the corner's own bank angle and the wall's
+lateral offset -- consistent with how every other wall-adjacent mesh
+(the wall face, the fence) already varies in absolute world-space
+height across a banked corner, not a bug in the new code.

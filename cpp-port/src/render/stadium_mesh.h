@@ -88,6 +88,19 @@ std::vector<MeshVertex> buildOuterWallMesh(const Track& track);
 // sparser ones (e.g. Cedar Valley).
 std::vector<MeshVertex> buildSponsorPanelsMesh(const Track& track, double sponsorDensity);
 
+// G12 (NASCAR-Thunder gap-analysis plan): real tracks plaster distinct
+// large sponsor panels at each corner apex ("Turn 1 presented by X"),
+// separate from straightaway signage -- corners were previously bare of
+// any signage (buildSponsorPanelsMesh() above only ever covers seg0/
+// seg2, the straights). One panel per corner (seg1/seg3), a dark bezel
+// backing quad plus the corner's own number rendered via the existing
+// LED-segment digit geometry (digit_mesh.h's addNumber(), already used
+// for the pylon/jumbotron) -- reuses this port's own established numeric-
+// display convention instead of adding bitmap-font text to the atlas
+// (out of scope, same reasoning atlas_texture.h's own header already
+// gives for skipping sponsor-name text).
+std::vector<MeshVertex> buildTurnSignageMesh(const Track& track);
+
 // G10 (NASCAR-Thunder gap-analysis plan): the catch fence -- `atlas_
 // texture.cpp` has painted a crosshatch fence band into kAtlasFence since
 // Phase 5e, but (confirmed via grep) no mesh ever sampled it; this port's

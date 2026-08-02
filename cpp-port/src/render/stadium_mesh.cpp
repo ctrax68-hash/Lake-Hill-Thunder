@@ -1,6 +1,7 @@
 #include "stadium_mesh.h"
 
 #include "atlas_texture.h"
+#include "digit_mesh.h" // G12: addNumber() for turn-signage numbers
 #include "track_surface.h"
 
 #include "../sim/car.h" // FIELD, pitStallS()
@@ -313,6 +314,45 @@ std::vector<MeshVertex> buildSponsorPanelsMesh(const Track& track, double sponso
             addQuadUV(out, pa1, pb1, pb0, pa0, {uv[0], uv[1]}, {uv[2], uv[1]}, {uv[2], uv[3]}, {uv[0], uv[3]});
             ++panelIdx;
         }
+    }
+    return out;
+}
+
+// G12 (NASCAR-Thunder gap-analysis plan): one turn-number panel per
+// corner, at the arc's own midpoint -- a flat dark bezel backing quad
+// (matching the pylon/jumbotron's own bezel look, `kBezel` below) plus
+// the corner's number rendered via digit_mesh.h's addNumber(), same
+// tan/lat projection idiom pylon_mesh.cpp's own PutFn closures already
+// establish for placing LED-digit geometry in 3D.
+std::vector<MeshVertex> buildTurnSignageMesh(const Track& track) {
+    std::vector<MeshVertex> out;
+    constexpr std::array<double, 3> kBezel{0.08, 0.08, 0.10};
+    constexpr std::array<double, 3> kYellow{0.95, 0.85, 0.10};
+    constexpr double kProud = 0.02;
+    constexpr double kPanelH0 = 0.9, kPanelH1 = 2.6;
+    constexpr double kHalfLen = 1.8;
+    const double wl = wallLat(track) + kProud;
+    const Seg& seg1 = track.segs()[1];
+    const Seg& seg3 = track.segs()[3];
+    int turnNum = 1;
+    for (const Seg* seg : {&seg1, &seg3}) {
+        const double sMid = seg->s0 + seg->len * 0.5;
+        const Vec3 pa0 = crossPt(track, sMid - kHalfLen, wl, kPanelH0);
+        const Vec3 pb0 = crossPt(track, sMid + kHalfLen, wl, kPanelH0);
+        const Vec3 pa1 = crossPt(track, sMid - kHalfLen, wl, kPanelH1);
+        const Vec3 pb1 = crossPt(track, sMid + kHalfLen, wl, kPanelH1);
+        addQuad(out, pa1, pb1, pb0, pa0, kBezel);
+
+        const PointResult p = track.pointAt(sMid);
+        const double tanX = std::cos(p.hdg), tanZ = std::sin(p.hdg);
+        const double latX = -std::sin(p.hdg), latZ = std::cos(p.hdg);
+        const Vec3 basePt = pos3(track, sMid, wl);
+        const double midY = (kPanelH0 + kPanelH1) / 2.0;
+        PutFn put = [&](double x, double y) {
+            return Vec3{basePt.x + tanX * x + latX * 0.02, midY + y, basePt.z + tanZ * x + latZ * 0.02};
+        };
+        addNumber(out, turnNum, put, 1.1, 1.3, kYellow);
+        ++turnNum;
     }
     return out;
 }

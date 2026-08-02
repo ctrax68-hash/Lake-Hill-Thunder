@@ -706,6 +706,9 @@ void Renderer::setTrack(const Track& track) {
         // G11 (NASCAR-Thunder gap-analysis plan): thread the previously-
         // dead sponsorDensity field into panel spacing.
         appendTextured(buildSponsorPanelsMesh(track, st.sponsorDensity));
+        // G12 (NASCAR-Thunder gap-analysis plan): turn-number signage at
+        // each corner apex, previously bare of any signage.
+        append(buildTurnSignageMesh(track));
         // G5a (NASCAR-Thunder gap-analysis plan, track surface texture):
         // the checkered start/finish stripe, flat vertex-colored (see this
         // function's own comment in stadium_mesh.cpp for why).
