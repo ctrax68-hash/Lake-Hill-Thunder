@@ -5691,3 +5691,38 @@ worst case, `standDensity=0.55` compounding with the old `cornerCov`)
 went from sparse, disconnected patches to stand coverage tracing nearly
 the full perimeter on both corners, with only the small, already-
 documented density-driven gaps remaining.
+
+**G10 -- wire the dead catch-fence atlas region into real geometry.**
+`atlas_texture.cpp`'s `paintFenceBand()` has painted a crosshatch fence
+texture into `kAtlasFence` since Phase 5e, but grep confirmed no mesh
+ever sampled it -- `stadium_mesh.h`'s own header comment even said so
+explicitly ("the catch fence itself is skipped entirely... it's added in
+5e alongside the crowd atlas"), except 5e never actually added the
+geometry pass. Same "already-painted-but-dead atlas content" situation
+G5b already found and fixed once for the wall/sponsor regions.
+
+New `buildCatchFenceMesh(track, fenceHeight)` in `stadium_mesh.cpp`/`.h`,
+modeled directly on `buildOuterWallMesh()` -- same per-slice loop over
+the full perimeter, same `wrapU`-into-atlas-region technique (`kFence
+TileLength=5.0`), just a thin vertical band starting at `WALL_H=1.35`
+(matching the wall's own top) running up by `fenceHeight`. Added a new
+`Stadium::fenceHeight` field (`track.h`), defaulted to `1.0` so every
+existing per-track initializer picks it up unchanged via C++'s aggregate-
+init default-member-initializer rule (same technique this struct's own
+`crowdTiers = 2` already relies on) -- only Big Sable Speedway's
+initializer in `tracks_data.h` appends an explicit `2.2` override, since
+real catch fences run noticeably taller at superspeedways than short
+tracks. Wired into `renderer.cpp`'s `setTrack()` right after the wall.
+
+**Verified**: native `ctest` 29/29 (touching `Stadium` triggered a full
+rebuild, all suites still green). WASM rebuild + Playwright, zero
+`GL_INVALID_OPERATION`. A top-down camera angle was too orthogonal to
+show a thin vertical band at all (confirmed empirically, not just
+assumed -- the fence and wall nearly coincide from directly overhead), so
+switched to the default chase-cam angle: Thunder Oval's chase-cam
+screenshot shows a clear gray crosshatch lattice rising above the orange
+diamond wall pattern, distinct from it. Big Sable Speedway's screenshot
+(cycled to via the track selector) shows the same crosshatch band
+extending noticeably higher above the wall than Thunder Oval's --
+confirming both that the fence renders at all, and that the per-track
+height override works.

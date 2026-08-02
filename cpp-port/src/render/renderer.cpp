@@ -700,6 +700,9 @@ void Renderer::setTrack(const Track& track) {
         // (moving lane at lat=-8.4, stall lane at lat=-10.5).
         append(buildPitRoadMesh(track, -7.2, -11.8));
         appendTextured(buildOuterWallMesh(track));
+        // G10 (NASCAR-Thunder gap-analysis plan): wire the previously-dead
+        // catch-fence atlas region into real geometry.
+        appendTextured(buildCatchFenceMesh(track, st.fenceHeight));
         appendTextured(buildSponsorPanelsMesh(track));
         // G5a (NASCAR-Thunder gap-analysis plan, track surface texture):
         // the checkered start/finish stripe, flat vertex-colored (see this

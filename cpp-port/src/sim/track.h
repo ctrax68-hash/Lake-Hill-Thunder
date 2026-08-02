@@ -66,6 +66,12 @@ struct Stadium {
     Sky sky;
     Env env;
     std::array<std::array<double, 3>, 6> crowdPalette;
+    // G10 (NASCAR-Thunder gap-analysis plan): catch-fence height above the
+    // wall, in world units. Defaulted so every existing per-track
+    // initializer (which predates this field) picks up a short-track
+    // height unchanged; only Big Sable Speedway (the superspeedway, where
+    // real catch fences run noticeably taller) overrides it.
+    double fenceHeight = 1.0;
 };
 
 // Straight from each JS TRACKS[] entry (index.html:242-283): physics fields

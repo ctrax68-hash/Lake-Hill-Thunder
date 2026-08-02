@@ -250,6 +250,37 @@ std::vector<MeshVertex> buildOuterWallMesh(const Track& track) {
     return out;
 }
 
+// G10 (NASCAR-Thunder gap-analysis plan): the catch fence -- kAtlasFence's
+// crosshatch was painted since Phase 5e but never sampled by any mesh
+// (confirmed via grep), the same "already-painted-but-dead atlas content"
+// situation G5b found and fixed for the wall/sponsor regions. A thin
+// vertical band directly above the wall face, same per-slice loop and
+// wrapU-into-atlas-region technique as buildOuterWallMesh() just above.
+std::vector<MeshVertex> buildCatchFenceMesh(const Track& track, double fenceHeight) {
+    std::vector<MeshVertex> out;
+    const int N = 460;
+    const double dS = track.total() / N;
+    constexpr double kWallH = 1.35; // matches buildOuterWallMesh()'s own WALL_H
+    const double wl = wallLat(track);
+    const std::array<double, 4> fenceUV = atlasUV(kAtlasFence);
+    constexpr double kFenceTileLength = 5.0;
+    auto wrapU = [&](double s) {
+        double t = std::fmod(s / kFenceTileLength, 1.0);
+        if (t < 0.0) t += 1.0;
+        return fenceUV[0] + t * (fenceUV[2] - fenceUV[0]);
+    };
+    for (int i = 0; i < N; ++i) {
+        const double s0 = i * dS, s1 = (i + 1) * dS;
+        const Vec3 f00 = crossPt(track, s0, wl, kWallH), f01 = crossPt(track, s1, wl, kWallH);
+        const Vec3 f10 = crossPt(track, s0, wl, kWallH + fenceHeight), f11 = crossPt(track, s1, wl, kWallH + fenceHeight);
+        const double u0 = wrapU(s0), u1 = wrapU(s1);
+        const double vTop = fenceUV[1], vBottom = fenceUV[3];
+        // Same reversed winding as the wall face, visible from the track side.
+        addQuadUV(out, f10, f11, f01, f00, {u0, vTop}, {u1, vTop}, {u1, vBottom}, {u0, vBottom});
+    }
+    return out;
+}
+
 // G5b: small sponsor-panel quads along each straightaway, cycling through
 // the 8 pre-painted (but, before this change, never-sampled)
 // atlasSponsorUV() rects -- same "wire up already-painted-but-dead atlas

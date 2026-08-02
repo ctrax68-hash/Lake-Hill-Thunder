@@ -34,5 +34,6 @@ inline const std::array<TrackSpec, 4> TRACKS = {{
      Stadium{StandTier{10, 8, 6}, 0.95, "full", StandScale{4.0, 2.6}, 0.97, 0, 0, true, true, 0.30, 4,
              Sky{{0.75, 0.83, 0.93}, {0.18, 0.40, 0.80}, "none"}, Env{"dusk-lights"},
              {{{0.85, 0.15, 0.12}, {0.10, 0.25, 0.75}, {0.95, 0.85, 0.15}, {0.90, 0.90, 0.92}, {0.15, 0.15, 0.18},
-               {0.55, 0.55, 0.60}}}}},
+               {0.55, 0.55, 0.60}}},
+             2.2}},  // G10: taller catch fence -- this is the superspeedway
 }};

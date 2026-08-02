@@ -82,6 +82,17 @@ std::vector<MeshVertex> buildOuterWallMesh(const Track& track);
 // the atlas's 8 pre-painted sponsor-panel UV rects (atlasSponsorUV()).
 std::vector<MeshVertex> buildSponsorPanelsMesh(const Track& track);
 
+// G10 (NASCAR-Thunder gap-analysis plan): the catch fence -- `atlas_
+// texture.cpp` has painted a crosshatch fence band into kAtlasFence since
+// Phase 5e, but (confirmed via grep) no mesh ever sampled it; this port's
+// own header comments elsewhere explicitly called the fence "deferred,
+// no geometry pass exists for it at all." A thin vertical band sitting
+// just above the outer wall, same per-slice loop and atlas-wrap technique
+// as buildOuterWallMesh(). `fenceHeight` is the track's own
+// Stadium::fenceHeight (taller on the superspeedway, per real catch-fence
+// height varying by track type).
+std::vector<MeshVertex> buildCatchFenceMesh(const Track& track, double fenceHeight);
+
 // G5a (NASCAR-Thunder gap-analysis plan, track surface texture): a
 // checkered start/finish stripe at s=0, flat vertex-colored (see this
 // function's own comment in stadium_mesh.cpp for why this isn't part of
