@@ -713,6 +713,9 @@ void Renderer::setTrack(const Track& track) {
         // the checkered start/finish stripe, flat vertex-colored (see this
         // function's own comment in stadium_mesh.cpp for why).
         append(buildStartFinishMesh(track));
+        // G13 (NASCAR-Thunder gap-analysis plan): a flag stand beside the
+        // start/finish line.
+        append(buildFlagStandMesh(track));
         // Phase 5g (PORT_PROGRESS.md): Big Sable's scoring pylon + jumbotron
         // (`stadium.pylon`/`stadium.jumbotron`) -- both no-op empty meshes on
         // every other track, so safe to call unconditionally.

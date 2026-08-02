@@ -101,6 +101,13 @@ std::vector<MeshVertex> buildSponsorPanelsMesh(const Track& track, double sponso
 // gives for skipping sponsor-name text).
 std::vector<MeshVertex> buildTurnSignageMesh(const Track& track);
 
+// G13 (NASCAR-Thunder gap-analysis plan): a slender elevated flag stand
+// beside the start/finish line -- a support pole plus a "crow's nest"
+// booth on top with a checkered accent band, following the same
+// addBox()/crossPt()/wallLat() track-side-prop conventions
+// buildPitRoadMesh() and pylon_mesh.cpp already use.
+std::vector<MeshVertex> buildFlagStandMesh(const Track& track);
+
 // G10 (NASCAR-Thunder gap-analysis plan): the catch fence -- `atlas_
 // texture.cpp` has painted a crosshatch fence band into kAtlasFence since
 // Phase 5e, but (confirmed via grep) no mesh ever sampled it; this port's

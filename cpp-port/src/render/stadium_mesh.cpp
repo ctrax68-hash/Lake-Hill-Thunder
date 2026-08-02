@@ -357,6 +357,43 @@ std::vector<MeshVertex> buildTurnSignageMesh(const Track& track) {
     return out;
 }
 
+// G13 (NASCAR-Thunder gap-analysis plan): a slender elevated flag stand
+// beside the start/finish line -- a thin support pole plus a "crow's
+// nest" booth on top, same addBox()/crossPt()/wallLat() conventions
+// buildPitRoadMesh() and pylon_mesh.cpp already use for track-side
+// props. Checkered accent band on the booth's track-facing face reuses
+// kCheckerWhite/kCheckerBlack (already defined above for
+// buildStartFinishMesh()) via the same alternating-column loop shape.
+std::vector<MeshVertex> buildFlagStandMesh(const Track& track) {
+    std::vector<MeshVertex> out;
+    constexpr std::array<double, 3> kPoleColor{0.55, 0.55, 0.58};
+    constexpr std::array<double, 3> kGlassColor{0.75, 0.85, 0.90};
+    constexpr double kPoleW = 0.35, kPoleH = 9.0;
+    constexpr double kBoothW = 2.2, kBoothD = 1.6, kBoothH = 2.0;
+    const double latP = wallLat(track) + 2.5;
+    const Vec3 basePt = pos3(track, 0.0, latP);
+
+    addBox(out, basePt.x - kPoleW / 2, 0, basePt.z - kPoleW / 2, basePt.x + kPoleW / 2, kPoleH,
+           basePt.z + kPoleW / 2, kPoleColor);
+    addBox(out, basePt.x - kBoothW / 2, kPoleH, basePt.z - kBoothD / 2, basePt.x + kBoothW / 2, kPoleH + kBoothH,
+           basePt.z + kBoothD / 2, kGlassColor);
+
+    // Checkered accent band around the booth's base, on its +Z (track-
+    // facing) face -- same alternating-column shape buildStartFinishMesh()
+    // already uses for the s=0 stripe.
+    constexpr int kCols = 6;
+    const double cellW = kBoothW / kCols;
+    constexpr double kBandH = 0.35;
+    const double bandZ = basePt.z + kBoothD / 2 + 0.01;
+    for (int i = 0; i < kCols; ++i) {
+        const double x0 = basePt.x - kBoothW / 2 + i * cellW, x1 = x0 + cellW;
+        const auto& color = (i % 2 == 0) ? kCheckerWhite : kCheckerBlack;
+        addQuad(out, Vec3{x0, kPoleH, bandZ}, Vec3{x1, kPoleH, bandZ}, Vec3{x1, kPoleH + kBandH, bandZ},
+                Vec3{x0, kPoleH + kBandH, bandZ}, color);
+    }
+    return out;
+}
+
 // G5a (NASCAR-Thunder gap-analysis plan, track surface texture): a
 // checkered start/finish stripe at s=0, alternating black/white quads
 // across the ribbon's full lateral width (matching the ribbon's own

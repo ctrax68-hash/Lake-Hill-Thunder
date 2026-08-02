@@ -5787,3 +5787,36 @@ until cross-checked against the corner's own bank angle and the wall's
 lateral offset -- consistent with how every other wall-adjacent mesh
 (the wall face, the fence) already varies in absolute world-space
 height across a banked corner, not a bug in the new code.
+
+**G13 -- flag stand at start/finish.** A slender elevated booth on
+stilts beside s=0, reading instantly as "this is a race start line" --
+the one piece of real-track signage this port had nowhere at all
+(`buildStartFinishMesh()`'s checkered stripe marks the line on the
+ground, but nothing marked it vertically). New `buildFlagStandMesh(track)`
+in `stadium_mesh.cpp`/`.h`, following the same `addBox()`/`crossPt()`/
+`wallLat()` track-side-prop conventions `buildPitRoadMesh()` and
+`pylon_mesh.cpp` already use: a thin gray support pole
+(`kPoleW=0.35 x kPoleH=9.0`) topped by a "crow's nest" booth
+(`kBoothW=2.2 x kBoothD=1.6 x kBoothH=2.0`, a lighter glass tone), with
+a 6-column checkered accent band (reusing `kCheckerWhite`/
+`kCheckerBlack`, already defined in this file for `buildStartFinishMesh()`)
+around the booth's track-facing base. Positioned at `wallLat(track) +
+2.5`, matching the sponsor-panel/pylon precedent for "proud of the
+wall" placement. Wired into `renderer.cpp`'s `setTrack()` right after
+`buildStartFinishMesh()`, via the existing flat-color `append()` path
+(no UVs, same as G12's turn signage).
+
+**Verified**: native `ctest` 29/29. WASM rebuild + Playwright, zero
+`GL_INVALID_OPERATION`. A chase-cam screenshot taken shortly after the
+green flag (s=0 is where the race starts, so this should have been the
+easiest structure to catch in frame) didn't clearly show the stand --
+likely occluded by the wall/fence geometry from that exact camera
+angle, or just outside the horizontal frustum at this camera's FOV --
+so, per the same discipline G12 already established, fell back to a
+standalone scratch program calling `buildFlagStandMesh()` directly: 108
+total vertices, an exact hand-computed match (2 boxes = 12 quads x 6
+verts = 72, plus the 6-column checker band x 6 verts = 36, `72 + 36 =
+108`), and a Y range of exactly `0.000..11.000` -- precisely
+`kPoleH` to `kPoleH + kBoothH`, with no unexpected banking offset since
+the start/finish line sits on flat ground. Direct, camera-independent
+proof the structure is built correctly.
