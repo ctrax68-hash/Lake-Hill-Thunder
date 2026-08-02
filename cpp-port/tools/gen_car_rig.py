@@ -54,6 +54,30 @@ FACES = [
 SW_TREAD = (0.90, 0.25)     # near-black rubber, cylindrical tread band
 SW_SIDEWALL = (0.90, 0.75)  # mid-gray sidewall, the two flat end caps
 
+# G8 (Gen-4 car overhaul): two more fixed-color swatches for the new
+# spoiler, in the same reserved-UV-margin column as the G1c wheel swatches
+# above but a separate row so they don't overlap.
+SW_SPOILER_BODY = (0.97, 0.25)  # top blade face -- painted per-car (body color)
+SW_SPOILER_DARK = (0.97, 0.75)  # underside/edges/risers -- fixed near-black
+
+def emit_swatch_quad(p0, p1, p2, p3, outward_hint, swatch, joint_idx=0):
+    """Like emit_quad(), but every vertex samples one fixed swatch texel
+    instead of the carU()/carV() wraparound livery UV -- for small
+    flat-color parts (the spoiler) that don't need per-vertex livery
+    paint, matching the SW_TREAD/SW_SIDEWALL precedent above."""
+    n = _norm(_cross(_sub(p1, p0), _sub(p3, p0)))
+    if _dot(n, outward_hint) < 0:
+        p0, p1, p2, p3 = p0, p3, p2, p1
+        n = _norm(_cross(_sub(p1, p0), _sub(p3, p0)))
+    base = len(positions)
+    for p in (p0, p1, p2, p3):
+        positions.append(p)
+        normals.append(n)
+        uvs.append(swatch)
+        joints0.append((joint_idx, 0, 0, 0))
+        weights0.append((1.0, 0.0, 0.0, 0.0))
+    indices.extend([base, base + 1, base + 2, base, base + 2, base + 3])
+
 def add_wheel(cx, cy, cz, radius, half_width, joint_idx, sides=10):
     """A radial (cylindrical) tire mesh, replacing the placeholder box --
     thin along local Z (the axle axis, matching the rig's existing
@@ -200,27 +224,79 @@ def emit_quad(p0, p1, p2, p3, outward_hint, joint_idx=0):
         weights0.append((1.0, 0.0, 0.0, 0.0))
     indices.extend([base, base + 1, base + 2, base, base + 2, base + 3])
 
-# Chassis loft (joint 0): stations run nose(+X) to tail(-X) as
-# (x, halfWidthBottom, yBottom, halfWidthTop, yTop). Bottom stays a flat
-# undercarriage; top rises from hood height, steps narrower for the
-# greenhouse (cowl -> roof -> decklid), then back down to trunk/rear-fender
-# height -- the same nose/cowl/greenhouse/deck-station sequence the roadmap
-# plan calls for. Fender half-widths (1.08/1.10) are kept comfortably wider
-# than the wheel's own outer edge (TRACK_HALF + wheel half-width, ~1.05) so
-# the wheels sit visibly tucked under the body instead of poking through it.
+# G8 (NASCAR-Thunder gap-analysis plan, Gen-4 car overhaul): chassis loft
+# ported from index.html's own already-tuned Gen-4 stock-car loft
+# (buildCarMesh()'s CAR_ST, real-world 198in x 75in x 51in / 110in
+# wheelbase / 60in spoiler dims) rather than re-deriving proportions from
+# scratch -- that JS rig went through many rounds of visual nudging in its
+# own project history to land on this exact silhouette (low wide nose,
+# fender bulges over both axles, pinched greenhouse, long flat deck).
+#
+# Stations run nose(+X) to tail(-X) as (x, halfWidthBottom, yBottom,
+# halfWidthTop, yTop). yBottom stays the flat FLOOR_Y undercarriage (a
+# deliberate simplification kept from the original G1 loft -- JS's own
+# per-station yLow taper isn't ported). x is JS's CAR_ST x scaled by
+# HALF_LEN/2.51 (~1.012, negligible) so the nose/tail stations land
+# exactly on +-HALF_LEN, keeping emit_quad()'s U mapping exact at the
+# tips. halfWidthBottom is JS's halfWidth directly; yTop is JS's roofY
+# directly -- JS's own "beltline rises continuously, cabin only humps up
+# across the greenhouse" effect is already baked into roofY as data (it
+# only exceeds beltY across the cowl-through-fastback rows), so no
+# separate shoulder-fraction code is needed, just this one column.
+# halfWidthTop is halfWidthBottom scaled by 0.60 across the 5 greenhouse
+# rows (cowl through fastback-glass-start) or 0.92 elsewhere, matching
+# the ratio this loft's own prior (10-station) table already used at its
+# one greenhouse row.
 FLOOR_Y = 0.45
-CHASSIS_STATIONS = [
-    (HALF_LEN,        0.15, FLOOR_Y, 0.15, 0.55),  # nose tip / front fascia
-    (HALF_LEN - 0.49,  1.08, FLOOR_Y, 0.95, 0.74),  # front bumper -> hood start
-    (HALF_LEN - 1.04,  1.10, FLOOR_Y, 0.95, 0.80),  # front fender peak (over front wheel)
-    (HALF_LEN - 1.59,  0.92, FLOOR_Y, 0.60, 0.92),  # cowl / windshield base (steps in+up)
-    (HALF_LEN - 2.14,  0.92, FLOOR_Y, 0.56, 1.32),  # windshield top / roof front
-    (-(HALF_LEN - 2.14), 0.92, FLOOR_Y, 0.56, 1.32),  # roof rear (plateau)
-    (-(HALF_LEN - 1.59), 0.92, FLOOR_Y, 0.60, 0.92),  # rear window base / decklid start
-    (-(HALF_LEN - 1.04), 1.10, FLOOR_Y, 0.95, 0.78),  # rear fender peak (over rear wheel)
-    (-(HALF_LEN - 0.49), 1.08, FLOOR_Y, 0.95, 0.66),  # rear bumper / trunk
-    (-HALF_LEN,          0.15, FLOOR_Y, 0.15, 0.55),  # tail tip / rear fascia
+
+# Wheel-arch relief (ported from JS's ringPts(): only ring points near the
+# rocker/bottom ever reach into a wheel's cylindrical volume -- with this
+# loft's simple 4-corner trapezoid cross-section (not JS's 14-point round
+# ring), that collapses to "pull only the bottom half-width in, near each
+# axle" -- applied to halfWidthBottom alone, halfWidthTop (the visible
+# fender bulge above the tire) is computed from the PRE-relief width so the
+# flare itself stays full width; only the rocker corner right at the wheel
+# gets tucked in so the body doesn't visually poke through the tire.
+_WHEEL_AXLE_X = [WHEELBASE / 2.0, -WHEELBASE / 2.0]
+_WHEEL_NOTCH_RANGE = 0.45
+_WHEEL_INNER_Z = 0.65
+
+def _relief(x, bw):
+    for wx in _WHEEL_AXLE_X:
+        dx = abs(x - wx)
+        if dx < _WHEEL_NOTCH_RANGE and bw > _WHEEL_INNER_Z:
+            t = 1.0 - dx / _WHEEL_NOTCH_RANGE
+            bw += (_WHEEL_INNER_Z - bw) * t
+    return bw
+
+_GREENHOUSE_ROWS = {6, 7, 8, 9, 10}  # 0-indexed rows: cowl .. fastback-glass-start
+
+def _station(i, x_js, bw, ty):
+    x = x_js * (HALF_LEN / 2.51)
+    tw = bw * (0.60 if i in _GREENHOUSE_ROWS else 0.92)
+    return (x, _relief(x, bw), FLOOR_Y, tw, ty)
+
+# (x_js, halfWidth, roofY) per row, transcribed verbatim from index.html's
+# CAR_ST (buildCarMesh(), the comment there explains each row's role).
+_CAR_ST_JS = [
+    (2.51,  0.50, 0.40),    # bumper cap (low, narrow, pointed nose tip)
+    (2.34,  0.66, 0.485),
+    (2.04,  0.82, 0.585),   # nose fascia
+    (1.70,  0.92, 0.685),   # fender leading edge
+    (1.40,  0.95, 0.735),   # front axle -- fender bulge (full width)
+    (1.05,  0.93, 0.795),
+    (0.68,  0.91, 0.89),    # cowl / windshield base
+    (0.34,  0.875, 1.10),   # windshield mid -- roof rakes up above the belt
+    (0.02,  0.835, 1.22),   # A-pillar top
+    (-0.60, 0.825, 1.26),   # roof peak
+    (-1.00, 0.91, 1.22),    # fastback glass start
+    (-1.40, 0.95, 1.055),   # rear axle -- quarter-panel bulge, belt/roof rejoin
+    (-1.75, 0.92, 1.02),    # deck start
+    (-2.10, 0.885, 0.99),
+    (-2.34, 0.845, 0.955),
+    (-2.51, 0.76, 0.92),    # tail (spoiler base)
 ]
+CHASSIS_STATIONS = [_station(i, x_js, bw, ty) for i, (x_js, bw, ty) in enumerate(_CAR_ST_JS)]
 
 def _corners(station):
     x, bw, by, tw, ty = station
@@ -241,6 +317,46 @@ nose = _corners(CHASSIS_STATIONS[0])
 emit_quad(nose["BR"], nose["BL"], nose["TL"], nose["TR"], (1, 0, 0))   # nose cap
 tail = _corners(CHASSIS_STATIONS[-1])
 emit_quad(tail["BL"], tail["BR"], tail["TR"], tail["TL"], (-1, 0, 0))  # tail cap
+
+# G8 (Gen-4 car overhaul): spoiler -- a flat angled blade plus two small
+# corner risers down to the deck, ported from index.html's own spoiler
+# (buildCarMesh(), "60 in angled blade"). The body loft is a faceted tube,
+# not a flat decklid, so a full-width blade at a fixed height would float
+# clear of the quarter panels; narrowing it to the tail station's own
+# half-width and anchoring both ends with a riser block (real Gen-4
+# spoilers sit on short riser blocks) makes the mount read as intentional
+# rather than a detached plate. Bound to joint 0 like the rest of the
+# chassis -- a spoiler doesn't move independently, no new joint needed.
+_spz = TRACK_HALF * 0.6
+_sp_x0, _sp_x1 = -(HALF_LEN - 0.12), -(HALF_LEN + 0.06)
+_sp_deckY = CHASSIS_STATIONS[-1][4]  # tail station's own yTop
+_sp_y0, _sp_y1, _sp_th = _sp_deckY + 0.02, _sp_deckY + 0.24, 0.03
+
+def _p(x, y, z):
+    return (x, y, z)
+
+# Top blade face (this car's own body color).
+emit_swatch_quad(_p(_sp_x0, _sp_y0, -_spz), _p(_sp_x0, _sp_y0, _spz),
+                  _p(_sp_x1, _sp_y1, _spz), _p(_sp_x1, _sp_y1, -_spz),
+                  (0, 1, 0), SW_SPOILER_BODY)
+# Underside + two edge faces (dark).
+emit_swatch_quad(_p(_sp_x0, _sp_y0 - _sp_th, _spz), _p(_sp_x0, _sp_y0 - _sp_th, -_spz),
+                  _p(_sp_x1, _sp_y1 - _sp_th, -_spz), _p(_sp_x1, _sp_y1 - _sp_th, _spz),
+                  (0, -1, 0), SW_SPOILER_DARK)
+emit_swatch_quad(_p(_sp_x0, _sp_y0, -_spz), _p(_sp_x1, _sp_y1, -_spz),
+                  _p(_sp_x1, _sp_y1 - _sp_th, -_spz), _p(_sp_x0, _sp_y0 - _sp_th, -_spz),
+                  (0, 0, -1), SW_SPOILER_DARK)
+emit_swatch_quad(_p(_sp_x1, _sp_y1, _spz), _p(_sp_x0, _sp_y0, _spz),
+                  _p(_sp_x0, _sp_y0 - _sp_th, _spz), _p(_sp_x1, _sp_y1 - _sp_th, _spz),
+                  (0, 0, 1), SW_SPOILER_DARK)
+# Corner risers down to the deck, one per side.
+for _rz in (_spz, -_spz):
+    emit_swatch_quad(_p(_sp_x0 - 0.05, _sp_deckY, _rz - 0.05), _p(_sp_x0 - 0.05, _sp_deckY, _rz + 0.05),
+                      _p(_sp_x0, _sp_y0, _rz + 0.05), _p(_sp_x0, _sp_y0, _rz - 0.05),
+                      (0, 0, 1 if _rz > 0 else -1), SW_SPOILER_DARK)
+    emit_swatch_quad(_p(_sp_x0 - 0.05, _sp_deckY, _rz + 0.05), _p(_sp_x0 - 0.05, _sp_deckY, _rz - 0.05),
+                      _p(_sp_x0 - 0.05, _sp_y0, _rz - 0.05), _p(_sp_x0 - 0.05, _sp_y0, _rz + 0.05),
+                      (-1, 0, 0), SW_SPOILER_DARK)
 
 # Wheels (joints 1-4): FL, FR, RL, RR. Local X = nose(+)/tail(-) offset from
 # chassis origin; local Z = left(+)/right(-); local Y = wheel-radius (so the
@@ -263,7 +379,9 @@ for i, (wx, wz) in enumerate(wheel_offsets):
     # (as opposed to which axis it used) was always a placeholder --
     # gen_car_rig.py's own module docstring called it "an acceptable
     # short-term simplification" pending exactly this replacement.
-    add_wheel(wx, WHEEL_RADIUS, wz, WHEEL_RADIUS, WHEEL_RADIUS * 0.6, joint_idx=i + 1)
+    # G8 (Gen-4 car overhaul): narrower tire width (was 0.6) -- matches
+    # JS's own wW/2 ratio relative to its wheel radius more closely.
+    add_wheel(wx, WHEEL_RADIUS, wz, WHEEL_RADIUS, WHEEL_RADIUS * 0.4, joint_idx=i + 1)
 
 def pack_f32(vals):
     return b"".join(struct.pack("<f", v) for tup in vals for v in tup)

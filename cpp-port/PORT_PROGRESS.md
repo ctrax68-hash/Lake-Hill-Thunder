@@ -5573,3 +5573,85 @@ zero `GL_INVALID_OPERATION`; chase-cam screenshots of the pack ahead of
 the player show clean, undistorted livery colors on every visible car;
 a top-down full-field screenshot shows no stray white/blown-out cars
 anywhere in the 20-car field.
+
+**G8 -- car body: port the JS Gen-4 loft (proportions + spoiler).**
+`tools/gen_car_rig.py`'s procedural chassis loft had never been
+proportion-tuned since G1 first authored it -- a plain 10-station wedge
+with no spoiler at all (grep confirmed zero hits for "spoiler"/"wing"
+anywhere in this port). Meanwhile this repo's *other* codebase -- the
+original browser/Three.js game at the repo root (`index.html`,
+`buildCarMesh()`) -- already has a fully tuned, era-accurate Gen-4 loft
+with real-world dimensions baked in (198in x 75in x 51in, 110in
+wheelbase, 60in angled spoiler on riser blocks), refined over many
+rounds in that codebase's own history. Rather than re-deriving Gen-4
+proportions from scratch, ported that JS loft's data directly:
+
+`CHASSIS_STATIONS` grew from 10 rows to 16, one per JS `CAR_ST` row,
+keeping this port's existing `(x, halfWidthBottom, yBottom,
+halfWidthTop, yTop)` tuple shape unchanged -- `x` is JS's x scaled by
+`HALF_LEN/2.51` (~1.012, negligible) so the nose/tail stations land
+exactly on `+-HALF_LEN`, keeping `emit_quad()`'s U mapping exact at the
+tips; `halfWidthBottom` is JS's `halfWidth` directly; `yTop` is JS's
+`roofY` directly -- JS's own "beltline rises continuously, cabin only
+humps up across the greenhouse" effect is already baked into `roofY` as
+data (it only exceeds `beltY` across the cowl-through-fastback rows), so
+no separate shoulder-fraction code was needed, just that one column;
+`halfWidthTop` is `halfWidthBottom * 0.60` across the 5 greenhouse rows
+or `* 0.92` elsewhere, matching the ratio this loft's own prior table
+already used at its one greenhouse row.
+
+Also ported JS's `ringPts()` wheel-arch relief: since this loft's cross-
+section is a simple 4-corner trapezoid (not JS's 14-point round ring),
+"only ring points near the rocker ever reach into a wheel's volume"
+collapses to "pull only `halfWidthBottom` in, near each axle" -- a new
+`_relief()` helper, applied before computing each station's final tuple,
+tapered by distance to the nearest wheel axle (`WHEEL_NOTCH_RANGE=0.45`,
+pulling down to `WHEEL_INNER_Z=0.65`). `halfWidthTop` (the visible fender
+flare above the tire) is computed from the PRE-relief width, so the
+flare itself stays full width -- only the rocker corner right at the
+wheel tucks in.
+
+New: a spoiler (`x0=-2.42` to `x1=-2.60`, `y0=deckY+0.02` to
+`y1=y0+0.22`, half-width `TRACK_HALF*0.6`), a flat angled blade plus two
+small corner risers down to the deck -- same "real Gen-4 spoilers sit on
+riser blocks, a bare floating plate reads as a bug" reasoning JS's own
+comment gives. Bound to joint 0 like the rest of the chassis (a spoiler
+doesn't move independently, no new joint needed). New
+`emit_swatch_quad()` helper (same winding-correction logic as
+`emit_quad()`, but every vertex samples one fixed UV instead of the
+`carU()`/`carV()` wraparound) paints it via two new swatches in the
+livery texture's reserved margin: `SW_SPOILER_BODY=(0.97,0.25)` (this
+car's own base-paint tone, so the spoiler reads as body-colored) and
+`SW_SPOILER_DARK=(0.97,0.75)` (fixed near-black, for the underside/
+risers) -- a new row in the same reserved-margin column the G1c wheel
+swatches already use, not overlapping (`u in [0.95,1.0]` vs the wheel
+swatches' `[0.85,0.95]`).
+
+Also narrowed the tire: `add_wheel()`'s width argument dropped from
+`WHEEL_RADIUS*0.6` to `WHEEL_RADIUS*0.4`, closer to JS's own tire-width-
+to-radius ratio, for a more Gen-4-proportionate wheel (JS's own wheels/
+mesh generation otherwise untouched -- already correct since G1c).
+Explicitly not ported: JS's dual exhaust pipes (small, low, one-sided,
+not worth the added triangles for this port's current camera modes);
+JS's smooth per-vertex ring normals / material-group split (this port
+keeps its simpler faceted single-material loft); JS's per-station
+undercarriage taper (this port keeps `FLOOR_Y` flat, an existing,
+working simplification).
+
+**Verified**: hand-computed the expected new vertex/index counts before
+running (15 station-gaps x 4 quads x 4 verts + 2 end caps + 8 spoiler
+quads x 4 verts = 280 body/spoiler verts, plus unchanged 168 wheel verts
+= 448 total) -- the script's own printed count (`verts: 448 indices:
+900`) matched exactly. Native `ctest` 29/29 (no test asserts exact car-
+mesh vertex counts, so none needed updating). Decoded the spoiler's own
+32 vertices directly from the generator's in-memory `positions` list
+(the same "decode it directly" discipline this port has used throughout
+for shape verification) -- confirmed the blade sits at
+`y=0.94..1.16`, half-width `0.504`, with corner risers running from the
+tail station's own `y=0.92` up to the blade root, tip landing slightly
+past the tail cap -- an exact match to the design, independent of any
+screenshot angle. WASM rebuild + Playwright, zero `GL_INVALID_OPERATION`;
+chase-cam screenshots at multiple zoom levels show a clearly tapered
+nose, a pinched greenhouse (narrower glass band against the wider fender
+shoulders), and noticeably narrower wheels tucked cleanly under the
+body -- a real, visible silhouette change from the previous plain wedge.

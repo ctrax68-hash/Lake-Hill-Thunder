@@ -356,5 +356,14 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     c.fillRect(0.85, 0.0, 0.10, 0.5, std::array<double, 3>{12 / 255.0, 12 / 255.0, 13 / 255.0});  // tire rubber
     c.fillRect(0.85, 0.5, 0.10, 0.5, std::array<double, 3>{70 / 255.0, 70 / 255.0, 72 / 255.0});  // sidewall
 
+    // G8 (Gen-4 car overhaul): two more swatches for gen_car_rig.py's new
+    // spoiler geometry, in the same reserved-margin column, a separate
+    // band from the wheel swatches above (u in [0.95,1.0] vs [0.85,0.95])
+    // -- coordinates must match gen_car_rig.py's SW_SPOILER_BODY/DARK.
+    // Body swatch reuses this car's own base paint tone so the spoiler
+    // reads as body-colored, not a fixed gray.
+    c.fillRect(0.95, 0.0, 0.05, 0.5, tone(kBaseM));                                                // spoiler top (body color)
+    c.fillRect(0.95, 0.5, 0.05, 0.5, std::array<double, 3>{10 / 255.0, 10 / 255.0, 12 / 255.0});  // spoiler underside/risers
+
     return downsampleBox(c.take(), kLiveryTextureSize * kSupersample, kSupersample);
 }
