@@ -394,6 +394,42 @@ std::vector<MeshVertex> buildFlagStandMesh(const Track& track) {
     return out;
 }
 
+// G14 (NASCAR-Thunder gap-analysis plan): a suite/press-box tower behind
+// the front-tier grandstand -- every real oval has one, per the real-
+// track research. Position derives from buildStandMesh()'s OWN geometry
+// formula (`baseLat = wallLat(track)+6.0`, `baseH = 1.2`, stepped by
+// tierD/tierH per tier) rather than duplicating/guessing those numbers,
+// so the tower always clears the actual stand it sits behind regardless
+// of per-track tier counts/scale. Axis-aligned box (no heading rotation)
+// matching buildJumbotronMesh()'s own bezel-box precedent -- the front
+// straight is straight, so this doesn't skew visibly. A horizontal
+// "glass band" look (a few lighter stripe quads over a dark box) stands
+// in for a dark-glass tower facade with no new atlas region needed.
+std::vector<MeshVertex> buildSuiteTowerMesh(const Track& track, int frontTiers, double tierD, double tierH) {
+    std::vector<MeshVertex> out;
+    constexpr std::array<double, 3> kDark{0.10, 0.10, 0.13};
+    constexpr std::array<double, 3> kGlass{0.35, 0.45, 0.55};
+    constexpr double kTowerW = 30.0, kTowerD = 4.0, kTowerH = 10.0;
+    const double baseH = 1.2 + frontTiers * tierH + 0.5;
+    const double latT = wallLat(track) + 6.0 + frontTiers * tierD + 4.0;
+    const Seg& seg0 = track.segs()[0];
+    const Vec3 basePt = pos3(track, seg0.s0 + seg0.len * 0.5, latT);
+
+    addBox(out, basePt.x - kTowerW / 2, baseH, basePt.z - kTowerD / 2, basePt.x + kTowerW / 2, baseH + kTowerH,
+           basePt.z + kTowerD / 2, kDark);
+
+    constexpr int kBands = 4;
+    const double bandH = kTowerH * 0.7 / kBands;
+    const double bandZ = basePt.z + kTowerD / 2 + 0.01;
+    for (int i = 0; i < kBands; ++i) {
+        const double y0 = baseH + kTowerH * 0.15 + i * (kTowerH * 0.7 / kBands);
+        addQuad(out, Vec3{basePt.x - kTowerW / 2, y0, bandZ}, Vec3{basePt.x + kTowerW / 2, y0, bandZ},
+                Vec3{basePt.x + kTowerW / 2, y0 + bandH, bandZ}, Vec3{basePt.x - kTowerW / 2, y0 + bandH, bandZ},
+                kGlass);
+    }
+    return out;
+}
+
 // G5a (NASCAR-Thunder gap-analysis plan, track surface texture): a
 // checkered start/finish stripe at s=0, alternating black/white quads
 // across the ribbon's full lateral width (matching the ribbon's own

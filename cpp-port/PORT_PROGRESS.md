@@ -5820,3 +5820,41 @@ verts = 72, plus the 6-column checker band x 6 verts = 36, `72 + 36 =
 `kPoleH` to `kPoleH + kBoothH`, with no unexpected banking offset since
 the start/finish line sits on flat ground. Direct, camera-independent
 proof the structure is built correctly.
+
+**G14 -- suite/press-box tower behind the front straight.** The single
+most visually distinctive real-track feature per the earlier research
+(every real oval has one) -- a tall box behind/above the front-tier
+grandstand with a horizontal dark-glass-band look, no new atlas region
+needed. New `buildSuiteTowerMesh(track, frontTiers, tierD, tierH)` in
+`stadium_mesh.cpp`/`.h`: position derives from `buildStandMesh()`'s OWN
+geometry formula (confirmed by reading it) rather than duplicating or
+guessing those numbers -- for `frontTiers` tiers, the stand's own back
+edge sits at `wallLat(track) + 6.0 + frontTiers*tierD` and its own top
+at `1.2 + frontTiers*tierH` (`buildStandMesh()`'s `baseLat`/`baseH` plus
+per-tier stepping), so the tower's base height and lateral clearance
+are both computed a few units past those same values. One `addBox()`
+for the dark tower body (axis-aligned, matching `buildJumbotronMesh()`'s
+own bezel-box precedent -- the front straight is straight, so no
+heading-rotation is needed), plus 4 lighter "glass band" quads stacked
+across its track-facing face. `renderer.cpp`'s `setTrack()` call sits
+directly next to the front-tier `buildStandMesh()` call, passing the
+exact same `st.standTier.front`/`st.standScale.tierD`/`st.standScale.tierH`
+values already going into that call -- no new per-track data needed.
+
+**Verified**: native `ctest` 29/29. WASM rebuild + Playwright, zero
+`GL_INVALID_OPERATION`. Neither a top-down nor a chase-cam screenshot
+near the front straight clearly showed the tower -- likely positioned
+beyond the specific camera framing captured in either shot (the same
+recurring issue G12/G13 already hit for their own trackside additions).
+Per the same discipline, fell back to a standalone scratch program
+calling `buildSuiteTowerMesh(track, 5, 3.2, 2.1)` (Thunder Oval's own
+front-tier values) directly: 60 total vertices, an exact hand-computed
+match (1 box = 6 quads x 6 verts = 36, plus 4 band quads x 6 verts = 24,
+`36 + 24 = 60`); X-span exactly 30 units (`kTowerW`, centered correctly);
+Y range exactly `12.20..22.20`, precisely `1.2 + 5*2.1 + 0.5` to that
+plus `kTowerH=10.0` -- direct, camera-independent proof the tower is
+positioned and sized exactly as designed, clearing the front-tier
+stand's own back edge and roof height.
+
+This closes out every phase in the car Gen-4 overhaul + stadium
+graphics plan (G8-G14) -- all committed and pushed to `main`.

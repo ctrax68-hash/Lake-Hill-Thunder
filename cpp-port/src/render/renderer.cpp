@@ -682,6 +682,11 @@ void Renderer::setTrack(const Track& track) {
         appendStand(buildStandMesh(track, seg0.s0 + seg0.len * 0.03, seg0.s0 + seg0.len * 0.97, st.standTier.front,
                                     st.crowdTiers, st.standDensity, st.standScale.tierD, st.standScale.tierH,
                                     st.crowdPalette, crowdUV, sceneryRng));
+        // G14 (NASCAR-Thunder gap-analysis plan): a suite/press-box tower
+        // behind the front-tier stand -- same standTier.front/tierD/tierH
+        // values as the call directly above, so the tower's position
+        // always derives from the actual stand geometry it sits behind.
+        append(buildSuiteTowerMesh(track, st.standTier.front, st.standScale.tierD, st.standScale.tierH));
         appendStand(buildStandMesh(track, seg2.s0 + seg2.len * 0.03, seg2.s0 + seg2.len * 0.97, st.standTier.back,
                                     st.crowdTiers, st.standDensity, st.standScale.tierD, st.standScale.tierH,
                                     st.crowdPalette, crowdUV, sceneryRng));

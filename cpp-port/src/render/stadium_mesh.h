@@ -108,6 +108,15 @@ std::vector<MeshVertex> buildTurnSignageMesh(const Track& track);
 // buildPitRoadMesh() and pylon_mesh.cpp already use.
 std::vector<MeshVertex> buildFlagStandMesh(const Track& track);
 
+// G14 (NASCAR-Thunder gap-analysis plan): a suite/press-box tower behind
+// the front-tier grandstand. `frontTiers`/`tierD`/`tierH` are the SAME
+// three values already passed into buildStandMesh()'s own front-tier
+// call (Stadium::standTier.front / standScale.tierD / standScale.tierH)
+// -- required so this tower's position derives from the actual stand
+// geometry it sits behind rather than duplicating/guessing those
+// numbers.
+std::vector<MeshVertex> buildSuiteTowerMesh(const Track& track, int frontTiers, double tierD, double tierH);
+
 // G10 (NASCAR-Thunder gap-analysis plan): the catch fence -- `atlas_
 // texture.cpp` has painted a crosshatch fence band into kAtlasFence since
 // Phase 5e, but (confirmed via grep) no mesh ever sampled it; this port's
