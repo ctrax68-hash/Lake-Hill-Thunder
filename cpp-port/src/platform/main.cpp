@@ -32,6 +32,7 @@
 #include "../ui/touch_controls.h"
 #include "tilt_input.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -387,6 +388,16 @@ void mainLoopTick(void* argPtr) {
         }
     }
 
+    // G15 (NASCAR-Thunder gap-analysis plan): matches JS's `RALPHA = acc/DT`
+    // (index.html:4618) -- the accumulator's leftover fraction of a full
+    // tick, handed to renderFrame() so it can blend each car's pre-tick pose
+    // (Car::px/py/phdg/ps/plat, now stored every tick in race.cpp) against
+    // its post-tick pose instead of drawing the raw, tick-snapped state.
+    // Only meaningful while ticks are actually running; a fixed 1.0 while
+    // paused/menu/done just means "draw the current pose outright", matching
+    // poseOf()'s own `c.px===undefined` fallback for a car with no prior pose.
+    const double renderAlpha = simRunning ? std::clamp(S.simAcc / DT, 0.0, 1.0) : 1.0;
+
     // Phase 6c (PORT_PROGRESS.md): audioTick() equivalent -- once per
     // rendered frame (index.html:4171, inside frame(ts) after the physics
     // tick loop, NOT once per physics tick), regardless of simRunning (JS's
@@ -405,11 +416,11 @@ void mainLoopTick(void* argPtr) {
         if (S.portrait) {
             S.renderer.renderBlockedFrame();
         } else if (S.state.mode == "menu") {
-            S.renderer.renderFrame(S.state, S.cars, &S.menu, &S.track.name());
+            S.renderer.renderFrame(S.state, S.cars, renderAlpha, &S.menu, &S.track.name());
         } else if (S.state.mode == "done") {
-            S.renderer.renderFrame(S.state, S.cars, nullptr, nullptr, &S.finishOrder);
+            S.renderer.renderFrame(S.state, S.cars, renderAlpha, nullptr, nullptr, &S.finishOrder);
         } else {
-            S.renderer.renderFrame(S.state, S.cars);
+            S.renderer.renderFrame(S.state, S.cars, renderAlpha);
         }
     }
     ++S.frame;

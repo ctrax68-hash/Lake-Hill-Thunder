@@ -5858,3 +5858,94 @@ stand's own back edge and roof height.
 
 This closes out every phase in the car Gen-4 overhaul + stadium
 graphics plan (G8-G14) -- all committed and pushed to `main`.
+
+## G15 -- Fix remaining car jitter: render-pose interpolation
+
+After G8-G14 shipped, the user reported (with an attached screen
+recording) "Cars still very jittery" -- a follow-up to the vs_car.sc
+bugfix above, which fixed a *different* symptom ("deformed with very
+jerky motions", a shading artifact from local-space-as-world-space
+math). This report needed a fresh diagnosis rather than assuming it was
+the same bug recurring.
+
+**Diagnosis.** Extracted consecutive frames from the user's video
+(`imageio`+ffmpeg, since no `ffmpeg`/`cv2` CLI/Python module was
+preinstalled) and pixel-diffed a cropped region around the lead car,
+frame to frame. The diff magnitude was small and steady for ~5 frames,
+then spiked to ~4x every 6th frame -- a clean periodic beat, not random
+noise or a shading flicker (the diff images showed only clean
+silhouette-edge motion, ruling out a shading/normals regression).
+
+Root cause, confirmed by reading the code: `src/sim/constants.h`'s
+`DT = 0.02` (50Hz fixed physics step) is consumed by `main.cpp`'s
+`mainLoopTick()` via `while (S.simAcc >= DT) { tick(...); S.simAcc -= DT; }`,
+after which the renderer draws `S.cars` exactly as tick() left them --
+no interpolation at all. Since real display refresh (~60Hz, confirmed
+59.66fps in the user's recording) isn't an exact multiple of 50Hz, the
+number of physics ticks per rendered frame alternates between 0 and 1
+(occasionally 2) in a repeating ~6-frame pattern, so on-screen motion
+doesn't advance by a constant amount every frame -- exactly the
+periodic beat measured in the video. Worst in a close chase-cam view
+where a car directly ahead fills much of the frame (the user's exact
+shot). This is the same issue the G2 bugfix investigation above already
+named in passing ("a pre-existing, unrelated fixed-timestep
+micro-stutter that predates this entire session") but never itself
+fixed -- this phase closes that out.
+
+The original JS game (`/workspace/lake-hill-thunder/index.html`) already
+solves this correctly with textbook accumulator-remainder render
+interpolation: `RALPHA = acc/DT` computed right after its own tick loop
+(index.html:4618); each car's pose stored before `tick()` mutates it
+(`c.px=c.x; c.py=c.y; c.phdg=c.hdg; c.ps=c.s; c.plat=c.lat;`,
+index.html:4634); `poseOf(c)` blends previous->current pose by `RALPHA`
+(index.html:3229-3238, with `lerpAng`/`lerpS` handling heading and
+track-arc-length wraparound correctly); consumed by `carModelMat(c)` for
+both the draw matrix and (index.html:3725-3727) the chase camera's
+target. The C++ port already carried the field *names*
+(`px/py/phdg/ps/plat` on `Car`, `car.h:289`) and even seeded them once in
+`gridStart()` (`race.cpp`) -- but `tick()` never re-stored them each
+step, and neither `main.cpp` nor `renderer.cpp` ever computed or used an
+alpha. Porting JS's interpolation faithfully closed the gap.
+
+**Fix.** `race.cpp`'s `tick()` now stores each car's previous pose in a
+loop right before `stepCar()` runs, matching JS's store-before-step
+order. `main.cpp` computes `renderAlpha = simRunning ?
+clamp(S.simAcc/DT, 0,1) : 1.0` right after the tick loop and threads it
+into `Renderer::renderFrame()`'s new `renderAlpha` parameter (defaulted
+to `1.0` so every other call site is unaffected). `renderer.cpp` gained
+`interpolatedPose()` (with `lerpAngRad()`/`lerpTrackS()` porting JS's
+`lerpAng()`/`lerpS()` exactly, including `lerpS`'s shortest-path
+track-wraparound handling), used at the two places that previously read
+a car's raw tick-snapped pose: the chassis model-matrix build (was
+`c.x/c.y/c.hdg/c.s/c.lat`, now the interpolated pose) and the chase
+camera's target (was `car->s/car->lat/car->hdg`, now the same
+interpolated pose for that car -- matching JS's chase cam reading from
+`carModelMat(c)` rather than the raw struct). Wheel-spin/suspension
+animation (`wheel_animation.h`, driven by real wall-clock `dt` and
+`c.v`/`c.fzFront`/`c.fzRear`) was left untouched -- it already updates
+smoothly every real frame and wasn't part of the reported stutter; only
+chassis position/heading (and anything derived from it, like the camera
+target) needed interpolation.
+
+**Verified**: native `ctest` 29/29 (interpolation is render-only and
+doesn't touch `tick()`'s physics output, so the determinism harness is
+unaffected). WASM rebuild + `wasm_verify.js`, zero console/page errors
+(zero `GL_INVALID_OPERATION`). Rather than re-run the same noisy
+full-frame screenshot diff (HUD/leaderboard/other cars dominate a
+whole-frame pixel diff and don't isolate the effect cleanly), verified
+the actual fix mechanism directly with a small deterministic harness
+reproducing the exact algorithm (`DT=0.02`, `renderAlpha =
+clamp(simAcc/DT,0,1)`, linear lerp) against a constant-velocity car over
+a `1/59.66`s frame cadence, matching the user's recorded display rate:
+the **pre-fix** per-frame motion (raw tick-snapped `x`) advances in the
+exact diagnosed pattern -- ticks-per-frame of `[1,1,1,1,1,0,1,1,1,1,1,0,...]`,
+i.e. some frames advance a full tick's worth of motion and the very next
+frame advances *zero* -- while the **post-fix** interpolated motion
+advances by an almost-constant amount every single frame (stdev
+0.0105 vs a mean step of 0.418, versus the raw series' stdev of 0.180
+on a mean of 0.424) -- a direct, quantitative confirmation that the
+uneven snap is eliminated by construction, the same "decode it directly"
+discipline this project already used for G12-G14 when screenshot timing
+couldn't cleanly isolate an effect.
+
+Committed and pushed to `main`.

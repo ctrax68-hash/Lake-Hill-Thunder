@@ -344,6 +344,20 @@ void tick(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& 
         if (pace.state != "lead") state.paceV = std::min(46.0, state.paceV + 3.4 * DT);
     }
 
+    // G15 (NASCAR-Thunder gap-analysis plan): store each car's pre-tick pose
+    // before stepCar() mutates it, matching JS's own store-before-step order
+    // (index.html:4634) -- renderer.cpp's interpolatedPose() blends this
+    // against the post-tick pose by the leftover accumulator fraction, so
+    // the 50Hz physics rate doesn't visibly snap/stutter against the
+    // uncorrelated ~60Hz display refresh rate.
+    for (auto& c : cars) {
+        c.px = c.x;
+        c.py = c.y;
+        c.phdg = c.hdg;
+        c.ps = c.s;
+        c.plat = c.lat;
+    }
+
     updateAero(cars, track);
     for (auto& c : cars) stepCar(c, state, track, cars, pace, input);
     collide(cars, state, track, rngR);

@@ -82,7 +82,15 @@ public:
     // `finishOrder` (must be non-null then) drives the results screen drawn
     // in place of the HUD -- see results.h's drawResults(). Ignored whenever
     // mode != "done" (may be null then).
-    void renderFrame(const RaceState& raceState, const std::vector<Car>& cars,
+    // `renderAlpha` (G15, NASCAR-Thunder gap-analysis plan): the physics
+    // accumulator's leftover fraction of a full DT tick (main.cpp's
+    // `S.simAcc / DT`, matching JS's `RALPHA = acc/DT`, index.html:4618) --
+    // blends each car's pre-tick pose against its post-tick pose so chassis
+    // position/heading don't visibly snap at the sim's fixed 50Hz rate
+    // against an uncorrelated display refresh rate. Defaults to 1.0 (draw
+    // the current pose outright), matching every call site that isn't
+    // mid-race (menu/done, or any future non-interpolated caller).
+    void renderFrame(const RaceState& raceState, const std::vector<Car>& cars, double renderAlpha = 1.0,
                       const MenuSelection* menu = nullptr, const std::string* menuTrackName = nullptr,
                       const std::vector<Car*>* finishOrder = nullptr);
 

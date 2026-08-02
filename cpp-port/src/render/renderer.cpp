@@ -221,6 +221,44 @@ Mat4f mat4Mul(const Mat4f& a, const Mat4f& b) {
     return r;
 }
 
+// G15 (NASCAR-Thunder gap-analysis plan): render-side pose interpolation,
+// ported from JS's `lerpAng()`/`lerpS()`/`poseOf()` (index.html:3229-3238).
+// `tick()` runs at a fixed DT=0.02 (50Hz) while the display refreshes at an
+// uncorrelated rate (~60Hz); drawing each car's raw, tick-snapped x/y/hdg/s/
+// lat every frame makes on-screen motion advance in an uneven 0/1/2-ticks-
+// per-frame cadence instead of a constant amount, which reads as stutter --
+// worst in a close chase-cam view. Blending the pre-tick pose (Car::px/py/
+// phdg/ps/plat, stored every tick in race.cpp) against the post-tick pose by
+// the accumulator's leftover fraction (`alpha`) removes that snap.
+double lerpAngRad(double a, double b, double t) {
+    double d = b - a;
+    while (d > M_PI) d -= 2.0 * M_PI;
+    while (d < -M_PI) d += 2.0 * M_PI;
+    return a + d * t;
+}
+
+double lerpTrackS(double a, double b, double t, double trackTotal) {
+    double d = b - a;
+    if (d > trackTotal / 2.0) d -= trackTotal;
+    if (d < -trackTotal / 2.0) d += trackTotal;
+    double r = a + d * t;
+    return std::fmod(std::fmod(r, trackTotal) + trackTotal, trackTotal);
+}
+
+struct InterpPose {
+    double x, y, hdg, s, lat;
+};
+
+InterpPose interpolatedPose(const Car& c, double alpha, double trackTotal) {
+    return InterpPose{
+        c.px + (c.x - c.px) * alpha,
+        c.py + (c.y - c.py) * alpha,
+        lerpAngRad(c.phdg, c.hdg, alpha),
+        lerpTrackS(c.ps, c.s, alpha, trackTotal),
+        c.plat + (c.lat - c.plat) * alpha,
+    };
+}
+
 } // namespace
 
 bool Renderer::init(void* nativeDisplayHandle, void* nativeWindowHandle, int width, int height) {
@@ -842,7 +880,7 @@ bgfx::TextureHandle Renderer::getOrBuildCarTexture(const Car& car) {
     return tex;
 }
 
-void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& cars,
+void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& cars, double renderAlpha,
                             const MenuSelection* menu, const std::string* menuTrackName,
                             const std::vector<Car*>* finishOrder) {
     // Phase 5c (PORT_PROGRESS.md): a new view (id 0, numerically below the
@@ -970,10 +1008,16 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             }
             chaseLastTime_ = now;
 
-            const Vec3 base = pos3(*track_, car->s, car->lat);
-            const double th = car->hdg;
+            // G15: the chased car's interpolated pose (see this file's
+            // interpolatedPose() comment) -- matches JS's chase cam reading
+            // from carModelMat(c), itself built from poseOf(c)
+            // (index.html:3725-3727), rather than the raw tick-snapped Car.
+            const InterpPose chasePose = interpolatedPose(*car, renderAlpha, track_->total());
+
+            const Vec3 base = pos3(*track_, chasePose.s, chasePose.lat);
+            const double th = chasePose.hdg;
             const double fwx = std::cos(th), fwz = std::sin(th); // fw.y == 0
-            const Vec3 up = surfaceUp(*track_, car->s);
+            const Vec3 up = surfaceUp(*track_, chasePose.s);
 
             const double dist = 6.9 + car->v * 0.020, hgt = 2.55; // index.html:3438
             double targetEyeX = base.x - fwx * dist + up.x * hgt;
@@ -985,7 +1029,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
 
             // Corner lookahead: bias the look point into the upcoming
             // corner (index.html:3446-3449's pAh/lookLat, same constants).
-            PointResult pAh = track_->pointAt(car->s + std::max(20.0, car->v * 0.7));
+            PointResult pAh = track_->pointAt(chasePose.s + std::max(20.0, car->v * 0.7));
             const double lookLat = std::max(-2.5, std::min(2.5, pAh.curv * 450.0));
             const double nx = -std::sin(pAh.hdg), ny = std::cos(pAh.hdg);
             targetLookX += nx * lookLat;
@@ -1030,7 +1074,10 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         // matching JS (upBlend isn't itself smoothed, only cam.pos/look are).
         Vec3 upBlend{0, 1, 0};
         if (car && track_) {
-            const Vec3 up = surfaceUp(*track_, car->s);
+            // G15: interpolated `s` again (see interpolatedPose()'s comment
+            // above) -- this is a separate `car && track_` block from the
+            // one above, so chasePose isn't in scope here.
+            const Vec3 up = surfaceUp(*track_, interpolatedPose(*car, renderAlpha, track_->total()).s);
             upBlend = {up.x * 0.45, 1.0, up.z * 0.45};
             const double len = std::sqrt(upBlend.x * upBlend.x + upBlend.y * upBlend.y + upBlend.z * upBlend.z);
             if (len > 1e-9) {
@@ -1200,9 +1247,15 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         constexpr double kMaxTravel = 0.08;
 
         for (auto& c : cars) {
-            const float ch = (float)c.hdg;
-            const float wx = (float)c.x, wy = (float)c.y;
-            const Vec3 carPos = pos3(*track_, c.s, c.lat);
+            // G15: draw each car at its interpolated pose (see
+            // interpolatedPose()'s comment above), not the raw tick-snapped
+            // x/y/hdg/s/lat -- this is the fix for the reported chassis
+            // jitter/stutter (wheel-spin/suspension animation below is
+            // already driven by real wall-clock dt and is unaffected).
+            const InterpPose pose = interpolatedPose(c, renderAlpha, track_->total());
+            const float ch = (float)pose.hdg;
+            const float wx = (float)pose.x, wy = (float)pose.y;
+            const Vec3 carPos = pos3(*track_, pose.s, pose.lat);
             const float carY = (float)carPos.y;
 
             WheelAnimState& animState = carWheelAnim_[c.num];
