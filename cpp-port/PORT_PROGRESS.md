@@ -5655,3 +5655,39 @@ chase-cam screenshots at multiple zoom levels show a clearly tapered
 nose, a pinched greenhouse (narrower glass band against the wider fender
 shoulders), and noticeably narrower wheels tucked cleanly under the
 body -- a real, visible silhouette change from the previous plain wedge.
+
+**G9 -- stadium bug fix: close the straight/corner stand coverage gaps.**
+User report: "some stadium sections still missing spots." Root cause,
+confirmed in `renderer.cpp`'s stand-building call site: straight-zone
+stands only spanned the middle 76% of each straight
+(`seg.s0 + seg.len*0.12` to `*0.88`), and corner stands only spanned the
+middle `cornerCov` fraction of each corner arc (`0.94` full-reach
+tracks, `0.55` partial-reach -- i.e. **22.5% of the corner arc bare at
+each end** on partial-reach tracks: Thunder Oval, Cedar Valley). These
+two margins compound at every straight->corner transition, leaving a
+real bare stretch of track boundary -- confirmed via a search of every
+STAD-*/Trackside `PORT_PROGRESS.md` entry that this was never flagged as
+a deliberate trim, just an unexamined side effect of the `0.12`/`0.88`
+and `cornerCov` constants.
+
+Fix: shrunk the straight-zone margin from `0.12`/`0.88` to `0.03`/`0.97`,
+and raised `cornerCov` from `{0.94, 0.55}` to `{0.97, 0.85}`. A little
+margin is kept rather than closed to zero -- real tracks have seating
+access points/breaks too, so a small gap reads as intentional rather
+than broken. `standDensity`'s own per-slice random gaps were left alone
+-- `stadium_mesh.h`'s own header comment already documents these as
+deliberate "gaps/tunnels" cosmetic variety, and they no longer compound
+with a large structural gap once the above is fixed.
+
+**Verified**: native `ctest` 29/29. WASM rebuild + Playwright, zero
+`GL_INVALID_OPERATION`. Did a rigorous before/after comparison (`git
+stash` the fix, rebuild, screenshot, restore, rebuild, screenshot again
+-- matching this port's established root-cause-confirmation discipline)
+at a top-down camera angle on both partial-reach tracks: Thunder Oval's
+corner stand went from two small, isolated tile blocks with a large bare
+gap before the straight, to one long, mostly continuous curved band
+reaching much closer to the straight's own stand; Cedar Valley (the
+worst case, `standDensity=0.55` compounding with the old `cornerCov`)
+went from sparse, disconnected patches to stand coverage tracing nearly
+the full perimeter on both corners, with only the small, already-
+documented density-driven gaps remaining.

@@ -671,16 +671,24 @@ void Renderer::setTrack(const Track& track) {
         // require matching call order (see stadium_mesh.h's own "safe to
         // diverge" precedent).
         if (st.sky.silhouette == "hills") append(buildHillSilhouette(sceneryRng));
-        appendStand(buildStandMesh(track, seg0.s0 + seg0.len * 0.12, seg0.s0 + seg0.len * 0.88, st.standTier.front,
+        // G9 (NASCAR-Thunder gap-analysis plan, stadium bug fix): straight
+        // margin shrunk 0.12/0.88 -> 0.03/0.97 and cornerCov (below) raised
+        // -- the old values left a real, unflagged bare-dirt gap at every
+        // straight->corner transition (worst on partial-reach tracks,
+        // where the two margins compounded to ~22.5% of the corner arc
+        // left uncovered at each end). A little margin is kept rather than
+        // closed to zero so it still reads as an intentional access point,
+        // not a hole.
+        appendStand(buildStandMesh(track, seg0.s0 + seg0.len * 0.03, seg0.s0 + seg0.len * 0.97, st.standTier.front,
                                     st.crowdTiers, st.standDensity, st.standScale.tierD, st.standScale.tierH,
                                     st.crowdPalette, crowdUV, sceneryRng));
-        appendStand(buildStandMesh(track, seg2.s0 + seg2.len * 0.12, seg2.s0 + seg2.len * 0.88, st.standTier.back,
+        appendStand(buildStandMesh(track, seg2.s0 + seg2.len * 0.03, seg2.s0 + seg2.len * 0.97, st.standTier.back,
                                     st.crowdTiers, st.standDensity, st.standScale.tierD, st.standScale.tierH,
                                     st.crowdPalette, crowdUV, sceneryRng));
         // Every track gets corner seating (index.html:2067-2075's own
         // comment on this): coverage fraction depends on standReach, not
         // whether it's "full" only.
-        const double cornerCov = st.standReach == "full" ? 0.94 : 0.55;
+        const double cornerCov = st.standReach == "full" ? 0.97 : 0.85;
         const double pad = (1.0 - cornerCov) / 2.0;
         appendStand(buildStandMesh(track, seg1.s0 + seg1.len * pad, seg1.s0 + seg1.len * (1 - pad),
                                     st.standTier.corner, st.crowdTiers, st.standDensity, st.standScale.tierD,
