@@ -286,11 +286,18 @@ std::vector<MeshVertex> buildCatchFenceMesh(const Track& track, double fenceHeig
 // atlasSponsorUV() rects -- same "wire up already-painted-but-dead atlas
 // content" spirit as the wall above. Sits a hair proud of the wall face
 // (`wl + kProud`) to avoid z-fighting two coplanar textured quads.
-std::vector<MeshVertex> buildSponsorPanelsMesh(const Track& track) {
+//
+// G11 (NASCAR-Thunder gap-analysis plan): `sponsorDensity` (Stadium's own
+// per-track field, authored with a distinct value for every track since
+// Phase 5b but never actually read by this function until now) scales
+// the gap between panels -- higher density packs panels tighter.
+std::vector<MeshVertex> buildSponsorPanelsMesh(const Track& track, double sponsorDensity) {
     std::vector<MeshVertex> out;
     constexpr double kProud = 0.02;
     constexpr double kPanelH0 = 0.35, kPanelH1 = 1.15;
-    constexpr double kPanelLen = 8.0, kGap = 4.0, kPitch = kPanelLen + kGap;
+    constexpr double kPanelLen = 8.0, kBaseGap = 4.0;
+    const double kGap = kBaseGap / sponsorDensity;
+    const double kPitch = kPanelLen + kGap;
     const double wl = wallLat(track) + kProud;
     const Seg& seg0 = track.segs()[0];
     const Seg& seg2 = track.segs()[2];

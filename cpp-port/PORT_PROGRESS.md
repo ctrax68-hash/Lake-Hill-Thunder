@@ -5726,3 +5726,25 @@ diamond wall pattern, distinct from it. Big Sable Speedway's screenshot
 extending noticeably higher above the wall than Thunder Oval's --
 confirming both that the fence renders at all, and that the per-track
 height override works.
+
+**G11 -- wire the dead `sponsorDensity` field into panel spacing.**
+`Stadium::sponsorDensity` was authored with a distinct value per track
+(0.25/0.35/0.18/0.30) back in Phase 5b, but grep confirmed it was never
+read anywhere -- `buildSponsorPanelsMesh()` hardcoded the same panel
+gap for every track regardless. Threaded it in as a new parameter,
+scaling the gap between panels (`kGap = kBaseGap / sponsorDensity`) so
+a denser-sponsored track packs panels tighter and a sparser one spaces
+them further apart, directly serving the "more real-track variety" ask
+with data this port already had on hand.
+
+**Verified**: native `ctest` 29/29. WASM rebuild + Playwright, zero
+`GL_INVALID_OPERATION`. A first screenshot comparison across two
+different tracks (Milltown Bullring, density 0.35, vs. Cedar Valley,
+density 0.18) was confounded by the tracks' own very different straight
+lengths, so, per this port's "decode it directly" discipline, fell back
+to a standalone scratch program calling `buildSponsorPanelsMesh()`
+directly on the SAME track (holding straight length fixed) across a
+range of density values -- panel count rose monotonically from 24 at
+density 0.18 to 40 at density 0.35, direct proof the density parameter
+controls spacing correctly, independent of any confounding per-track
+geometry difference.

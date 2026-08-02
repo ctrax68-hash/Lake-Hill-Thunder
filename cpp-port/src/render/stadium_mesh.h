@@ -80,7 +80,13 @@ std::vector<MeshVertex> buildOuterWallMesh(const Track& track);
 
 // G5b: small sponsor-panel quads along each straightaway, cycling through
 // the atlas's 8 pre-painted sponsor-panel UV rects (atlasSponsorUV()).
-std::vector<MeshVertex> buildSponsorPanelsMesh(const Track& track);
+// `sponsorDensity` is the track's own Stadium::sponsorDensity (G11,
+// NASCAR-Thunder gap-analysis plan: this field was authored with a
+// distinct value per track from the start but never actually read by
+// this function until now) -- scales the gap between panels so denser-
+// sponsored tracks (e.g. Milltown Bullring) pack panels tighter than
+// sparser ones (e.g. Cedar Valley).
+std::vector<MeshVertex> buildSponsorPanelsMesh(const Track& track, double sponsorDensity);
 
 // G10 (NASCAR-Thunder gap-analysis plan): the catch fence -- `atlas_
 // texture.cpp` has painted a crosshatch fence band into kAtlasFence since
