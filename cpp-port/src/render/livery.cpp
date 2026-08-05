@@ -278,7 +278,14 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     const std::array<double, 3> glassHi{26 / 255.0, 33 / 255.0, 46 / 255.0};
     c.fillRect(uWS0, 0.47, uWS1 - uWS0, 0.06, glassHi);
     c.fillRect(uRG0, 0.48, uRG1 - uRG0, 0.04, glassHi);
-    c.fillRect(uWS1 - 0.02, GV0 + 0.02, 0.02, GVH - 0.02, {235 / 255.0, 235 / 255.0, 238 / 255.0});
+    // G16 (NT2003 presentation plan): the windshield sun strip. Previously a
+    // fixed near-white band; every car in the reference footage carries a
+    // colored one instead, so it now takes the car's own secondary accent
+    // and is a touch deeper, making it read at chase-cam distance and giving
+    // the field visible per-car variety through the windshield.
+    c.fillRect(uWS1 - 0.028, GV0 + 0.015, 0.028, GVH - 0.015, acc2);
+    c.fillRect(uWS1 - 0.032, GV0 + 0.015, 0.005, GVH - 0.015,
+               std::array<double, 3>{14 / 255.0, 14 / 255.0, 16 / 255.0});
     // driver window net (index.html:2713-2722)
     c.fillRect(uSG0, 0.590, (uSG1 - uSG0) * 0.55, 0.075, {8 / 255.0, 8 / 255.0, 10 / 255.0});
     for (int i = 0; i < 6; ++i) {
@@ -297,49 +304,139 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     c.fillRect(carU(-0.45), 0.435, 0.045, 0.052, tone(0.72));
     c.fillRect(carU(-0.45), 0.513, 0.045, 0.052, tone(0.72));
 
+    // ---- G16 (NT2003 presentation plan): contingency decal chips ----
+    // livery.h's note #6 previously listed these as "skipped for scope
+    // control (low visual value relative to implementation cost)". That call
+    // is reversed here: the NT2003 reference footage this phase targets shows
+    // the lower rear quarter of every car carrying a dense row of small
+    // colored sponsor chips, and it's one of the few era cues readable at
+    // real chase-cam distance. Placed behind the rear wheel-arch shadow ring
+    // (painted above at carU(-1.395) with radius 0.071, i.e. reaching
+    // u=0.682) and stopping short of the tail column the new taillight
+    // cluster below owns, on both side panels -- emit_quad()'s side faces
+    // span v in [0.055,0.3] and [0.7,0.945] (gen_car_rig.py's own UV
+    // comment), so these sit just above the near-black rocker band.
+    {
+        constexpr double kChipU0 = 0.688, kChipU1 = 0.750;
+        constexpr int kChips = 6;
+        const double chipW = (kChipU1 - kChipU0) / kChips;
+        // Era-typical contingency-sticker colors. Indexed off the car's own
+        // `idx` so each car gets a stable but distinct run of chips, matching
+        // how `style`/`maskStyle` above already derive per-car variety.
+        static const std::array<std::array<double, 3>, 6> kChipColors{{
+            {0.86, 0.16, 0.14}, // red
+            {0.96, 0.80, 0.10}, // yellow
+            {0.13, 0.35, 0.76}, // blue
+            {0.95, 0.95, 0.95}, // white
+            {0.16, 0.58, 0.25}, // green
+            {0.93, 0.48, 0.10}, // orange
+        }};
+        for (double vy : {0.118, 0.846}) {
+            for (int i = 0; i < kChips; ++i) {
+                const auto& chip = kChipColors[(size_t)((idx + i) % (int)kChipColors.size())];
+                c.fillRect(kChipU0 + i * chipW, vy, chipW * 0.78, 0.034, chip);
+            }
+        }
+    }
+
     // ---- numbers (index.html:2732-2744; simplified per this file's note #3) ----
     const std::array<double, 3> white{250 / 255.0, 250 / 255.0, 250 / 255.0};
     const std::array<double, 3> dark{10 / 255.0, 10 / 255.0, 12 / 255.0};
-    drawNumber(c, num, carU(-0.49), 0.50, 0.105, white, dark);          // roof
-    drawNumber(c, num, carU(-0.10), 0.235, 0.105, white, dark);         // right door
-    drawNumber(c, num, carU(-0.10), 0.765, 0.105, white, dark);         // left door
+    // G16: real Gen-4 cars carry the roof and door numbers on a contrasting
+    // panel rather than floating them straight on the paint -- painted first
+    // so drawNumber() below lands on top. Roof panel sits between the
+    // windshield (ends at carU(0.02)=0.397) and the rear glass (starts at
+    // carU(-1.00)=0.551), i.e. on the actual roof; the deck faces sample
+    // v in [0.3,0.7] per gen_car_rig.py's is_top rule, so v=0.5 +- 0.08
+    // stays on the roof band.
+    const std::array<double, 3> panelFill = lum > 0.5 ? dark : white;
+    const std::array<double, 3> panelNum = lum > 0.5 ? white : dark;
+    c.fillRect(carU(-0.49) - 0.056, 0.420, 0.112, 0.160, panelFill);
+    for (double vy : {0.235, 0.765}) c.fillEllipse(carU(-0.10), vy, 0.072, 0.082, panelFill);
+    drawNumber(c, num, carU(-0.49), 0.50, 0.105, panelNum, dark);       // roof
+    drawNumber(c, num, carU(-0.10), 0.235, 0.105, panelNum, dark);      // right door
+    drawNumber(c, num, carU(-0.10), 0.765, 0.105, panelNum, dark);      // left door
 
-    // ---- nose/tail masks (index.html:2793-2855) ----
-    constexpr double NIu = 0.845, NIv = 0.24, TIu = 0.845, TIv = 0.74;
+    // ---- nose/tail lamp clusters (index.html:2793-2855, re-placed) ----
+    // G16 (NT2003 presentation plan) -- BUGFIX. These masks were previously
+    // painted at u=0.845, which **no geometry has ever sampled**: livery.h's
+    // note (2) placed them back when the car was a single flat top-down quad
+    // and openly called them "never actually visible from the camera angles
+    // this port supports". The G1/G8 3D loft since gave every face a real
+    // wraparound UV, and gen_car_rig.py's emit_quad() (see its own UV
+    // comment) pins the nose cap to u=0.02 and the tail cap to u=0.78 --
+    // nowhere near 0.845, which sits in the dead margin between the body
+    // wrap (u<=0.78) and the G1c/G8 swatch columns (u>=0.85). So the
+    // headlights, taillights, deck-lid number and badge have all been
+    // painted into unreachable texture space ever since the loft landed.
+    //
+    // Both caps are UV-degenerate in U (all four corners share one u), so
+    // content must vary in **V** to read across the car's width: V runs
+    // 0.055 -> 0.5 -> 0.945 along the cap's bottom edge and 0.3 -> 0.5 ->
+    // 0.7 along its top edge, so a V band shows up as a vertical stripe on
+    // the cap. Bands are placed symmetrically about V=0.5 accordingly. The
+    // narrow U spread also catches the rearmost/foremost sliver of the side
+    // panels, which reads correctly as a lamp wrapping around the corner.
+    // This matters most for the tail: the chase camera stares at the car
+    // ahead for an entire race, so the taillight cluster is the single
+    // most-visible piece of car detail in the game.
     const int maskStyle = scheme ? scheme->mask : (idx) % 3;
-    c.fillRect(NIu - 0.07, NIv - 0.06, 0.14, 0.12, tone(0.96));
-    c.fillRect(NIu - 0.068, NIv - 0.040, 0.136, 0.016, accent);
+    const std::array<double, 3> lampWhite{232 / 255.0, 232 / 255.0, 225 / 255.0};
+    const std::array<double, 3> taillight{150 / 255.0, 18 / 255.0, 15 / 255.0};
+
+    // Band placement follows the cap quad's real V extent rather than the
+    // full [0,1] range: its corners are (bottom-left 0.055, bottom-right
+    // 0.945, top-right 0.7, top-left 0.3), so across the cap's *mid-height*
+    // V only spans 0.1775..0.8225. Bands sized against that, and the U
+    // spread kept tight (~2% of body length past the wrap's 0.78 edge) so
+    // the lamps wrap the corner onto the rear quarter without painting a
+    // slab down the whole rearmost body segment.
+    constexpr double kNoseU0 = 0.008, kNoseUW = 0.030;
+    constexpr double kTailU0 = 0.764, kTailUW = 0.028;
+
+    // Nose: grille block flanked by headlight lenses.
+    c.fillRect(kNoseU0, 0.15, kNoseUW, 0.70, tone(0.94));
+    c.fillRect(kNoseU0, 0.430, kNoseUW, 0.140, dark);                // grille
+    c.fillRect(kNoseU0, 0.412, kNoseUW, 0.012, accent);              // grille surround
+    c.fillRect(kNoseU0, 0.576, kNoseUW, 0.012, accent);
     if (maskStyle == 0) {
-        c.fillRect(NIu - 0.052, NIv - 0.018, 0.038, 0.036, {232 / 255.0, 232 / 255.0, 225 / 255.0});
-        c.fillRect(NIu + 0.014, NIv - 0.018, 0.038, 0.036, {232 / 255.0, 232 / 255.0, 225 / 255.0});
-        c.fillRect(NIu - 0.058, NIv + 0.026, 0.116, 0.013, dark);
+        c.fillRect(kNoseU0, 0.290, kNoseUW, 0.105, lampWhite);
+        c.fillRect(kNoseU0, 0.605, kNoseUW, 0.105, lampWhite);
     } else if (maskStyle == 1) {
-        c.fillRect(NIu - 0.062, NIv - 0.014, 0.124, 0.026, {232 / 255.0, 232 / 255.0, 225 / 255.0});
-        c.fillRect(NIu - 0.006, NIv - 0.014, 0.012, 0.026, tone(0.96));
-        c.fillRect(NIu - 0.050, NIv + 0.022, 0.100, 0.011, dark);
+        c.fillRect(kNoseU0, 0.275, kNoseUW, 0.120, lampWhite);
+        c.fillRect(kNoseU0, 0.605, kNoseUW, 0.120, lampWhite);
+        c.fillRect(kNoseU0, 0.327, kNoseUW, 0.014, tone(0.94));      // lens divider
+        c.fillRect(kNoseU0, 0.659, kNoseUW, 0.014, tone(0.94));
     } else {
-        for (double dx : {-0.050, -0.020, 0.020, 0.050})
-            c.fillCircle(NIu + dx, NIv - 0.002, 0.013, {232 / 255.0, 232 / 255.0, 225 / 255.0});
-        c.fillEllipse(NIu, NIv + 0.030, 0.044, 0.011, dark);
+        for (double vy : {0.292, 0.345, 0.610, 0.663})
+            c.fillRect(kNoseU0, vy, kNoseUW, 0.042, lampWhite);      // quad round lamps
     }
-    c.fillRect(TIu - 0.07, TIv - 0.12, 0.14, 0.24, tone(0.9));
-    const std::array<double, 3> taillight{120 / 255.0, 14 / 255.0, 12 / 255.0};
+
+    // Tail: two wide taillight lenses split by a thin dark centre panel.
+    c.fillRect(kTailU0, 0.15, kTailUW, 0.70, tone(0.86));
     if (maskStyle == 0) {
-        c.fillRect(TIu - 0.062, TIv - 0.008, 0.124, 0.042, taillight);
-        c.fillRect(TIu - 0.066, TIv + 0.045, 0.132, 0.052, dark);
+        c.fillRect(kTailU0, 0.310, kTailUW, 0.150, taillight);
+        c.fillRect(kTailU0, 0.540, kTailUW, 0.150, taillight);
     } else if (maskStyle == 1) {
-        c.fillRect(TIu - 0.066, TIv - 0.020, 0.132, 0.028, taillight);
-        c.fillRect(TIu - 0.066, TIv + 0.045, 0.132, 0.052, dark);
+        c.fillRect(kTailU0, 0.295, kTailUW, 0.165, taillight);
+        c.fillRect(kTailU0, 0.540, kTailUW, 0.165, taillight);
+        c.fillRect(kTailU0, 0.365, kTailUW, 0.014, dark);            // lens divider
+        c.fillRect(kTailU0, 0.621, kTailUW, 0.014, dark);
     } else {
-        c.fillRect(TIu - 0.062, TIv - 0.008, 0.050, 0.042, taillight);
-        c.fillRect(TIu + 0.012, TIv - 0.008, 0.050, 0.042, taillight);
-        c.fillRect(TIu - 0.012, TIv - 0.008, 0.024, 0.042, dark);
-        c.fillRect(TIu - 0.066, TIv + 0.045, 0.132, 0.052, dark);
+        for (double vy : {0.310, 0.390, 0.540, 0.620})
+            c.fillRect(kTailU0, vy, kTailUW, 0.062, taillight);      // stacked lenses
     }
-    // small deck-lid number + badge (index.html:2848-2855)
-    drawNumber(c, num, TIu, TIv - 0.086, 0.05, white, dark);
-    c.fillEllipse(TIu, TIv - 0.052, 0.018, 0.009, accent);
-    c.fillRect(TIu - 0.0144, TIv - 0.0535, 0.0288, 0.003, tone(0.9));
+    c.fillRect(kTailU0, 0.462, kTailUW, 0.076, dark);                // centre panel
+    c.fillEllipse(kTailU0 + kTailUW * 0.5, 0.50, 0.008, 0.018, accent); // manufacturer badge
+    c.fillRect(kTailU0, 0.212, kTailUW, 0.018, accent);              // quarter-panel trim
+    c.fillRect(kTailU0, 0.770, kTailUW, 0.018, accent);
+
+    // Deck-lid number (index.html:2848-2855), moved onto the actual trunk
+    // deck: the deck faces sit between the rear glass (ends at
+    // carU(-1.75)=0.665) and the tail cap (0.78) and sample v in [0.3,0.7]
+    // per emit_quad()'s is_top rule. Sized and centred so a 2-digit number
+    // stays clear of the tail cluster's u range above.
+    drawNumber(c, num, 0.706, 0.50, 0.062, white, dark);
 
     // G1c (NASCAR-Thunder gap-analysis plan, wheel/tire mesh upgrade): two
     // small fixed-color swatches in the U margin the body paint never

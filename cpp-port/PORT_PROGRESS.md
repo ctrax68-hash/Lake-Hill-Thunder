@@ -5949,3 +5949,76 @@ discipline this project already used for G12-G14 when screenshot timing
 couldn't cleanly isolate an effect.
 
 Committed and pushed to `main`.
+
+## G16 -- Car surface detail (NT2003 presentation plan)
+
+The user supplied three screen recordings of **NASCAR Thunder 2003 at
+Bristol Motor Speedway** and asked to make the game look like them.
+Asked whether to prioritise the night look, they redirected explicitly:
+"Don't focus on day and night. Focus on the graphic details, how the
+cars look, the track, the grandstands. Pit row, pace car, the UI of the
+screen every detail." So the G16-G23 plan leaves lighting/time-of-day
+alone and targets detail density instead. G16 is the car.
+
+**BUGFIX -- the headlight/taillight masks were painted into texture
+space no geometry samples.** `buildLiveryPixels()` painted its nose and
+tail masks at `u=0.845`. `gen_car_rig.py`'s `emit_quad()` pins the nose
+cap to `u=0.02` and the tail cap to `u=0.78`; `u=0.845` sits in the dead
+margin between the body wrap (`u<=0.78`) and the G1c/G8 swatch columns
+(`u>=0.85`). So the headlights, taillights, deck-lid number and badge
+have all been invisible since the G1/G8 3D loft landed. `livery.h`'s
+note (2) had explained their absence differently -- it was written when
+the car was still a single flat top-down quad and openly said such
+detail "is never actually visible from the camera angles this port
+supports". That stopped being true once every face got a real
+wraparound UV; the note is now marked obsolete in place, with the real
+cause recorded.
+
+Both caps are UV-degenerate in U (all four corners share one `u`), so
+content has to vary in **V** to read across the car's width. The cap
+quad's corners are bottom-left 0.055, bottom-right 0.945, top-right
+0.7, top-left 0.3, which means across its *mid-height* V only spans
+0.1775..0.8225 -- a first pass sized against the full [0,1] range
+painted a full-width red slab instead of two lamps (caught in the first
+WASM screenshot and retuned against the real extent). The U spread is
+kept tight, ~2% of body length past the wrap's 0.78 edge, so the lamps
+wrap the corner onto the rear quarter without painting down the whole
+rearmost body segment. This matters most at the tail: the chase camera
+stares at the car ahead for an entire race, so the taillight cluster is
+the single most-visible piece of car detail in the game.
+
+Also added, all reversing or extending prior deliberate scope cuts:
+- **Contingency decal chips** along the lower rear quarter on both
+  sides, placed clear of the rear wheel-arch shadow ring (which reaches
+  `u=0.682`) and of the tail cluster. `livery.h`'s note (6) had listed
+  these as "skipped for scope control (low visual value relative to
+  implementation cost)"; that call was made against this port's own
+  prior look, and measured against the NT2003 reference it's one of the
+  few era cues that stays readable at real chase-cam distance. Hood pins
+  and the fuel-filler ring stay skipped -- those genuinely are sub-pixel
+  at every supported camera distance.
+- **Roof and door number panels**: a contrasting panel painted under
+  each number (white on dark cars, dark on light ones, off the same
+  luminance test that already picks `accent`), matching how real Gen-4
+  cars carry their numbers rather than floating them on the paint.
+- **Deck-lid number** moved onto the actual trunk deck (between the rear
+  glass at `carU(-1.75)=0.665` and the tail cap at 0.78, `v=0.5` per
+  `emit_quad()`'s is_top rule), sized so two digits stay clear of the
+  tail cluster.
+- **Windshield sun strip** now takes the car's own secondary accent
+  instead of a fixed near-white band, giving the field visible per-car
+  variety through the glass.
+
+**Verified**: native `ctest` 29/29. WASM rebuild + `wasm_verify.js`,
+zero console/page errors. Primary proof was camera-independent, per this
+project's "decode it directly" discipline: a scratch program calling
+`buildLiveryPixels()` and probing the exact U columns `emit_quad()`
+assigns -- tail column `u=0.775` returns `rgb(150,18,15)` (the
+`taillight` constant) at both `v=0.30` and `v=0.68`, nose column
+`u=0.020` returns `rgb(232,232,225)` (`lampWhite`) at the same two V
+bands and `rgb(10,10,12)` (`dark`) for the grille at `v=0.50`, the old
+`u=0.845` location now reads empty, the six contingency chips return six
+distinct palette colors, and the roof panel scans white `(250,250,250)`
+across `u=0.43..0.53` bounded by body color either side with the dark
+number on top. A chase-cam WASM screenshot then confirmed the tail reads
+as two red lenses split by a dark centre panel on the car ahead.

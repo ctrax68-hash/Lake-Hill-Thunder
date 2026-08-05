@@ -25,6 +25,16 @@
 //     for a complete, correct texture (useful if a 3D loft is ever added
 //     later), but a direct, accepted consequence of that same scope cut,
 //     not a new corner cut here.
+//     **OBSOLETE since G1/G8 added the real 3D loft, and its lingering
+//     consequence was a bug G16 fixed.** Every face now has a real
+//     wraparound UV (gen_car_rig.py's emit_quad()), so the side-panel
+//     detail above IS visible now. But the nose/tail masks were still
+//     being painted at u=0.845 -- dead space between the body wrap
+//     (u<=0.78) and the G1c/G8 swatch columns (u>=0.85) that no geometry
+//     samples -- so the headlights/taillights stayed invisible for a
+//     different reason than this note claimed. G16 re-places them onto the
+//     u=0.02 (nose cap) and u=0.78 (tail cap) columns emit_quad() actually
+//     assigns; see livery.cpp's own comment there for the V-band layout.
 // (3) Car numbers use a small embedded 7-segment-style digit rasterizer
 //     instead of real font text (JS's `drawNum()` calls into the browser's
 //     own font renderer, `'900 ...px Arial'` -- no equivalent exists in
@@ -43,6 +53,14 @@
 //     implementation cost, unlike the number decals/stripe styles which
 //     are the livery's actual identity): contingency decal chips, hood
 //     pins, the fuel-filler ring.
+//     **Partly reversed by G16** (NT2003 presentation plan): the
+//     contingency decal chips are back. The "low visual value" call was
+//     made against this port's own prior look; measured against the NT2003
+//     reference footage G16 targets, the chip row along the lower rear
+//     quarter is one of the few era cues that stays readable at real
+//     chase-cam distance. Hood pins and the fuel-filler ring remain
+//     skipped -- those genuinely are sub-pixel at every supported camera
+//     distance.
 
 // G1b (NASCAR-Thunder gap-analysis plan, car UV/livery fix): bumped
 // 256->512 now that side panels actually get real UVs (see
