@@ -84,6 +84,19 @@ std::vector<MeshVertex> buildStandRoofMesh(const Track& track, double sStart, do
 // atlas texture, Phase 5e/5f).
 std::vector<MeshVertex> buildPitRoadMesh(const Track& track, double pitOut, double pitIn);
 
+// G19 (NT2003 presentation plan): pit-crew billboards, one per stall.
+// `atlas_texture.cpp`'s paintCrewTile() has painted three crew silhouettes
+// into kAtlasCrew since Phase 5e, and (grep-verified) **no mesh has ever
+// sampled it** -- the third instance of the same dead-atlas-content
+// situation G10 (kAtlasFence) and G11 (sponsorDensity) each fixed once.
+// buildPitRoadMesh()'s own comment above even records the deferral
+// ("crew-figure billboards are deferred"). Returned separately rather than
+// folded into buildPitRoadMesh() because these are textured and everything
+// that function emits is flat-colored -- keeps its signature and its single
+// return type intact, matching how buildOuterWallMesh() and friends are
+// already appended through renderer.cpp's own appendTextured() path.
+std::vector<MeshVertex> buildPitCrewMesh(const Track& track);
+
 // The outer wall's face (index.html:1986-2000). G5b (NASCAR-Thunder
 // gap-analysis plan) wired this into the atlas's wall-diamond region
 // (kAtlasWall) -- real UVs now, not a flat color; the catch-fence band

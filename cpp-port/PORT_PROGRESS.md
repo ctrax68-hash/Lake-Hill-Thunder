@@ -6163,3 +6163,50 @@ stretched). WASM rebuild + `wasm_verify.js`, zero console/page errors.
 Chase-cam screenshots captured per track by driving the menu's track
 toggle, plus a before/after crop of the stands showing the flat-color
 upper-deck band replaced by full-height crowd under a roof line.
+
+## G19 -- Pit road detail
+
+**BUGFIX -- `kAtlasCrew` was painted but sampled by nothing.**
+`atlas_texture.cpp`'s `paintCrewTile()` has drawn three pit-crew
+silhouettes (torso/legs/helmet/visor blocks on pit concrete) into the
+atlas since Phase 5e, and grep confirms **no mesh has ever read that
+region** -- the third instance of exactly the same dead-atlas-content
+situation G10 (`kAtlasFence`) and G11 (`sponsorDensity`) each fixed once.
+`buildPitRoadMesh()`'s own header comment even recorded the deferral:
+"crew-figure billboards are skipped (need the crew atlas texture)".
+
+New `buildPitCrewMesh()` puts one crew billboard in every pit stall,
+upright and facing the track -- both what a real crew does and the
+orientation the chase camera sees face-on running past pit road. Returned
+as its own function rather than folded into `buildPitRoadMesh()` because
+these are textured and everything that function emits is flat-colored;
+this keeps its signature and single return type intact and routes the
+crew through `renderer.cpp`'s existing `appendTextured()` path, the same
+way `buildOuterWallMesh()` and friends already work. V=0 maps to the top
+of the crew region (helmets) and V=1 to the bottom (feet), matching how
+`paintCrewTile()` lays each figure out across the region's height.
+
+**War wagons given per-team colors.** They were all one dark tone, so pit
+road read as a row of identical black boxes; real pit lanes are a wall of
+team color, and pit road is one of the most colorful areas in the
+reference footage. Cycled by stall index so each team is distinct but the
+assignment is stable.
+
+**Verified**: native `ctest` 29/29. Primary proof was camera-independent,
+per this project's "decode it directly" discipline: a scratch program
+calling `buildPitCrewMesh()` returns exactly 120 vertices (FIELD=20 stalls
+x 6), **every UV falls inside `atlasUV(kAtlasCrew)` and together they span
+it exactly** (u 0.0078..0.4922, v 0.7578..0.8672) -- which is the direct
+demonstration that the previously-dead region is now sampled -- the
+billboards are upright with a 1.75 height standing on the surface at
+y=0.020, and stall 0's billboard centre matches the track-side edge of the
+stall box `buildPitRoadMesh()` draws to within 0.0001.
+
+A top-down WASM screenshot confirms the full row of pit props lining the
+front straight's infield. **Not captured in a chase-cam screenshot**: six
+samples through a lap all landed on corners or the back straight, and pit
+road only lines seg0, so the crew billboards themselves were never in
+frame -- the same recurring framing problem G12-G14 hit, and the reason
+the geometric decode above is treated as the real proof rather than a
+fallback. (The samples did incidentally confirm G16's contingency chips
+reading clearly on a car's lower rear quarter at chase distance.)

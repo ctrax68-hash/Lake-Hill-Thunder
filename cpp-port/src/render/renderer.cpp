@@ -810,6 +810,9 @@ void Renderer::setTrack(const Track& track) {
         // PIT_OUT/PIT_IN (index.html:1937): sized to hold both pit AI lanes
         // (moving lane at lat=-8.4, stall lane at lat=-10.5).
         append(buildPitRoadMesh(track, -7.2, -11.8));
+        // G19 (NT2003 presentation plan): wire the previously-dead crew
+        // atlas region into real billboards, one per pit stall.
+        appendTextured(buildPitCrewMesh(track));
         appendTextured(buildOuterWallMesh(track));
         // G10 (NASCAR-Thunder gap-analysis plan): wire the previously-dead
         // catch-fence atlas region into real geometry.

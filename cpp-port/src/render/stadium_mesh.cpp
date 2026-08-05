@@ -265,10 +265,20 @@ std::vector<MeshVertex> buildPitRoadMesh(const Track& track, double pitOut, doub
 
         const Vec3 wag = pos3(track, sStall, -13.0);
         const double wx = tanX, wz = tanZ;
+        // G19 (NT2003 presentation plan): war wagons were all one dark tone,
+        // so pit road read as a row of identical black boxes. Real pit lanes
+        // are a wall of team colors, and the reference footage's pit road is
+        // one of its most colorful areas. Cycled by stall index so each team
+        // is visually distinct but the assignment stays stable.
+        static const std::array<std::array<double, 3>, 8> kTeamColors{{
+            {0.72, 0.16, 0.14}, {0.14, 0.28, 0.68}, {0.90, 0.74, 0.12}, {0.16, 0.46, 0.24},
+            {0.86, 0.86, 0.88}, {0.55, 0.22, 0.62}, {0.90, 0.48, 0.10}, {0.16, 0.16, 0.19},
+        }};
+        const auto& teamCol = kTeamColors[(size_t)idx % kTeamColors.size()];
         addBox(out, wag.x - std::abs(wx) * 0.8 - std::abs(latX) * 0.45, 0,
                wag.z - std::abs(wz) * 0.8 - std::abs(latZ) * 0.45,
                wag.x + std::abs(wx) * 0.8 + std::abs(latX) * 0.45, 1.4,
-               wag.z + std::abs(wz) * 0.8 + std::abs(latZ) * 0.45, {0.16, 0.16, 0.19});
+               wag.z + std::abs(wz) * 0.8 + std::abs(latZ) * 0.45, teamCol);
         addBox(out, wag.x - std::abs(wx) * 0.45 - std::abs(latX) * 0.3, 1.4,
                wag.z - std::abs(wz) * 0.45 - std::abs(latZ) * 0.3,
                wag.x + std::abs(wx) * 0.45 + std::abs(latX) * 0.3, 1.9,
@@ -286,6 +296,34 @@ std::vector<MeshVertex> buildPitRoadMesh(const Track& track, double pitOut, doub
     const Vec3 pcx = pos3(track, s0 - 24, pitOut - 4);
     addBox(out, pcx.x - 2.2, 0, pcx.z - 1.6, pcx.x + 2.2, 3.4, pcx.z + 1.6, kPitWall);
 
+    return out;
+}
+
+std::vector<MeshVertex> buildPitCrewMesh(const Track& track) {
+    std::vector<MeshVertex> out;
+    const Seg& seg0 = track.segs()[0];
+    const double s0 = seg0.s0;
+    const std::array<double, 4> crewUV = atlasUV(kAtlasCrew);
+    // Same stall spacing buildPitRoadMesh() uses, so a crew lands in every
+    // stall it draws a box for. Standing on the track side of the stall box
+    // (its lat1 edge), upright and facing the track -- which is both what a
+    // real crew does and the orientation the chase camera sees face-on while
+    // running past pit road.
+    constexpr double kStallLat = -10.5, kBoxW = 2.6;
+    constexpr double kCrewW = 2.4, kCrewH = 1.75;
+    const double crewLat = kStallLat + kBoxW / 2;
+    for (int idx = 0; idx < FIELD; ++idx) {
+        const double sStall = s0 + seg0.len * (0.18 + 0.55 * idx / FIELD);
+        const Vec3 a = crossPt(track, sStall - kCrewW / 2, crewLat);
+        const Vec3 b = crossPt(track, sStall + kCrewW / 2, crewLat);
+        const Vec3 aTop{a.x, a.y + kCrewH, a.z};
+        const Vec3 bTop{b.x, b.y + kCrewH, b.z};
+        // V=0 is the top of the crew region (helmets), V=1 the bottom (feet)
+        // -- see atlas_texture.cpp's paintCrewTile(), which lays each figure
+        // out head-down-to-feet across the region's height.
+        addQuadUV(out, aTop, bTop, b, a, {crewUV[0], crewUV[1]}, {crewUV[2], crewUV[1]}, {crewUV[2], crewUV[3]},
+                  {crewUV[0], crewUV[3]});
+    }
     return out;
 }
 
