@@ -76,9 +76,29 @@ int main() {
         const double sStart = 0.0, sEnd = 200.0;
         const int steps = std::min(40, std::max(16, (int)std::lround((sEnd - sStart) / 12.0)));
         const auto result = buildStandMesh(t, sStart, sEnd, tiers, crowdTiers, 1.0, 3.2, 2.1, palette, crowdUV, rng);
-        // Textured: crowdTiers seat quads per slice, 6 verts/quad.
-        expectTrue("crowdTiers=2 textured vertex count matches steps*crowdTiers*6",
-                   result.textured.size() == (size_t)steps * crowdTiers * 6);
+        // Textured: crowdTiers seat quads per slice, 6 verts/quad -- but
+        // since G18 each seat quad is subdivided along-track into nTile
+        // repeats of the crowd tile, so that people come out a fixed world
+        // size instead of stretching with the slice length (see
+        // buildStandMesh()'s own comment). Mirrors its kCrowdTile = 7.0.
+        const double sliceLen = (sEnd - sStart) / steps;
+        const int nTile = std::max(1, (int)std::lround(sliceLen / 7.0));
+        expectTrue("crowdTiers=2 textured vertex count matches steps*crowdTiers*nTile*6",
+                   result.textured.size() == (size_t)steps * crowdTiers * nTile * 6);
+        // The whole point of the tiling: a longer zone must produce
+        // proportionally more crowd tiles, not the same count stretched.
+        // Double the zone length, and (steps being capped at 40 here) the
+        // per-slice tile count must rise to compensate.
+        {
+            Mulberry32 rng2(777);
+            const auto wide = buildStandMesh(t, 0.0, 800.0, tiers, crowdTiers, 1.0, 3.2, 2.1, palette, crowdUV, rng2);
+            const int steps2 = std::min(40, std::max(16, (int)std::lround(800.0 / 12.0)));
+            const int nTile2 = std::max(1, (int)std::lround((800.0 / steps2) / 7.0));
+            expectTrue("a 4x longer zone yields proportionally more crowd tiles, not stretched ones",
+                       (size_t)steps2 * nTile2 > (size_t)steps * nTile * 3);
+            expectTrue("wide-zone textured count also matches steps*crowdTiers*nTile*6",
+                       wide.textured.size() == (size_t)steps2 * crowdTiers * nTile2 * 6);
+        }
         // Flat: all risers (tiers*6/slice) + the remaining (tiers-crowdTiers)
         // flat seat quads per slice.
         expectTrue("crowdTiers=2 flat vertex count matches risers + remaining flat seats",

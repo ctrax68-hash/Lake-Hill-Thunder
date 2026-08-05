@@ -64,6 +64,18 @@ StandMeshResult buildStandMesh(const Track& track, double sStart, double sEnd, i
                                 const std::array<std::array<double, 3>, 6>& palette,
                                 const std::array<double, 4>& crowdUV, Mulberry32& rng);
 
+// G18 (NT2003 presentation plan): the grandstand's roof line -- a painted
+// sponsor band immediately above the top row of crowd, a dark press-box
+// fascia above that, and an angled roof cap. Every frame of the reference
+// footage has this horizontal element capping the bowl; without it the
+// stands just stop in mid-air. `tiers`/`tierD`/`tierH` are the SAME values
+// passed into the matching buildStandMesh() call, so the roof's height and
+// lateral position derive from the stand it sits on rather than restating
+// the numbers (same rule G14's suite tower follows). `accent` tints the
+// sponsor band -- pass the track's own theme wall color.
+std::vector<MeshVertex> buildStandRoofMesh(const Track& track, double sStart, double sEnd, int tiers, double tierD,
+                                            double tierH, const std::array<double, 3>& accent);
+
 // addPitRoad() (index.html:1836-1909): entry/exit lines, pit wall, numbered
 // stall box outlines (digits themselves deferred to Phase 5g alongside the
 // jumbotron/pylon's own LED-digit geometry), war wagons, tire stacks, a

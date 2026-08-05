@@ -6095,3 +6095,71 @@ painting a second stripe out on the apron. Confined to a clean V window
 (0.94 -> 0.68, clear of the grooves below and the white line above) and
 re-shot to confirm a single line with continuous surface out to the
 wall.
+
+## G18 -- Grandstands: crowd fidelity + the Milltown bowl
+
+**BUGFIX -- crowd texture scaled with slice length instead of with the
+world.** `buildStandMesh()` mapped the whole crowd atlas rect onto each
+seat quad exactly once, full-rect, with no tiling and no aspect
+correction. Slice length is `zoneLen / steps`, which lands around 6 world
+units on Milltown's short front straight and 13 on Big Sable's -- so the
+same tile of painted people covered twice the seating on one track as on
+another, and crowd density visibly varied by track and by zone for no
+reason. Fixed by repeating the tile along the slice instead: the rect is
+a *sub-region* of the shared atlas, so hardware wrap can't do it (U>1
+would wrap into neighbouring atlas regions), and it has to be one quad
+per repeat. `kCrowdTile = 7.0` world units per tile now, so people come
+out the same size everywhere.
+
+**`crowdTiers` raised to cover every tier on all four tracks.** It had
+sat at 2 (4 on Big Sable) since Phase 5e, so every tier above the second
+fell through to the flat-color branch and rendered as a blank painted
+panel -- an empty upper deck above a populated lower one. The
+before/after screenshot pair makes this stark: the old shot has a band
+of bright flat yellow/blue/green/purple where the upper deck should be.
+
+**Milltown restyled into the reference's coliseum bowl**: 4 tiers of the
+shortest risers in the game (`tierH` 1.6) made it a low, flat saucer
+despite already being the right size and the only track with uniform
+360-degree seating. Now 9 tiers of 2.3-high risers wrapping the whole
+lap, a brighter crowd palette (the old brown/gray one read muddy), and a
+taller catch fence to match.
+
+**Deliberately NOT changed: banking.** The plan called for steepening
+Milltown toward Bristol's 24-30 degrees, but `bankL`/`bankR` are physics
+inputs, not just geometry -- `cornerCap(mu, bank)` (car.cpp:7) and
+step_car.cpp:400's `muEffLateral = (muEff + tan(bank)) / (1 -
+muEff*tan(bank))`. Going 14 -> 24 degrees raises lateral grip by roughly
+56% and rewrites the track's corner speeds and lap times. This pass was
+explicitly scoped to graphics, so the coliseum read comes from stand
+geometry alone and Milltown drives exactly as it did before. (That all 29
+suites including the determinism harness stayed green across this phase
+is the check on that: every `Stadium` field touched here is visual-only.)
+
+**New `buildStandRoofMesh()`** caps each stand zone with a painted
+sponsor band plus a dark press-box fascia, deriving its height and
+lateral position from the same tiers/tierD/tierH passed to the matching
+`buildStandMesh()` call rather than restating them (G14's rule). Two
+things were corrected against screenshots here: a first pass included an
+**angled roof cap** projecting back over the seating, which from track
+level -- with the camera underneath it -- read as a huge dark slab
+hanging over the bowl, with sky visible beneath it wherever
+`standDensity` had punched a slice gap in the seating. The reference bowl
+is open-air, so the cap is gone and the band is now ~2.0 units against an
+11.7-unit stand (~17%).
+
+**Also corrected: riser color.** Risers took a random crowd-palette color
+darkened 30%. Survivable at 2-4 tiers; at 9 it turned the bowl into a
+stack of garish horizontal stripes that completely overpowered the crowd
+between them. Real grandstand risers are concrete and only the seated
+crowd is colorful, so they are now a concrete tone with a 15% tint of the
+track's palette.
+
+**Verified**: native `ctest` 29/29 (`stadium_mesh_test` updated -- its
+crowd-vertex assertion encoded the old one-quad-per-seat count, and now
+asserts the tiling contract instead, including a new case proving a 4x
+longer zone yields proportionally more tiles rather than the same count
+stretched). WASM rebuild + `wasm_verify.js`, zero console/page errors.
+Chase-cam screenshots captured per track by driving the menu's track
+toggle, plus a before/after crop of the stands showing the flat-color
+upper-deck band replaced by full-height crowd under a roof line.

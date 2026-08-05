@@ -122,22 +122,98 @@ StandMeshResult buildStandMesh(const Track& track, double sStart, double sEnd, i
             // own addStand() only textures the seat quad, never the riser.
             const Vec3 ra = crossPt(track, sa, latB, hB), rb = crossPt(track, sb, latB, hB);
             const Vec3 rc = crossPt(track, sb, latB, riseH), rd = crossPt(track, sa, latB, riseH);
+            // G18: risers are structure, not people. They used to take a
+            // random crowd-palette color darkened 30%, which was survivable
+            // at 2-4 tiers but turns a 9-tier bowl into a stack of garish
+            // horizontal stripes that completely overpower the crowd
+            // texture between them. Real grandstand risers are concrete;
+            // only the seated crowd is colorful. Keeps a slight per-slice
+            // tint of the track's own palette so the stands don't go
+            // uniformly flat.
+            constexpr std::array<double, 3> kRiserConcrete{0.48, 0.48, 0.47};
             addQuad(result.flat, rd, rc, rb, ra,
-                    mixC(palette[(size_t)(rng.next() * palette.size())], {0, 0, 0}, 0.3));
+                    mixC(kRiserConcrete, palette[(size_t)(rng.next() * palette.size())], 0.15));
             // Seat (sloped): front `crowdTiers` tiers get the textured
             // crowd-atlas path (index.html:1816-1818); the rest keep the
             // flat palette path (index.html:1819-1821, "fog hides banding
             // up there").
-            const Vec3 sA = crossPt(track, sa, latB, riseH), sB = crossPt(track, sb, latB, riseH);
-            const Vec3 sC = crossPt(track, sb, latT, hT), sD = crossPt(track, sa, latT, hT);
             if (t < crowdTiers) {
-                addQuadUV(result.textured, sD, sC, sB, sA, uv01, uv11, uv10, uv00);
+                // G18 (NT2003 presentation plan) -- BUGFIX. This used to map
+                // the whole crowd rect onto the seat quad exactly once, with
+                // no tiling and no aspect correction, so the painted people
+                // stretched or squashed with whatever `zoneLen / steps`
+                // happened to be: ~6 units per slice on Milltown's short
+                // front straight vs ~13 on Big Sable's, i.e. the same crowd
+                // tile covering twice the seating. Crowd density visibly
+                // varied by track and by zone for no reason.
+                //
+                // Fixed by repeating the tile along the slice instead: the
+                // rect is a *sub-region* of the shared atlas, so hardware
+                // wrap can't do it (U>1 would wrap into neighbouring atlas
+                // regions) -- it has to be one quad per repeat. kCrowdTile
+                // is the world-space width one tile of painted crowd
+                // represents, so people now come out the same size
+                // everywhere.
+                constexpr double kCrowdTile = 7.0;
+                const int nTile = std::max(1, (int)std::lround((sb - sa) / kCrowdTile));
+                for (int j = 0; j < nTile; ++j) {
+                    const double ta0 = sa + (sb - sa) * j / nTile;
+                    const double ta1 = sa + (sb - sa) * (j + 1) / nTile;
+                    const Vec3 qA = crossPt(track, ta0, latB, riseH), qB = crossPt(track, ta1, latB, riseH);
+                    const Vec3 qC = crossPt(track, ta1, latT, hT), qD = crossPt(track, ta0, latT, hT);
+                    addQuadUV(result.textured, qD, qC, qB, qA, uv01, uv11, uv10, uv00);
+                }
             } else {
+                const Vec3 sA = crossPt(track, sa, latB, riseH), sB = crossPt(track, sb, latB, riseH);
+                const Vec3 sC = crossPt(track, sb, latT, hT), sD = crossPt(track, sa, latT, hT);
                 addQuad(result.flat, sD, sC, sB, sA, palette[(size_t)(rng.next() * palette.size())]);
             }
         }
     }
     return result;
+}
+
+std::vector<MeshVertex> buildStandRoofMesh(const Track& track, double sStart, double sEnd, int tiers, double tierD,
+                                            double tierH, const std::array<double, 3>& accent) {
+    std::vector<MeshVertex> out;
+    if (tiers <= 0) return out;
+    // Sits directly on top of the last tier buildStandMesh() emits, derived
+    // from the same baseLat/baseH + per-tier stepping rather than restating
+    // the numbers (same "derive, don't duplicate" rule G14's suite tower
+    // follows for its own placement).
+    const double latTop = wallLat(track) + 6.0 + tiers * tierD;
+    const double hTop = 1.2 + tiers * tierH;
+    // Kept deliberately thin, and with **no overhanging roof cap**. A first
+    // pass added an angled cap projecting back over the seating; from track
+    // level the camera sits under it, so it read as a huge dark slab hanging
+    // over the bowl -- and wherever `standDensity` had punched a slice gap in
+    // the seating below, sky showed through beneath it. The reference bowl is
+    // open-air anyway: above the crowd there is only a painted band and a
+    // narrow press-box fascia, no roof projecting over the stands. Together
+    // these come to ~2.0 units against an 11.7-unit stand on Thunder Oval,
+    // about 17% of its height.
+    constexpr double kStripeH = 0.7;  // sponsor band immediately above the crowd
+    constexpr double kFasciaH = 1.3;  // dark press-box fascia above that
+    const std::array<double, 3> fascia{0.16, 0.16, 0.19};
+    const std::array<double, 3> stripeDark = mixC(accent, {0, 0, 0}, 0.35);
+    // Deliberately continuous even where standDensity punched slice gaps in
+    // the seating below: a real grandstand roof spans its access tunnels
+    // rather than breaking over each one.
+    const double zoneLen = sEnd - sStart;
+    const int steps = std::min(60, std::max(20, (int)std::lround(zoneLen / 10.0)));
+    for (int i = 0; i < steps; ++i) {
+        const double sa = sStart + zoneLen * i / steps, sb = sStart + zoneLen * (i + 1) / steps;
+        // Alternating sponsor band, mirroring the reference's painted stripe
+        // running the length of the grandstand fascia.
+        const auto& stripeCol = (i % 2 == 0) ? accent : stripeDark;
+        addQuad(out, crossPt(track, sa, latTop, hTop + kStripeH), crossPt(track, sb, latTop, hTop + kStripeH),
+                crossPt(track, sb, latTop, hTop), crossPt(track, sa, latTop, hTop), stripeCol);
+        // Dark fascia above the stripe.
+        addQuad(out, crossPt(track, sa, latTop, hTop + kStripeH + kFasciaH),
+                crossPt(track, sb, latTop, hTop + kStripeH + kFasciaH),
+                crossPt(track, sb, latTop, hTop + kStripeH), crossPt(track, sa, latTop, hTop + kStripeH), fascia);
+    }
+    return out;
 }
 
 std::vector<MeshVertex> buildPitRoadMesh(const Track& track, double pitOut, double pitIn) {

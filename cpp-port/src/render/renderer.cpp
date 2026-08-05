@@ -792,6 +792,21 @@ void Renderer::setTrack(const Track& track) {
         appendStand(buildStandMesh(track, seg3.s0 + seg3.len * pad, seg3.s0 + seg3.len * (1 - pad),
                                     st.standTier.corner, st.crowdTiers, st.standDensity, st.standScale.tierD,
                                     st.standScale.tierH, st.crowdPalette, crowdUV, sceneryRng));
+        // G18 (NT2003 presentation plan): cap each stand zone with a roof
+        // line (sponsor band + press-box fascia + roof cap). Same zone
+        // extents and same tier/tierD/tierH values as the matching
+        // buildStandMesh() call above each one, so the roof always lands on
+        // top of the stand it belongs to.
+        append(buildStandRoofMesh(track, seg0.s0 + seg0.len * 0.03, seg0.s0 + seg0.len * 0.97, st.standTier.front,
+                                   st.standScale.tierD, st.standScale.tierH, track.theme().wall));
+        append(buildStandRoofMesh(track, seg2.s0 + seg2.len * 0.03, seg2.s0 + seg2.len * 0.97, st.standTier.back,
+                                   st.standScale.tierD, st.standScale.tierH, track.theme().wall));
+        append(buildStandRoofMesh(track, seg1.s0 + seg1.len * pad, seg1.s0 + seg1.len * (1 - pad),
+                                   st.standTier.corner, st.standScale.tierD, st.standScale.tierH,
+                                   track.theme().wall));
+        append(buildStandRoofMesh(track, seg3.s0 + seg3.len * pad, seg3.s0 + seg3.len * (1 - pad),
+                                   st.standTier.corner, st.standScale.tierD, st.standScale.tierH,
+                                   track.theme().wall));
         // PIT_OUT/PIT_IN (index.html:1937): sized to hold both pit AI lanes
         // (moving lane at lat=-8.4, stall lane at lat=-10.5).
         append(buildPitRoadMesh(track, -7.2, -11.8));
