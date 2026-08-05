@@ -416,11 +416,11 @@ void mainLoopTick(void* argPtr) {
         if (S.portrait) {
             S.renderer.renderBlockedFrame();
         } else if (S.state.mode == "menu") {
-            S.renderer.renderFrame(S.state, S.cars, renderAlpha, &S.menu, &S.track.name());
+            S.renderer.renderFrame(S.state, S.cars, renderAlpha, nullptr, &S.menu, &S.track.name());
         } else if (S.state.mode == "done") {
-            S.renderer.renderFrame(S.state, S.cars, renderAlpha, nullptr, nullptr, &S.finishOrder);
+            S.renderer.renderFrame(S.state, S.cars, renderAlpha, nullptr, nullptr, nullptr, &S.finishOrder);
         } else {
-            S.renderer.renderFrame(S.state, S.cars, renderAlpha);
+            S.renderer.renderFrame(S.state, S.cars, renderAlpha, &S.pace);
         }
     }
     ++S.frame;

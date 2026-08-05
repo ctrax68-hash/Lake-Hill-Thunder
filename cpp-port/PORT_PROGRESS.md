@@ -6210,3 +6210,59 @@ frame -- the same recurring framing problem G12-G14 hit, and the reason
 the geometric decode above is treated as the real proof rather than a
 fallback. (The samples did incidentally confirm G16's contingency chips
 reading clearly on a car's lower rear quarter at chase distance.)
+
+## G20 -- Render the pace car
+
+**BUGFIX -- the pace car was simulated but never drawn.** `gridStart()`
+seeds it, `stepPace()` drives it, `tick()` runs it every step, and the AI
+follows it -- but `renderFrame()` never received it and `src/render/`
+contained no reference to `PaceCar` at all. The whole field followed an
+invisible car through every pace lap and every caution, and the
+grid-formation shot is one of the most recognisable images in the
+reference footage. `livery.h` even recorded the consequence from the
+other side: "No pace-car variant: this port has no pace-car visual yet
+... so there is nothing to build one for."
+
+Now drawn through the same skinned-mesh path as the field, so it gets the
+same rig, wheel animation and G15 pose interpolation. Hidden once
+`stepPace()` parks it, matching JS's own visibility gate. Its livery goes
+through the ordinary `buildLiveryPixels()` path (cached in `carTextures_`
+under a reserved negative key -- real `Car::num` values are always
+positive 1-2 digit race numbers, so no collision is possible), which
+means it picks up every G16 detail for free.
+
+**Ordering trap worth recording.** `PaceCar` gained `px/py/phdg/ps/plat`
+so G15's interpolation applies to it; without them it would stutter at
+the 50Hz tick rate exactly as every car did before G15. But `stepPace()`
+runs *before* the `stepCar()` loop, so a pace store placed next to the
+existing car-only store (which sat after the pace block) would capture
+the **already-stepped** pose -- previous == current, interpolation
+silently degrading to a no-op with no error anywhere. Both stores now sit
+at the very top of `tick()`, making the invariant uniform and visible:
+capture all poses first, then step everything. `gridStart()` seeds the
+pace previous-pose too, or the first rendered frame would interpolate
+from a zeroed pose at the world origin.
+
+**Amber roof bar, via bloom rather than a new emissive path.** The JS
+original gives its pace car a genuinely emissive bar (`CAR_MAT_AMBER`,
+index.html:2477, `emissiveIntensity` 1.2, toggled at :4752/:4896/:5086),
+never ported. This port has **no emissive path at all** -- `fs_lit.sc` is
+ambient + sun with no self-illumination term -- and adding one means a new
+shader, a new uniform and three CMake touchpoints for a single prop.
+Instead the bar is painted into the livery bright enough that after
+lighting it still clears Phase 5h's bloom bright-pass threshold, so the
+existing post-FX chain gives it a real glow for nothing. **It does not
+pulse**: that needs either per-frame texture work or the emissive uniform
+this port lacks, so it is deferred rather than silently dropped.
+
+**Verified**: native `ctest` 29/29 -- including the determinism harness,
+which is the check that the reordered pose stores changed no physics
+(between the old and new store positions only `stepPace()` runs, and it
+touches only the pace car). WASM rebuild, zero console/page errors. A
+top-down screenshot during the pace lap shows a lone white car out ahead
+of the two-by-two field, in the position that was previously empty. The
+roof bar was verified by direct texture decode rather than by hunting a
+camera angle: at the roof centre the pace livery returns
+`rgb(255,179,26)` where a race livery returns its number panel, with dark
+mounting feet either side, and the bar's R channel is 1.000 against the
+0.85 bright-pass threshold -- clearing it by 0.150, so it does bloom.

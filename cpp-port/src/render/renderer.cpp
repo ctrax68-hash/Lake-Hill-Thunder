@@ -955,8 +955,35 @@ bgfx::TextureHandle Renderer::getOrBuildCarTexture(const Car& car) {
     return tex;
 }
 
+// G20 (NT2003 presentation plan): the pace car's own livery. Cached in the
+// same map as the field, under a key no real car can take -- `Car::num` is
+// a 1-2 digit race number throughout (livery.cpp's drawNumber() only
+// renders 1-2 digits at all), so a negative key can never collide. Built
+// through the same buildLiveryPixels() path as everything else rather than
+// a special-cased texture, so it picks up every G16 detail (lamp clusters,
+// number panels, sun strip) for free. livery.h's own note said "No
+// pace-car variant: this port has no pace-car visual yet ... so there is
+// nothing to build one for" -- that stopped being true here.
+bgfx::TextureHandle Renderer::getOrBuildPaceTexture() {
+    constexpr int kPaceKey = -1;
+    auto it = carTextures_.find(kPaceKey);
+    if (it != carTextures_.end()) return it->second;
+    // Safety-car look: near-white body, and stripe/mask styles picked
+    // explicitly rather than left to the idx-derived default so it reads
+    // distinct from any car in the field.
+    const LiveryScheme paceScheme{0, 0, 0, CarPalette::Yellow};
+    const std::vector<uint8_t> pixels =
+        buildLiveryPixels(Color3{0.93, 0.93, 0.95}, 0, 0, &paceScheme, /*paceLightBar=*/true);
+    const std::vector<uint8_t> liveryMips = buildRgba8MipChain(pixels, kLiveryTextureSize);
+    const bgfx::TextureHandle tex =
+        bgfx::createTexture2D((uint16_t)kLiveryTextureSize, (uint16_t)kLiveryTextureSize, true, 1,
+                               bgfx::TextureFormat::RGBA8, 0, bgfx::copy(liveryMips.data(), (uint32_t)liveryMips.size()));
+    carTextures_[kPaceKey] = tex;
+    return tex;
+}
+
 void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& cars, double renderAlpha,
-                            const MenuSelection* menu, const std::string* menuTrackName,
+                            const PaceCar* pace, const MenuSelection* menu, const std::string* menuTrackName,
                             const std::vector<Car*>* finishOrder) {
     // Phase 5c (PORT_PROGRESS.md): a new view (id 0, numerically below the
     // world view) for the sky background -- bgfx renders views in ascending
@@ -1353,6 +1380,46 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
                 SkinnedMesh::setBoneMatrices(boneFloats.data(), (int)bonePalette.size());
                 carMesh_.draw(kView, model.data(), getOrBuildCarTexture(c));
             }
+        }
+
+        // G20 (NT2003 presentation plan) -- BUGFIX. The pace car is fully
+        // simulated (gridStart() seeds it, stepPace() drives it, tick() runs
+        // it every step) but was **never drawn**: renderFrame() didn't take
+        // it and `src/render/` contained no reference to PaceCar at all. The
+        // field followed an invisible car through every pace lap and every
+        // caution -- and the grid-formation shot is one of the most
+        // recognisable images in the reference footage. Drawn here through
+        // the same skinned-mesh path as the field, so it gets the same rig,
+        // wheel animation and G15 pose interpolation.
+        //
+        // Only while it's actually on track: once stepPace() parks it, JS
+        // hides it too (index.html's own pace-car visibility gate).
+        if (pace && pace->state != "parked" && !skipCarDraws()) {
+            // PaceCar carries the same x/y/hdg/s/lat as Car, so
+            // interpolatedPose()'s math applies verbatim -- but it takes a
+            // Car, so blend inline rather than widening that helper's
+            // signature for one call site.
+            const double a = std::clamp(renderAlpha, 0.0, 1.0);
+            const double pHdg = lerpAngRad(pace->phdg, pace->hdg, a);
+            const double pX = pace->px + (pace->x - pace->px) * a;
+            const double pY = pace->py + (pace->y - pace->py) * a;
+            const double pS = lerpTrackS(pace->ps, pace->s, a, track_->total());
+            const double pLat = pace->plat + (pace->lat - pace->plat) * a;
+
+            WheelAnimState& paceAnim = carWheelAnim_[-1];
+            const WheelAnimInputs paceIn{pace->v, restLoadFront, restLoadRear};
+            const auto paceWheels = computeWheelTransforms(paceAnim, paceIn, kWheelRadius, restLoadFront,
+                                                            restLoadRear, kLoadToTravel, kMaxTravel, dt);
+            const auto paceBones = computeBonePalette(carRigJoints_, paceWheels, carWheelJointIndex_);
+            std::vector<float> paceBoneFloats(paceBones.size() * 16);
+            for (size_t i = 0; i < paceBones.size(); ++i) {
+                for (int k = 0; k < 16; ++k) paceBoneFloats[i * 16 + k] = (float)paceBones[i][k];
+            }
+            const Vec3 pacePos = pos3(*track_, pS, pLat);
+            const Mat4f paceModel =
+                mat4Mul(mat4Translate((float)pX, (float)pacePos.y, (float)pY), mat4RotateY(-(float)pHdg));
+            SkinnedMesh::setBoneMatrices(paceBoneFloats.data(), (int)paceBones.size());
+            carMesh_.draw(kView, paceModel.data(), getOrBuildPaceTexture());
         }
     }
     } // !showResults

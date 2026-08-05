@@ -79,4 +79,17 @@ inline constexpr int kLiveryTextureSize = 512;
 // picks. No pace-car variant: this port has no pace-car visual yet
 // (verified before this sub-phase started), so there is nothing to build
 // one for.
-std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, const LiveryScheme* scheme);
+// `paceLightBar` (G20, NT2003 presentation plan): paints an amber roof
+// light bar in place of the roof number. The JS original gave its pace car
+// a genuinely emissive bar (`CAR_MAT_AMBER`, index.html:2477,
+// emissiveIntensity 1.2), and this port has **no emissive path at all** --
+// fs_lit.sc is ambient + sun only, with no self-illumination term. Rather
+// than add a whole emissive pipeline (new shader + uniform + three CMake
+// touchpoints) for one prop, the bar is painted bright enough that after
+// lighting it clears Phase 5h's bloom bright-pass threshold (0.85,
+// renderer.cpp), so the existing post-FX chain gives it a real glow for
+// free. It does not pulse -- that would need per-frame texture work or the
+// emissive uniform this port doesn't have; deferred, and noted here rather
+// than silently dropped.
+std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, const LiveryScheme* scheme,
+                                        bool paceLightBar = false);

@@ -80,6 +80,14 @@ void gridStart(const Track& track, Mulberry32& rng, RaceState& state, PaceCar& p
     pace.x = pp.x;
     pace.y = pp.y;
     pace.state = "lead";
+    // G20: seed the pace car's previous pose to its spawn pose, exactly as
+    // the loop above does for each Car -- otherwise the first rendered frame
+    // interpolates from a zeroed pose at the world origin.
+    pace.px = pace.x;
+    pace.py = pace.y;
+    pace.phdg = pace.hdg;
+    pace.ps = pace.s;
+    pace.plat = pace.lat;
 }
 
 // stepPace() (index.html:599-626)
@@ -339,23 +347,37 @@ void tick(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& 
           Mulberry32& rngR, const PlayerInput& input, std::vector<Car*>& finishOrder) {
     state.t += DT;
 
-    if (state.mode == "pace") {
-        stepPace(pace, state, track);
-        if (pace.state != "lead") state.paceV = std::min(46.0, state.paceV + 3.4 * DT);
-    }
-
-    // G15 (NASCAR-Thunder gap-analysis plan): store each car's pre-tick pose
-    // before stepCar() mutates it, matching JS's own store-before-step order
-    // (index.html:4634) -- renderer.cpp's interpolatedPose() blends this
-    // against the post-tick pose by the leftover accumulator fraction, so
-    // the 50Hz physics rate doesn't visibly snap/stutter against the
-    // uncorrelated ~60Hz display refresh rate.
+    // G15 (NASCAR-Thunder gap-analysis plan): store every pre-tick pose
+    // before anything below mutates it, matching JS's own store-before-step
+    // order (index.html:4634-4635) -- renderer.cpp's interpolatedPose()
+    // blends these against the post-tick poses by the leftover accumulator
+    // fraction, so the 50Hz physics rate doesn't visibly snap/stutter
+    // against the uncorrelated ~60Hz display refresh rate.
+    //
+    // G20 extended this to the pace car, now that it is actually rendered.
+    // Note the ordering requirement, which is easy to get wrong: `stepPace()`
+    // below runs *before* the `stepCar()` loop, so a pace-car store placed
+    // next to the old car-only store (which sat after the pace block) would
+    // capture the already-stepped pose -- previous == current, interpolation
+    // silently becoming a no-op and the pace car stuttering exactly as every
+    // car did before G15. Both stores now sit at the very top, so the
+    // invariant is uniform: capture all poses first, then step everything.
     for (auto& c : cars) {
         c.px = c.x;
         c.py = c.y;
         c.phdg = c.hdg;
         c.ps = c.s;
         c.plat = c.lat;
+    }
+    pace.px = pace.x;
+    pace.py = pace.y;
+    pace.phdg = pace.hdg;
+    pace.ps = pace.s;
+    pace.plat = pace.lat;
+
+    if (state.mode == "pace") {
+        stepPace(pace, state, track);
+        if (pace.state != "lead") state.paceV = std::min(46.0, state.paceV + 3.4 * DT);
     }
 
     updateAero(cars, track);

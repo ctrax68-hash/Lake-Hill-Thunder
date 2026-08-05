@@ -76,11 +76,20 @@ struct RaceState {
     int wreckCount = 0;
 };
 
-// PACE (index.html:562-563). px/py/phdg/ps/plat (render-interpolation only,
-// same category as Car's own px/py/phdg/ps/plat) are not ported.
+// PACE (index.html:562-563).
 struct PaceCar {
     double s = 0, lat = 0, v = 0, hdg = 0, x = 0, y = 0;
     std::string state = "lead"; // 'lead'|'peel'|'parked'
+
+    // G20 (NT2003 presentation plan): previous-tick pose, the pace car's
+    // equivalent of Car's px/py/phdg/ps/plat. Previously omitted with the
+    // note "render-interpolation only ... not ported" -- true while nothing
+    // drew the pace car at all, but G20 makes it a real rendered object, and
+    // without these G15's interpolatedPose() can't apply to it, so it would
+    // stutter at the 50Hz tick rate exactly as every car did before G15.
+    // Stored each tick alongside the cars' own, matching JS's pace-car
+    // branch (index.html:4635).
+    double px = 0, py = 0, phdg = 0, ps = 0, plat = 0;
 };
 
 // input (index.html:1234): the player's raw control state. A real UI wires

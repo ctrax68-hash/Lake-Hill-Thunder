@@ -90,8 +90,14 @@ public:
     // against an uncorrelated display refresh rate. Defaults to 1.0 (draw
     // the current pose outright), matching every call site that isn't
     // mid-race (menu/done, or any future non-interpolated caller).
+    // `pace` (G20, NT2003 presentation plan): the pace car, drawn through
+    // the same skinned-mesh path as the field. Previously not passed at all
+    // -- it was fully simulated but never rendered, so the field followed an
+    // invisible car through every pace lap and caution. May be null (callers
+    // that have no race state yet, e.g. the menu).
     void renderFrame(const RaceState& raceState, const std::vector<Car>& cars, double renderAlpha = 1.0,
-                      const MenuSelection* menu = nullptr, const std::string* menuTrackName = nullptr,
+                      const PaceCar* pace = nullptr, const MenuSelection* menu = nullptr,
+                      const std::string* menuTrackName = nullptr,
                       const std::vector<Car*>* finishOrder = nullptr);
 
     // Phase 3c (PORT_PROGRESS.md): stand-in for the CSS `#rotate` prompt
@@ -236,6 +242,10 @@ private:
     // at), only by shutdown().
     std::unordered_map<int, bgfx::TextureHandle> carTextures_;
     bgfx::TextureHandle getOrBuildCarTexture(const Car& car);
+    // G20: the pace car's livery, cached in carTextures_ under a reserved
+    // negative key (real Car::num values are always positive 1-2 digit race
+    // numbers, so no collision is possible).
+    bgfx::TextureHandle getOrBuildPaceTexture();
 
     // Step 3 (PORT_PROGRESS.md, physics-driven car rig animation): replaces
     // the flat textured car quad above with a real skinned rig -- one

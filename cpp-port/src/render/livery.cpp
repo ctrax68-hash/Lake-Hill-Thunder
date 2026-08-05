@@ -183,7 +183,8 @@ void drawFlameLick(Canvas& c, double baseU, double baseV, double len, double amp
 
 } // namespace
 
-std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, const LiveryScheme* scheme) {
+std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, const LiveryScheme* scheme,
+                                        bool paceLightBar) {
     Canvas c(kLiveryTextureSize * kSupersample);
 
     // Base + 3-tone flat panel shading (index.html:2597-2603): rockers get
@@ -351,11 +352,28 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // stays on the roof band.
     const std::array<double, 3> panelFill = lum > 0.5 ? dark : white;
     const std::array<double, 3> panelNum = lum > 0.5 ? white : dark;
-    c.fillRect(carU(-0.49) - 0.056, 0.420, 0.112, 0.160, panelFill);
+    if (paceLightBar) {
+        // G20: amber light bar across the roof instead of a race number.
+        // Deliberately over-bright (>1.0 before clamping) so that after
+        // fs_lit.sc multiplies by the lighting amount it still clears the
+        // bloom bright-pass threshold and glows -- see livery.h's note on
+        // why this stands in for a real emissive material. A dark mounting
+        // foot at each end keeps it reading as a fitted bar rather than a
+        // painted stripe.
+        c.fillRect(carU(-0.49) - 0.060, 0.452, 0.120, 0.020, dark);
+        c.fillRect(carU(-0.49) - 0.060, 0.472, 0.120, 0.056, {1.0, 0.70, 0.10});
+        c.fillRect(carU(-0.49) - 0.060, 0.528, 0.120, 0.020, dark);
+        c.fillRect(carU(-0.49) - 0.062, 0.452, 0.014, 0.096, {0.30, 0.30, 0.33});
+        c.fillRect(carU(-0.49) + 0.048, 0.452, 0.014, 0.096, {0.30, 0.30, 0.33});
+    } else {
+        c.fillRect(carU(-0.49) - 0.056, 0.420, 0.112, 0.160, panelFill);
+        drawNumber(c, num, carU(-0.49), 0.50, 0.105, panelNum, dark);   // roof
+    }
     for (double vy : {0.235, 0.765}) c.fillEllipse(carU(-0.10), vy, 0.072, 0.082, panelFill);
-    drawNumber(c, num, carU(-0.49), 0.50, 0.105, panelNum, dark);       // roof
-    drawNumber(c, num, carU(-0.10), 0.235, 0.105, panelNum, dark);      // right door
-    drawNumber(c, num, carU(-0.10), 0.765, 0.105, panelNum, dark);      // left door
+    if (!paceLightBar) {
+        drawNumber(c, num, carU(-0.10), 0.235, 0.105, panelNum, dark);  // right door
+        drawNumber(c, num, carU(-0.10), 0.765, 0.105, panelNum, dark);  // left door
+    }
 
     // ---- nose/tail lamp clusters (index.html:2793-2855, re-placed) ----
     // G16 (NT2003 presentation plan) -- BUGFIX. These masks were previously
