@@ -206,12 +206,15 @@ private:
     uint32_t stadiumTexturedVertexCount_ = 0;
 
     // G5a (NASCAR-Thunder gap-analysis plan, track surface texture): the
-    // ribbon's asphalt texture (track_surface_texture.h) -- unlike the sky/
-    // atlas textures, its content doesn't vary per track (the original
-    // game's asphalt color is the same everywhere too), so it's built once
-    // in init() rather than rebuilt in every setTrack() call. The ribbon
-    // itself now uses texturedLitLayout_/texturedLitProgram_ (above)
-    // instead of litLayout_/litProgram_.
+    // ribbon's asphalt texture (track_surface_texture.h). The ribbon itself
+    // uses texturedLitLayout_/texturedLitProgram_ (above) instead of
+    // litLayout_/litProgram_.
+    //
+    // G17 (NT2003 presentation plan): now rebuilt in setTrack(), not once
+    // in init(). G5a's reasoning ("its content doesn't vary per track")
+    // stopped holding once the texture began baking the track's own
+    // `Stadium::seamEvery` expansion-seam spacing -- the asphalt *color* is
+    // still uniform across tracks, but the seam pattern is not.
     bgfx::TextureHandle asphaltTexture_ = BGFX_INVALID_HANDLE;
 
     // Phase 5c (PORT_PROGRESS.md): the sky background -- a fullscreen

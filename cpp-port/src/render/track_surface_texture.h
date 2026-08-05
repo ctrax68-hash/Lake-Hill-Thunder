@@ -18,10 +18,21 @@
 // noise tile repeats without a visible seam).
 inline constexpr int kAsphaltTextureSize = 256;
 
+// G17 (NT2003 presentation plan): how many world units along the track one
+// texture tile spans. Previously a hardcoded 8.0 in renderer.cpp; now
+// derived from the track's own `Stadium::seamEvery`, which was authored
+// per-track from the start but (grep-verified) never read anywhere. Tying
+// tile length to it lets a single transverse expansion-seam band painted at
+// the tile's U=0 edge reproduce real seam spacing exactly: one seam per
+// tile means seams land every `seamEvery` world units. `seamEvery == 0`
+// (Big Sable, a modern superspeedway with no visible seams) keeps the old
+// 8.0 tiling and paints no seam.
+inline double asphaltTileLength(double seamEvery) { return seamEvery > 0.0 ? seamEvery : 8.0; }
+
 // RGBA8, row-major, top-left origin (matching every other pixel buffer in
 // this port). Content: a base gray with per-pixel speckle noise (aggregate
-// texture), a darker "groove" band at a fixed V (tire-rubber buildup on
-// the racing line), and a lighter warm apron tint near V=0 (the inner
-// edge). No per-track parameters -- unlike the sky/atlas textures, the
-// asphalt color itself doesn't vary by track in the original game either.
-std::vector<uint8_t> buildAsphaltPixels();
+// texture), several darker "groove" bands at fixed V (tire-rubber buildup
+// along the low/middle/high racing lines), a lighter warm apron tint near
+// V=0, a yellow apron boundary line, a white outer blend line, and -- when
+// `seamEvery > 0` -- a transverse expansion seam at the tile's U edge.
+std::vector<uint8_t> buildAsphaltPixels(double seamEvery);

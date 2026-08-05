@@ -346,19 +346,11 @@ bool Renderer::init(void* nativeDisplayHandle, void* nativeWindowHandle, int wid
     bgfx::ShaderHandle fshTexturedLit = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "fs_textured_lit");
     texturedLitProgram_ = bgfx::createProgram(vshTexturedLit, fshTexturedLit, true);
 
-    // G5a (NASCAR-Thunder gap-analysis plan, track surface texture): built
-    // once here, not per-track (see this texture's own member comment in
-    // renderer.h for why) -- hasMips=true from the start, same "aliases on
-    // real mobile GPU without a mip chain" lesson already learned once for
-    // the crowd atlas (the per-pixel speckle noise here is exactly that
-    // kind of high-frequency content).
-    {
-        const std::vector<uint8_t> asphaltPixels = buildAsphaltPixels();
-        const std::vector<uint8_t> asphaltMips = buildRgba8MipChain(asphaltPixels, kAsphaltTextureSize);
-        asphaltTexture_ = bgfx::createTexture2D((uint16_t)kAsphaltTextureSize, (uint16_t)kAsphaltTextureSize, true, 1,
-                                                 bgfx::TextureFormat::RGBA8, 0,
-                                                 bgfx::copy(asphaltMips.data(), (uint32_t)asphaltMips.size()));
-    }
+    // G17 (NT2003 presentation plan): the asphalt texture moved from here
+    // to setTrack(). G5a built it once at init because nothing about it
+    // varied by track; it now bakes the track's own `Stadium::seamEvery`
+    // expansion-seam spacing, so it has to be rebuilt whenever the track
+    // changes. See setTrack()'s own comment at the new build site.
 
     // Phase 5h (PORT_PROGRESS.md): the bloom+grade+tonemap postprocess
     // chain's 3 programs, each pairing a *fresh* vs_sky shader handle (a
@@ -527,6 +519,22 @@ void Renderer::setTrack(const Track& track) {
                                              bgfx::copy(skyPixels.data(), (uint32_t)skyPixels.size()));
     }
 
+    // G17 (NT2003 presentation plan): rebuilt per track, not once at init
+    // as G5a did -- it now bakes this track's own `Stadium::seamEvery`
+    // expansion-seam spacing (a field authored per-track from the start but
+    // never read by anything until now). hasMips=true from the start, same
+    // "aliases on real mobile GPU without a mip chain" lesson already
+    // learned once for the crowd atlas (the per-pixel speckle noise here is
+    // exactly that kind of high-frequency content).
+    {
+        if (bgfx::isValid(asphaltTexture_)) bgfx::destroy(asphaltTexture_);
+        const std::vector<uint8_t> asphaltPixels = buildAsphaltPixels(track.stadium().seamEvery);
+        const std::vector<uint8_t> asphaltMips = buildRgba8MipChain(asphaltPixels, kAsphaltTextureSize);
+        asphaltTexture_ = bgfx::createTexture2D((uint16_t)kAsphaltTextureSize, (uint16_t)kAsphaltTextureSize, true, 1,
+                                                 bgfx::TextureFormat::RGBA8, 0,
+                                                 bgfx::copy(asphaltMips.data(), (uint32_t)asphaltMips.size()));
+    }
+
     const double halfW = track.halfW();
     const double total = track.total();
     const double step = 4.0;
@@ -536,16 +544,30 @@ void Renderer::setTrack(const Track& track) {
     // surface (pos3()/surfH(), track_surface.h) instead of a flat Z=0 plane
     // -- banking raises the +lat (outside) edge, matching JS's own "3D
     // surface model (render only; physics stays planar)" (index.html:377).
+    // G17 (NT2003 presentation plan) -- BUGFIX, the outer shoulder. The
+    // ribbon spans lat -halfW..+halfW (-6..+6), but the outer wall stands at
+    // wallLat() == halfW + 6 == 12 and the stands start at 18, so lat 6..12
+    // had **no geometry at all** on any track. surfH() keeps rising across
+    // that span (it clamps lat to wallLat, not to halfW), so the banked
+    // ribbon edge ends several units *above* the only thing actually drawn
+    // out there -- the flat grass plane at y = -0.05 -- leaving a visible
+    // hole with the wall floating past it. On Milltown (14 deg bank) the
+    // ribbon edge sits at y=3.01 and the wall base at y=4.49 over a 6-unit
+    // lateral gap. Extending each slice out to wallLat closes it and gives
+    // the wall a base to meet, using the same pos3() the ribbon already
+    // uses so the shoulder follows the banking exactly.
     struct EdgePair {
-        Vec3 inner, outer;
+        Vec3 inner, outer, shoulder;
     };
     std::vector<EdgePair> pts(n);
     float minx = 1e9f, maxx = -1e9f, minz = 1e9f, maxz = -1e9f;
+    const double shoulderLat = wallLat(track);
     for (int i = 0; i < n; ++i) {
         const double s = (double)i / n * total;
         const Vec3 inner = pos3(track, s, -halfW);
         const Vec3 outer = pos3(track, s, halfW);
-        pts[i] = {inner, outer};
+        const Vec3 shoulder = pos3(track, s, shoulderLat);
+        pts[i] = {inner, outer, shoulder};
         minx = std::min({minx, (float)inner.x, (float)outer.x});
         maxx = std::max({maxx, (float)inner.x, (float)outer.x});
         minz = std::min({minz, (float)inner.z, (float)outer.z});
@@ -589,13 +611,16 @@ void Renderer::setTrack(const Track& track) {
     // fraction across the ribbon's own fixed width (0 = inner edge, 1 =
     // outer/wall edge), matching where the asphalt texture's groove/apron
     // bands are painted.
-    constexpr double kAsphaltTileLength = 8.0;
-    auto wrapU = [](double s) {
-        double t = std::fmod(s / kAsphaltTileLength, 1.0);
+    // G17: tile length is now the track's own `Stadium::seamEvery` (see
+    // asphaltTileLength()), so one expansion seam per tile lands seams at
+    // real per-track spacing instead of every hardcoded 8 units.
+    const double asphaltTile = asphaltTileLength(track.stadium().seamEvery);
+    auto wrapU = [asphaltTile](double s) {
+        double t = std::fmod(s / asphaltTile, 1.0);
         return t < 0.0 ? t + 1.0 : t;
     };
     std::vector<PosNormalUVVertex> verts;
-    verts.reserve((size_t)n * 6);
+    verts.reserve((size_t)n * 12);
     for (int i = 0; i < n; ++i) {
         const EdgePair& a = pts[i];
         const EdgePair& b = pts[(i + 1) % n];
@@ -603,6 +628,19 @@ void Renderer::setTrack(const Track& track) {
         const double sb = (double)(i + 1) / n * total;
         const double ua = wrapU(sa), ub = wrapU(sb);
         constexpr double vInner = 0.0, vOuter = 1.0;
+        // The shoulder re-samples the texture over a band that is clear of
+        // every painted feature, so it reads as plain asphalt running out to
+        // the wall while still getting real speckle variation across its
+        // 6-unit width. The clean window is V 0.68..0.94: the high groove
+        // tops out at 0.65 and the white outer line starts at 0.952. A
+        // first pass ramped 1.0 -> 0.60 and visibly **re-crossed the white
+        // line**, painting a second stripe out on the shoulder (caught in
+        // the first WASM screenshot). The small V discontinuity at
+        // lat=halfW (racing surface ends at 1.0, shoulder starts at 0.94)
+        // is invisible because both sides are plain speckle there -- and it
+        // is the correct real-world read anyway: the white line is painted
+        // at the outer edge of the racing surface, with bare apron beyond.
+        constexpr double vShoulderIn = 0.94, vShoulderOut = 0.68;
         // Two triangles per ribbon segment: (inner_a, outer_a, outer_b) and
         // (inner_a, outer_b, inner_b). Triangle list, not a strip -- a
         // closed loop's wraparound is simpler to get right this way, and a
@@ -621,6 +659,21 @@ void Renderer::setTrack(const Track& track) {
                           (float)n2.x, (float)n2.y, (float)n2.z, (float)ub, (float)vOuter});
         verts.push_back({(float)b.inner.x, (float)b.inner.y, (float)b.inner.z,
                           (float)n2.x, (float)n2.y, (float)n2.z, (float)ub, (float)vInner});
+        // Shoulder: outer ribbon edge -> wall base, same two-triangle split.
+        const Vec3 n3 = faceNormal(a.outer, a.shoulder, b.shoulder);
+        const Vec3 n4 = faceNormal(a.outer, b.shoulder, b.outer);
+        verts.push_back({(float)a.outer.x, (float)a.outer.y, (float)a.outer.z,
+                          (float)n3.x, (float)n3.y, (float)n3.z, (float)ua, (float)vShoulderIn});
+        verts.push_back({(float)a.shoulder.x, (float)a.shoulder.y, (float)a.shoulder.z,
+                          (float)n3.x, (float)n3.y, (float)n3.z, (float)ua, (float)vShoulderOut});
+        verts.push_back({(float)b.shoulder.x, (float)b.shoulder.y, (float)b.shoulder.z,
+                          (float)n3.x, (float)n3.y, (float)n3.z, (float)ub, (float)vShoulderOut});
+        verts.push_back({(float)a.outer.x, (float)a.outer.y, (float)a.outer.z,
+                          (float)n4.x, (float)n4.y, (float)n4.z, (float)ua, (float)vShoulderIn});
+        verts.push_back({(float)b.shoulder.x, (float)b.shoulder.y, (float)b.shoulder.z,
+                          (float)n4.x, (float)n4.y, (float)n4.z, (float)ub, (float)vShoulderOut});
+        verts.push_back({(float)b.outer.x, (float)b.outer.y, (float)b.outer.z,
+                          (float)n4.x, (float)n4.y, (float)n4.z, (float)ub, (float)vShoulderIn});
     }
 
     trackVb_ = bgfx::createVertexBuffer(
@@ -752,6 +805,10 @@ void Renderer::setTrack(const Track& track) {
         // G12 (NASCAR-Thunder gap-analysis plan): turn-number signage at
         // each corner apex, previously bare of any signage.
         append(buildTurnSignageMesh(track));
+        // G17 (NT2003 presentation plan): resurfacing patches, wiring the
+        // previously-dead Stadium::patches. Appended before the start/finish
+        // stripe so the checker always wins wherever the two overlap.
+        append(buildSurfacePatchesMesh(track, st.patches, sceneryRng));
         // G5a (NASCAR-Thunder gap-analysis plan, track surface texture):
         // the checkered start/finish stripe, flat vertex-colored (see this
         // function's own comment in stadium_mesh.cpp for why).

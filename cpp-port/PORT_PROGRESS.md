@@ -6022,3 +6022,76 @@ distinct palette colors, and the roof panel scans white `(250,250,250)`
 across `u=0.43..0.53` bounded by body color either side with the dark
 number on top. A chase-cam WASM screenshot then confirmed the tail reads
 as two red lenses split by a dark centre panel on the car ahead.
+
+## G17 -- Track surface detail + the missing outer shoulder
+
+**BUGFIX -- there was no geometry between the track and the wall, on any
+track.** The ribbon spans lat `-halfW..+halfW` (-6..+6, `track.cpp:72`
+hardcodes `halfW_ = 6.0`), the outer wall stands at `wallLat()` == 12,
+and the stands start at 18 -- but nothing was ever built across lat
+6..12. `surfH()` keeps rising over that span (it clamps lat to
+`wallLat`, not to `halfW`), so the banked ribbon edge ended several
+units *above* the only thing actually drawn out there, the flat grass
+plane at y = -0.05, leaving a visible hole with the wall floating past
+it. Measured gap at the corner apex, ribbon edge -> wall base: Thunder
+Oval **1.95**, Milltown **1.50**, Cedar Valley **1.50**, Big Sable
+**2.55** (steepest bank, biggest hole).
+
+Fixed by extending each ribbon slice out to `wallLat` with two more
+triangles, built from the same `pos3()` the ribbon already uses so the
+shoulder follows the banking exactly and its outer edge coincides with
+the wall base to the bit (verified dx=dy=dz=0 on all four tracks).
+
+Surface detail added on top, wiring two more fields that were authored
+per-track from the start but (grep-verified) read by nothing -- the same
+dead-data situation G10 (`kAtlasFence`) and G11 (`sponsorDensity`) each
+fixed once before:
+- **`Stadium::seamEvery` -> expansion seams.** The asphalt texture's
+  tile length is now `asphaltTileLength(seamEvery)` instead of a
+  hardcoded 8.0, and one transverse seam is painted at the tile's U
+  edge -- so one seam per tile puts seams exactly `seamEvery` world
+  units apart. `seamEvery == 0` (Big Sable) keeps 8.0 tiling and paints
+  no seam. This also forced the texture to move from a build-once in
+  `init()` to a per-track rebuild in `setTrack()`.
+- **`Stadium::patches` -> resurfacing patches.** New
+  `buildSurfacePatchesMesh()`, deliberately geometry rather than texture
+  content: the texture tiles every `seamEvery` units, so a patch painted
+  into it would repeat at every tile and read as a pattern instead of as
+  repair work. Only Cedar Valley is non-zero (6).
+- Three groove bands (low/primary/high racing lines) instead of G5a's
+  single one, plus a **yellow apron boundary line** and a **white outer
+  blend line** -- both on essentially every real oval and clearly visible
+  in the reference footage.
+
+**Deliberately not done**: making the groove *fan with corner
+curvature*, which the plan had proposed doing as per-vertex darkening in
+the ribbon build. `PosNormalUVVertex` (`vertex_textured.h`) has no color
+attribute, so that would mean changing the vertex layout,
+`fs_textured_lit.sc`, and every stand draw that shares them --
+disproportionate for this phase. The three-band groove gets most of the
+visual read; the curvature-varying version is deferred.
+
+**Also fixed while in the file**: `hashNoise()` computed
+`x * 374761393` in signed `int`, which overflows for any x >= 6 --
+undefined behaviour, and GCC does diagnose it
+(`-Waggressive-loop-optimizations`, "iteration 2 invokes undefined
+behavior"). It happened to produce the intended wraparound, but the
+compiler is free not to. Now done in `uint32_t`, where overflow is
+well-defined. Pre-existing since G5a.
+
+**Verified**: native `ctest` 29/29. WASM rebuild + `wasm_verify.js`,
+zero console/page errors. A scratch program probed the geometry and
+texture directly: shoulder gap-closure and wall-base coincidence per
+track as tabulated above; texture bands returning the expected colors at
+the expected V (apron tint at 0.04, yellow line `rgb(227,191,26)` at
+0.099, the three grooves darkening to `rgb(38,38,41)` at the primary,
+white line `rgb(220,220,223)` at 0.966); the seam reading `rgb(33,33,36)`
+at the tile edge against `rgb(56,56,60)` mid-tile, and no seam at all
+when `seamEvery == 0`; and `buildSurfacePatchesMesh()` emitting 186
+vertices for Cedar Valley and 0 for the three tracks with `patches == 0`.
+A chase-cam screenshot caught one real bug mid-phase: the shoulder's
+first V ramp (1.0 -> 0.60) **re-crossed the white outer line band**,
+painting a second stripe out on the apron. Confined to a clean V window
+(0.94 -> 0.68, clear of the grooves below and the white line above) and
+re-shot to confirm a single line with continuous surface out to the
+wall.

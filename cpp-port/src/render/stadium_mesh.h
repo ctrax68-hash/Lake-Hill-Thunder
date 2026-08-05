@@ -128,6 +128,18 @@ std::vector<MeshVertex> buildSuiteTowerMesh(const Track& track, int frontTiers, 
 // height varying by track type).
 std::vector<MeshVertex> buildCatchFenceMesh(const Track& track, double fenceHeight);
 
+// G17 (NT2003 presentation plan): resurfacing patches on the racing
+// surface. `patches` is the track's own `Stadium::patches` -- authored
+// per-track from the start (only Cedar Valley is non-zero, at 6) but
+// (grep-verified) never read by anything until now, the same dead-data
+// situation G10 (kAtlasFence) and G11 (sponsorDensity) each fixed once.
+// Deliberately geometry rather than texture content: the asphalt texture
+// tiles every `seamEvery` world units, so a patch painted into it would
+// repeat at every tile and read as a pattern rather than as repair work.
+// `rng` is the shared scenery-only stream (same cosmetic-determinism
+// precedent buildStandMesh() already sets).
+std::vector<MeshVertex> buildSurfacePatchesMesh(const Track& track, int patches, Mulberry32& rng);
+
 // G5a (NASCAR-Thunder gap-analysis plan, track surface texture): a
 // checkered start/finish stripe at s=0, flat vertex-colored (see this
 // function's own comment in stadium_mesh.cpp for why this isn't part of

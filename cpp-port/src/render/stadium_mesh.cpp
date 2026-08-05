@@ -440,6 +440,36 @@ std::vector<MeshVertex> buildSuiteTowerMesh(const Track& track, int frontTiers, 
 // gives the same visible result with far less complexity, reusing this
 // file's existing addQuad()/crossPt() rather than introducing an atlas-
 // style multi-region UV layout for one small feature.
+std::vector<MeshVertex> buildSurfacePatchesMesh(const Track& track, int patches, Mulberry32& rng) {
+    std::vector<MeshVertex> out;
+    if (patches <= 0) return out;
+    const double halfW = track.halfW();
+    const double total = track.total();
+    constexpr double kRaise = 0.012; // above the asphalt, below the start/finish stripe
+    // Resurfacing patches are laid down as a repair strip across part of the
+    // width, so each one gets its own along-track length, lateral span and
+    // shade. Slightly darker and flatter than the surrounding asphalt (fresh
+    // sealant), never the full width -- a full-width band would read as a
+    // painted line rather than a repair.
+    for (int i = 0; i < patches; ++i) {
+        const double s0 = rng.next() * total;
+        const double len = 9.0 + rng.next() * 16.0;
+        const double lat0 = -halfW + rng.next() * (2.0 * halfW * 0.45);
+        const double lat1 = std::min(halfW, lat0 + 2.5 + rng.next() * (2.0 * halfW * 0.4));
+        const double shade = 0.19 + rng.next() * 0.05;
+        const std::array<double, 3> col{shade, shade, shade * 1.04};
+        // Tessellated along the arc so a patch in a corner follows the
+        // banked surface instead of cutting a chord through it.
+        const int steps = std::max(2, (int)std::lround(len / 3.0));
+        for (int k = 0; k < steps; ++k) {
+            const double sa = s0 + len * k / steps, sb = s0 + len * (k + 1) / steps;
+            addQuad(out, crossPt(track, sa, lat0, kRaise), crossPt(track, sb, lat0, kRaise),
+                    crossPt(track, sb, lat1, kRaise), crossPt(track, sa, lat1, kRaise), col);
+        }
+    }
+    return out;
+}
+
 std::vector<MeshVertex> buildStartFinishMesh(const Track& track) {
     std::vector<MeshVertex> out;
     constexpr int kCols = 10;
