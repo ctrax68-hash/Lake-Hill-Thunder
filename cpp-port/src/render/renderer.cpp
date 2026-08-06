@@ -1405,6 +1405,14 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     float identity[16];
     bx::mtxIdentity(identity);
 
+    // Phase H5 (PORT_PROGRESS.md): the chased car's speed/draft, read by the
+    // postfx composite block further down (out of the Chase-branch `car`
+    // pointer's scope by then, and outside the `!showResults` block it's
+    // set in) to drive vignette-tightening and radial blur. Stays 0 in
+    // TopDown/results/menu -- there's no "speed sensation" to sell from an
+    // external overview or a non-race screen, so the effect is off there.
+    float chaseSpeedFx_ = 0.0f, chaseDraftFx_ = 0.0f;
+
     // Sky draws only when the world does (skipped during the results
     // screen, same as the ribbon/cars below it).
     if (skyPaintedThisFrame) {
@@ -1499,6 +1507,13 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             targetLookX += nx * lookLat;
             targetLookZ += ny * lookLat;
 
+            // Phase H5 (PORT_PROGRESS.md): speed-driven FOV push, JS's
+            // fovTgt formula verbatim (index.html:4058-4066) -- draftF adds
+            // up to 4 more degrees on top of the speed term, same as JS.
+            const double fovTgt = 58.0 + std::min(14.0, car->v * 0.14) + std::min(1.0, car->draftF) * 4.0;
+            chaseSpeedFx_ = (float)car->v;
+            chaseDraftFx_ = (float)car->draftF;
+
             if (!chaseInitialized_) {
                 chaseEyeX_ = (float)targetEyeX;
                 chaseEyeY_ = (float)targetEyeY;
@@ -1506,6 +1521,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
                 chaseLookX_ = (float)targetLookX;
                 chaseLookY_ = (float)targetLookY;
                 chaseLookZ_ = (float)targetLookZ;
+                chaseFov_ = (float)fovTgt;
                 chaseInitialized_ = true;
             } else {
                 // Two-rate smoothing (index.html:3453): position settles
@@ -1520,6 +1536,11 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
                 chaseLookX_ += (float)((targetLookX - chaseLookX_) * k2);
                 chaseLookY_ += (float)((targetLookY - chaseLookY_) * k2);
                 chaseLookZ_ += (float)((targetLookZ - chaseLookZ_) * k2);
+                // JS smooths FOV with an implicit-60fps `*0.08` per-frame
+                // multiplier (index.html:4066); converted to real-dt here
+                // the same way as the eye/look rates above.
+                const double kFov = 1.0 - std::exp(-dtSec * 5.0);
+                chaseFov_ += (float)((fovTgt - chaseFov_) * kFov);
             }
 
             // Keep the camera above the local (banked) surface
@@ -1572,8 +1593,12 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         // sign the projection matrix expects.
         bx::mtxLookAt(view, eye, at, up, bx::Handedness::Right);
         const float aspect = (height_ > 0) ? (float)width_ / (float)height_ : 1.0f;
-        // FOV 60 (vertical), near 0.5, far 1500 -- matches JS's own
-        // `new THREE.PerspectiveCamera(60, 1, 0.5, 1500)` exactly. bx's
+        // Base FOV (vertical) was a fixed 60, matching JS's own
+        // `new THREE.PerspectiveCamera(60, 1, 0.5, 1500)` exactly. Phase H5
+        // (PORT_PROGRESS.md) replaces the constant with chaseFov_, a smoothed
+        // speed-driven push computed above (JS's own fovTgt formula,
+        // index.html:4058-4066) -- 58 at rest, rising to as much as 76 at
+        // speed with a full draft. near 0.5, far 1500 unchanged. bx's
         // `mtxProj(fovy, aspect, ...)` overload takes `_fovy` in DEGREES
         // and converts internally (`toRad(_fovy)` inside math.cpp) -- do
         // NOT pre-convert here, that double-converts and produces a
@@ -1581,8 +1606,8 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         // it manifested as the entire frame being covered by whatever
         // geometry was nearest the camera, with ~75x too much magnification).
         //
-        // Holding vertical FOV fixed at 60 while deriving horizontal FOV
-        // from `aspect` (the standard convention) works fine for
+        // Holding vertical FOV fixed at chaseFov_ while deriving horizontal
+        // FOV from `aspect` (the standard convention) works fine for
         // desktop-ish aspects, but a real phone in landscape with the
         // browser chrome eating vertical space can reach an aspect as
         // extreme as ~2.7:1 -- at that ratio 60 vertical implies a ~115
@@ -1592,9 +1617,9 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         // exactly the "huge close-up color bands, no visible cars, doesn't
         // look 3D" complaint a real device reported. Cap horizontal FOV at
         // kMaxFovXDeg by shrinking vertical FOV instead once `aspect`
-        // exceeds the point where 60-vertical would already blow past it;
-        // narrower/normal aspects are completely unaffected (fovY stays 60).
-        constexpr float kBaseFovYDeg = 60.0f;
+        // exceeds the point where the base vertical FOV would already blow
+        // past it; narrower/normal aspects are completely unaffected.
+        const float kBaseFovYDeg = chaseFov_;
         constexpr float kMaxFovXDeg = 100.0f;
         float fovYDeg = kBaseFovYDeg;
         const float halfFovYBase = bx::toRad(kBaseFovYDeg) * 0.5f;
@@ -1900,8 +1925,24 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             // bloomStrength/gain/lift/gamma, then saturation/vignetteInner/
             // vignetteOuter -- JS's own GradeShader defaults (index.html:
             // 1534-1535) and UnrealBloomPass strength (index.html:1563).
+            //
+            // Phase H5 (PORT_PROGRESS.md): vignetteInner/Outer tighten and a
+            // new radial-blur strength (w) rises with chaseSpeedFx_/
+            // chaseDraftFx_. JS's own vignette is static (0.55/0.95, never
+            // varies) and it has no blur at all -- this is a deliberate
+            // addition beyond straight porting, using the same v=100
+            // saturation point as JS's own FOV-push formula above so all
+            // three speed effects agree on what "fast" means.
+            const float speedT = std::max(0.0f, std::min(1.0f, chaseSpeedFx_ / 100.0f + std::min(1.0f, chaseDraftFx_) * 0.15f));
             const float gradeParams1[4] = {0.32f, 1.04f, 0.0f, 0.94f};
-            const float gradeParams2[4] = {1.10f, 0.55f, 0.95f, 0.0f};
+            // 0.05 cap: the shader's per-tap offset is (screen-space distance
+            // from center) * blurAmt * t, and corner pixels already sit
+            // ~0.71 UV from center -- an early 0.35 cap produced a wildly
+            // overdone warp even at modest speed (~0.11 offset, ~110px at
+            // 960 wide) when hand-checked via headless screenshot. 0.05
+            // keeps the corner offset under ~0.035 UV (~35px) at max speed,
+            // a felt hint of speed rather than visible image distortion.
+            const float gradeParams2[4] = {1.10f, 0.55f - 0.15f * speedT, 0.95f - 0.10f * speedT, 0.05f * speedT};
             bgfx::setUniform(uGradeParams1_, gradeParams1);
             bgfx::setUniform(uGradeParams2_, gradeParams2);
             bgfx::setTransform(identity);

@@ -29,7 +29,7 @@ $input v_texcoord0
 SAMPLER2D(s_texColor, 0);
 SAMPLER2D(s_texBloom, 1);
 uniform vec4 u_gradeParams1; // x=bloomStrength, y=gain, z=lift, w=gamma
-uniform vec4 u_gradeParams2; // x=saturation, y=vignetteInner, z=vignetteOuter
+uniform vec4 u_gradeParams2; // x=saturation, y=vignetteInner, z=vignetteOuter, w=speedBlurAmt
 
 vec3 acesFilm(vec3 x)
 {
@@ -51,7 +51,24 @@ void main()
 	// frame's corners), not a texture sample, so it must follow this
 	// fragment's real on-screen position, not the FBO-read correction.
 	vec2 uv = vec2(v_texcoord0.x, 1.0 - v_texcoord0.y);
+
+	// Phase H5 (PORT_PROGRESS.md): speed-driven radial blur. JS has no such
+	// effect (its only speed-reactive visual is the chase-camera FOV push),
+	// so this is a deliberate addition in the spirit of NT2003's feel, not a
+	// literal port. Six taps walking from the pixel toward screen center,
+	// unrolled per this codebase's shader convention (see fs_bloom_blur.sc)
+	// rather than a GLSL loop. At u_gradeParams2.w == 0 every tap lands on
+	// the same uv as the first, so this collapses to the exact single-sample
+	// image with no branch needed -- verified absent at pit speed.
+	vec2 toCenter = vec2(0.5, 0.5) - uv;
+	float blurAmt = u_gradeParams2.w;
 	vec3 scene = texture2D(s_texColor, uv).rgb;
+	scene += texture2D(s_texColor, uv + toCenter * blurAmt * 0.2).rgb;
+	scene += texture2D(s_texColor, uv + toCenter * blurAmt * 0.4).rgb;
+	scene += texture2D(s_texColor, uv + toCenter * blurAmt * 0.6).rgb;
+	scene += texture2D(s_texColor, uv + toCenter * blurAmt * 0.8).rgb;
+	scene += texture2D(s_texColor, uv + toCenter * blurAmt * 1.0).rgb;
+	scene *= (1.0 / 6.0);
 	vec3 bloom = texture2D(s_texBloom, uv).rgb;
 	vec3 color = scene + bloom * u_gradeParams1.x;
 

@@ -167,6 +167,12 @@ private:
     float chaseLookX_ = 0, chaseLookY_ = 0, chaseLookZ_ = 0;
     std::chrono::steady_clock::time_point chaseLastTime_;
 
+    // Phase H5 (PORT_PROGRESS.md): speed-driven FOV push, same self-init-
+    // then-exponentially-blend idiom as chaseEyeX_/chaseLookX_ above, ported
+    // from JS's `camFov += (fovTgt-camFov)*0.08` (index.html:4058-4066) using
+    // this file's own real-dt conversion of that implicit-60fps multiplier.
+    float chaseFov_ = 60.0f;
+
     bgfx::VertexLayout layout_;
     bgfx::ProgramHandle program_ = BGFX_INVALID_HANDLE;
     bgfx::VertexBufferHandle trackVb_ = BGFX_INVALID_HANDLE;

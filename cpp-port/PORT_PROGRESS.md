@@ -6931,3 +6931,102 @@ car, at the right world position, oriented correctly in both `Chase` and
 `TopDown` modes -- confirming the whole pipeline (spawn -> camera-basis
 extraction -> billboard corners -> transient VB -> shader -> blend state)
 end to end, the same technique H3 used to confirm the shadow decal.
+
+### H5: Speed sensation post-fx (NT2003 engine-feel plan, the pending G7)
+
+Researched what JS's own "speed sensation" actually consists of before
+touching anything, per this project's own "don't blindly port, check what's
+really there" discipline: JS has exactly one genuinely speed-driven visual
+effect, the chase-camera FOV push (`fovTgt = 58 + min(14, v*0.14) +
+min(1,draftF)*4`, smoothed via `camFov += (fovTgt-camFov)*0.08` per frame,
+index.html:4058-4066). Its vignette (`GradeShader`, index.html:1655-1676) is
+**static** -- `uVignetteInner:0.55, uVignetteOuter:0.95`, never varies with
+speed -- and JS has **no radial or motion blur at all** (confirmed by grep
+for "radial blur"/"speedlines"/"motionblur"/"camshake"/"zoomblur", zero
+matches). So this phase is not a straight port: the FOV push is ported
+1:1, and the vignette-tightening/radial-blur are new additions in the
+spirit of NT2003's actual feel, consistent with this plan's own "let the
+port diverge" decision and the precedent H4 already set (driving tire
+smoke off a continuous slip signal JS never had).
+
+**FOV push** (`renderer.h`/`.cpp`): a new persistent `Renderer::chaseFov_`
+member, same self-init-then-exponentially-blend idiom as the existing
+`chaseEyeX_`/`chaseLookX_` pair. `fovTgt` is computed from the chased car's
+`v`/`draftF` using JS's formula verbatim, inside the same `if (car &&
+track_)` block that already smooths eye/look each frame (so it shares that
+block's `dtSec`). JS's implicit-60fps `*0.08` per-frame multiplier is
+converted to this file's own established real-dt form,
+`chaseFov_ += (fovTgt-chaseFov_) * (1-exp(-dtSec*5.0))`, matching the
+existing eye/look smoothing's own rate-conversion precedent exactly. The
+Chase camera's previously-hardcoded `kBaseFovYDeg = 60.0f` now reads
+`chaseFov_`; the existing aspect-based horizontal-FOV cap (added earlier to
+stop ultra-wide phone aspects from fisheye-ing) is unchanged and simply
+operates on top of whatever `chaseFov_` currently is.
+
+**Vignette-tightening + radial blur** (`fs_grade_tonemap.sc`,
+`renderer.cpp`'s postfx composite block): `u_gradeParams2.w`, previously
+always `0.0` and unused, now carries a speed-driven blur strength.
+`chaseSpeedFx_`/`chaseDraftFx_` (two new function-scope floats in
+`renderFrame()`, populated from the chased car alongside `chaseFov_`'s own
+computation, read back down in the postfx block once it's out of the
+Chase-branch's own `car` pointer scope) feed a single `speedT = clamp(v/100
++ min(1,draftF)*0.15, 0, 1)` -- reusing JS's own FOV formula's v=100
+saturation point, so all three speed effects agree on what "fast" means.
+`vignetteInner`/`vignetteOuter` shift from the stock 0.55/0.95 down to
+0.40/0.85 at `speedT=1`; a new 6-tap radial blur samples `s_texColor`
+walking from each pixel toward screen center at `t = 0, 0.2, ..., 1.0` of
+`toCenter * blurAmt`, averaged -- unrolled manually rather than a GLSL
+`for` loop, matching this codebase's established shader convention
+(`fs_bloom_blur.sc`'s own 9-tap binomial blur). Branch-free by
+construction: at `blurAmt=0` every tap lands on the same `uv` as the first,
+so the average collapses to the exact single-sample sharp image with no
+`if` needed -- this is what makes "confirm it is absent at pit speed"
+checkable without a special-case code path to verify.
+
+**A real tuning bug caught by hand-checking a screenshot, not by
+eyeballing the diff:** the first-draft blur coefficient (0.35) looked
+reasonable as a number but produced a wildly overdone warp once actually
+rendered -- a `LHT_FORCE_RACE` headless capture at a modest v=31 (bunched
+green-flag pace speed, `speedT~=0.46`) showed corner-of-screen displacement
+around 110px at 960-wide, because the per-tap offset is `(screen-space
+distance from center) * blurAmt * t` and screen corners already sit ~0.71
+UV from center -- the coefficient multiplies that, not a fixed pixel
+radius. Retuned to 0.05 (corner offset ~35px at full `speedT=1`, a felt
+hint of speed rather than visible image distortion) and re-verified via a
+fresh headless screenshot at the same v=31 sample point: now a barely-there
+softening, cars and HUD still crisp. Logged here because this is exactly
+this project's own "decode it directly / hand-check the real numbers"
+discipline catching something a units-only read of the code would have
+missed.
+
+**Verified**: `ctest` 31/31 (no new suite -- this phase touches only
+`Renderer`-internal state and a fragment shader, neither of which has a
+bgfx-free pure-logic seam to unit-test the way `particles_test`/
+`tire_model_test` do; verification is screenshot/decode-based, per the
+plan's own stated fallback for changes that don't reliably land in an
+automated test). Headless `xvfb-run` native screenshots across a speed
+range: `LHT_MAX_FRAMES=6` (v=31, just off the green flag) shows the
+tuned-down blur/vignette as a subtle, non-distracting softening;
+`LHT_START_TOPDOWN=1` shows **zero** blur/vignette-tightening (`chaseSpeedFx_`/
+`chaseDraftFx_` are function-scope floats that default to `0` and are only
+ever set inside the Chase branch's own `if (car && track_)` block, so
+TopDown's orthographic overview is correctly unaffected -- there's no
+"speed sensation" to sell from an external camera that never moves with
+the car). WASM/Playwright: zero console/page errors, screenshots at v=38
+during a live race show the same tasteful, tuned effect in the real
+browser build; the service-worker-ready check still times out in this
+container, the same pre-existing environment/timing quirk logged in prior
+phases' entries, unrelated to this phase's shader/renderer changes.
+
+Chasing a genuinely fast, undamaged frame through `LHT_FORCE_RACE` proved
+impractical for this verification pass: that env var is documented
+elsewhere in this file as "a much harsher, non-representative stress
+condition" than a real race, and the chased car (idx 0) reliably picks up
+contact damage and sheds speed within the first couple of seconds under it
+in this headless harness, never sustaining a clean high-speed run long
+enough to screenshot. Rather than force a misleading test condition, the
+high end of the range was confirmed by hand-computing the same formulas
+the shader/renderer actually use (`speedT=1` at `v>=100` with full draft
+gives vignette 0.40/0.85 and `blurAmt=0.05`, the exact tuned max already
+hand-verified subtle at roughly half that strength) -- this project's own
+documented fallback for cases a screenshot won't reliably capture.
