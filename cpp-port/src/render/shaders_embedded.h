@@ -90,6 +90,15 @@
 #include "essl/vs_car.sc.bin.h"
 #include "essl/fs_car.sc.bin.h"
 
+// H4 (NT2003 engine-feel plan): vs_particle/fs_particle, camera-facing
+// particle billboards (tire smoke/sparks/engine smoke).
+#include "spirv/vs_particle.sc.bin.h"
+#include "spirv/fs_particle.sc.bin.h"
+#include "glsl/vs_particle.sc.bin.h"
+#include "glsl/fs_particle.sc.bin.h"
+#include "essl/vs_particle.sc.bin.h"
+#include "essl/fs_particle.sc.bin.h"
+
 static const bgfx::EmbeddedShader s_embeddedShaders[] = {
     BGFX_EMBEDDED_SHADER(vs_flat),
     BGFX_EMBEDDED_SHADER(fs_flat),
@@ -105,5 +114,7 @@ static const bgfx::EmbeddedShader s_embeddedShaders[] = {
     BGFX_EMBEDDED_SHADER(vs_skinned),
     BGFX_EMBEDDED_SHADER(vs_car),
     BGFX_EMBEDDED_SHADER(fs_car),
+    BGFX_EMBEDDED_SHADER(vs_particle),
+    BGFX_EMBEDDED_SHADER(fs_particle),
     BGFX_EMBEDDED_SHADER_END()
 };

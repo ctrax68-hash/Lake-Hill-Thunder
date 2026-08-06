@@ -16,6 +16,7 @@
 // out of scope for Phase 5, deferred to a future session.
 
 #include "mesh_import.h"
+#include "particles.h"
 #include "skinned_mesh.h"
 #include "wheel_animation.h"
 
@@ -95,10 +96,18 @@ public:
     // -- it was fully simulated but never rendered, so the field followed an
     // invisible car through every pace lap and caution. May be null (callers
     // that have no race state yet, e.g. the menu).
+    // `particles` (H4, NT2003 engine-feel plan): the current frame's live
+    // particle list (tire smoke/sparks/engine smoke) -- owned and ticked by
+    // main.cpp (particles.h's tickParticles(), once per real frame, since it
+    // needs mutable Car::slipFx/hitFx access; see particles.h's own header
+    // comment for why that's the correct owner rather than Renderer). This
+    // function only ever reads it, to build camera-facing billboards in
+    // submitWorld(). May be null (callers with nothing to draw, e.g. menu).
     void renderFrame(const RaceState& raceState, const std::vector<Car>& cars, double renderAlpha = 1.0,
                       const PaceCar* pace = nullptr, const MenuSelection* menu = nullptr,
                       const std::string* menuTrackName = nullptr,
-                      const std::vector<Car*>* finishOrder = nullptr);
+                      const std::vector<Car*>* finishOrder = nullptr,
+                      const std::vector<Particle>* particles = nullptr);
 
     // Phase 3c (PORT_PROGRESS.md): stand-in for the CSS `#rotate` prompt
     // (index.html:140-147,203) shown whenever the viewport is portrait --
@@ -323,6 +332,22 @@ private:
     // 256x96 inset on a mobile target is not worth it.
     bgfx::FrameBufferHandle mirrorFb_ = BGFX_INVALID_HANDLE;
     static constexpr int kMirrorW = 256, kMirrorH = 96;
+
+    // H4 (NT2003 engine-feel plan): camera-facing particle billboards (tire
+    // smoke/sparks/engine smoke). Own vertex layout/program/texture, built
+    // once in init() -- particle_texture.h's procedural radial-gradient
+    // sprite, sampled by vs_particle.sc/fs_particle.sc (see that shader's
+    // own comment for the premultiplied-alpha reasoning behind serving both
+    // the alpha-blended smoke batch and the additive-blended spark batch
+    // from one program). The actual per-frame quads are built fresh inside
+    // submitWorld() (via transient vertex buffers, same idiom as the mirror
+    // composite/UI overlay quads) since a billboard's corners depend on
+    // that view's OWN camera basis -- there is no shared, precomputed
+    // "world-space" billboard the way the shadow disc or car mesh have.
+    bgfx::VertexLayout particleLayout_;
+    bgfx::ProgramHandle particleProgram_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle uParticleTexColor_ = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle particleTexture_ = BGFX_INVALID_HANDLE;
 
     // G23: one car's fully-resolved draw state for this frame -- model
     // matrix, bone palette and livery texture. Built ONCE per frame, then

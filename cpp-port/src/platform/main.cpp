@@ -21,6 +21,7 @@
 
 #include "../audio/audio_engine.h"
 #include "../render/hud.h"
+#include "../render/particles.h"
 #include "../render/renderer.h"
 #include "../sim/car.h"
 #include "../sim/race.h"
@@ -59,6 +60,11 @@ struct LoopState {
     RaceState state;
     PaceCar pace;
     std::vector<Car> cars;
+    // H4 (NT2003 engine-feel plan): tire smoke/sparks/engine smoke. Owned
+    // and ticked here (not by Renderer) because it needs mutable access to
+    // Car::slipFx/hitFx to decay them each real frame -- see particles.h's
+    // own header comment for the full rationale.
+    ParticleSystem particles;
     PlayerInput input;
     std::vector<Car*> finishOrder;
     TiltInput tiltInput;
@@ -406,6 +412,13 @@ void mainLoopTick(void* argPtr) {
     // -- see mixer.cpp's own tick()).
     S.audio.tick(S.state, S.cars, S.menu.sound, S.menu.volume / 100.0);
 
+    // H4 (NT2003 engine-feel plan): tire smoke/sparks/engine smoke -- same
+    // "once per real frame, not once per physics tick" placement as
+    // audioTick() above (JS's own emitFX() call site, index.html:4171). A
+    // no-op during menu (S.cars is empty then, Phase 4b's own invariant),
+    // same as JS's inMenu-gated emitFX -- no separate guard needed here.
+    tickParticles(S.particles, S.cars, S.track, dt);
+
     // headlessFast (declared at the top of this function): skips the render
     // call entirely -- screenshot/portrait/menu-art paths are irrelevant to
     // a metrics-only run, and rendering (even off-screen via EGL/xvfb) turned
@@ -420,7 +433,8 @@ void mainLoopTick(void* argPtr) {
         } else if (S.state.mode == "done") {
             S.renderer.renderFrame(S.state, S.cars, renderAlpha, nullptr, nullptr, nullptr, &S.finishOrder);
         } else {
-            S.renderer.renderFrame(S.state, S.cars, renderAlpha, &S.pace);
+            S.renderer.renderFrame(S.state, S.cars, renderAlpha, &S.pace, nullptr, nullptr, nullptr,
+                                    &S.particles.particles);
         }
     }
     ++S.frame;

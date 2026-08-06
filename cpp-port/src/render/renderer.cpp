@@ -5,6 +5,7 @@
 #include "env_presets.h"
 #include "hud.h"
 #include "livery.h"
+#include "particle_texture.h"
 #include "shaders_embedded.h"
 #include "sky_texture.h"
 #include "hill_silhouette.h"
@@ -15,6 +16,7 @@
 #include "ui_draw.h" // G23: the mirror's own bevelled frame
 #include "vertex.h"
 #include "vertex_lit.h"
+#include "vertex_particle.h"
 #include "vertex_textured.h"
 #include "vertex_uv.h"
 #include "../ui/menu.h"
@@ -523,9 +525,27 @@ bool Renderer::init(void* nativeDisplayHandle, void* nativeWindowHandle, int wid
         std::fprintf(stderr, "car rig import failed: %s\n", rigImport.error.c_str());
     }
 
+    // H4 (NT2003 engine-feel plan): particle billboard shader/texture --
+    // particle_texture.h's procedural radial-gradient sprite (same
+    // "no runtime asset files" convention as livery/sky/atlas), uploaded
+    // once here since it never varies per track or per car.
+    particleLayout_ = PosUvColorVertex::layout();
+    bgfx::ShaderHandle vshParticle = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "vs_particle");
+    bgfx::ShaderHandle fshParticle = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "fs_particle");
+    particleProgram_ = bgfx::createProgram(vshParticle, fshParticle, true);
+    uParticleTexColor_ = bgfx::createUniform("s_texColor", bgfx::UniformType::Sampler);
+    {
+        const std::vector<uint8_t> spritePixels = buildParticleSpritePixels();
+        particleTexture_ =
+            bgfx::createTexture2D((uint16_t)kParticleTextureSize, (uint16_t)kParticleTextureSize, false, 1,
+                                  bgfx::TextureFormat::RGBA8, 0,
+                                  bgfx::copy(spritePixels.data(), (uint32_t)spritePixels.size()));
+    }
+
     return bgfx::isValid(program_) && bgfx::isValid(litProgram_) && bgfx::isValid(skyProgram_) &&
            bgfx::isValid(texturedLitProgram_) && bgfx::isValid(bloomBrightProgram_) &&
-           bgfx::isValid(bloomBlurProgram_) && bgfx::isValid(gradeTonemapProgram_) && bgfx::isValid(sceneFb_);
+           bgfx::isValid(bloomBlurProgram_) && bgfx::isValid(gradeTonemapProgram_) && bgfx::isValid(sceneFb_) &&
+           bgfx::isValid(particleProgram_);
 }
 
 void Renderer::createPostFxTargets(int width, int height) {
@@ -615,6 +635,9 @@ void Renderer::shutdown() {
     if (bgfx::isValid(uBloomParams_)) bgfx::destroy(uBloomParams_);
     if (bgfx::isValid(uGradeParams1_)) bgfx::destroy(uGradeParams1_);
     if (bgfx::isValid(uGradeParams2_)) bgfx::destroy(uGradeParams2_);
+    if (bgfx::isValid(particleProgram_)) bgfx::destroy(particleProgram_);
+    if (bgfx::isValid(uParticleTexColor_)) bgfx::destroy(uParticleTexColor_);
+    if (bgfx::isValid(particleTexture_)) bgfx::destroy(particleTexture_);
     bgfx::shutdown();
     delete callback_;
     callback_ = nullptr;
@@ -1144,6 +1167,13 @@ struct Renderer::WorldDrawList {
     // plain static VB with no bone palette/texture, so it doesn't need
     // Item's other fields.
     std::vector<Mat4f> shadows;
+    // H4 (NT2003 engine-feel plan): the frame's live particle list (tire
+    // smoke/sparks/engine smoke), owned by main.cpp -- not a copy. Each
+    // view (main, mirror) builds its OWN billboard quads from this same
+    // shared list inside submitWorld(), since a billboard's screen-facing
+    // orientation depends on that view's own camera, unlike the shadow/car
+    // matrices above which are camera-independent world transforms.
+    const std::vector<Particle>* particles = nullptr;
 };
 
 void Renderer::submitWorld(bgfx::ViewId viewId, const float view[16], const float proj[16],
@@ -1238,11 +1268,79 @@ void Renderer::submitWorld(bgfx::ViewId viewId, const float view[16], const floa
         SkinnedMesh::setBoneMatrices(item.bones.data(), item.boneCount);
         carMesh_.draw(viewId, item.model.data(), item.texture);
     }
+
+    // H4 (NT2003 engine-feel plan): particle billboards, drawn last so
+    // smoke/sparks read on top of the opaque cars they trail behind rather
+    // than being occluded by them. Camera-facing: each quad's corners are
+    // built here, per view, from THIS view's own right/up basis --
+    // extracted directly from `view`'s rows (view[0],view[4],view[8] =
+    // world-space camera right; view[1],view[5],view[9] = world-space
+    // camera up, for any right-handed lookAt matrix, which both the main
+    // and mirror cameras are -- see H3's own camera-handedness comment for
+    // why that's guaranteed here) rather than needing a new parameter,
+    // since a billboard's orientation is inherently per-camera, unlike the
+    // shadow/car matrices above which are camera-independent world
+    // transforms.
+    if (draws.particles && !draws.particles->empty() && bgfx::isValid(particleTexture_)) {
+        const float rightX = view[0], rightY = view[4], rightZ = view[8];
+        const float upX = view[1], upY = view[5], upZ = view[9];
+
+        std::vector<PosUvColorVertex> smokeVerts, sparkVerts;
+        for (const Particle& p : *draws.particles) {
+            // JS's own per-frame size formula (index.html:3433-3436): grows
+            // gently over life for smoke (size>=0.1), then both kinds
+            // shrink out over roughly the last third of their life. `p.size`
+            // itself (the spawn-time half-width) never changes -- only this
+            // per-frame derived `s` does.
+            const double g = 1.0 - p.age / p.life;
+            double s = p.size;
+            if (p.size >= 0.1) s *= 1.0 + p.age * 1.3;
+            s *= std::min(1.0, g * 3.0);
+            if (s <= 0.0) continue;
+
+            const bool spark = p.size < 0.15;
+            const float batchAlpha = spark ? 0.9f : 0.38f; // JS's own uAlpha uniforms
+            const uint32_t col = packColor((float)p.col[0], (float)p.col[1], (float)p.col[2], batchAlpha);
+            const float cx = (float)p.x, cy = (float)p.y, cz = (float)p.z, sf = (float)s;
+            const float rx = rightX * sf, ry = rightY * sf, rz = rightZ * sf;
+            const float ux = upX * sf, uy = upY * sf, uz = upZ * sf;
+
+            std::vector<PosUvColorVertex>& out = spark ? sparkVerts : smokeVerts;
+            out.push_back({cx - rx - ux, cy - ry - uy, cz - rz - uz, 0.0f, 0.0f, col});
+            out.push_back({cx + rx - ux, cy + ry - uy, cz + rz - uz, 1.0f, 0.0f, col});
+            out.push_back({cx + rx + ux, cy + ry + uy, cz + rz + uz, 1.0f, 1.0f, col});
+            out.push_back({cx - rx - ux, cy - ry - uy, cz - rz - uz, 0.0f, 0.0f, col});
+            out.push_back({cx + rx + ux, cy + ry + uy, cz + rz + uz, 1.0f, 1.0f, col});
+            out.push_back({cx - rx + ux, cy - ry + uy, cz - rz + uz, 0.0f, 1.0f, col});
+        }
+
+        // Depth-tested (a particle genuinely behind the stadium wall/track
+        // geometry should be hidden) but not depth-writing (overlapping
+        // particles blend with each other rather than occluding). Two
+        // blend states -- premultiplied "normal" for smoke, additive for
+        // sparks -- sharing one shader; see fs_particle.sc's own comment
+        // for why premultiplied output is what makes that work.
+        const uint64_t baseState = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_DEPTH_TEST_LESS;
+        auto drawBatch = [&](std::vector<PosUvColorVertex>& verts, uint64_t blend) {
+            const uint32_t count = (uint32_t)verts.size();
+            if (count == 0 || bgfx::getAvailTransientVertexBuffer(count, particleLayout_) < count) return;
+            bgfx::TransientVertexBuffer tvb;
+            bgfx::allocTransientVertexBuffer(&tvb, count, particleLayout_);
+            std::memcpy(tvb.data, verts.data(), count * sizeof(PosUvColorVertex));
+            bgfx::setTransform(identity);
+            bgfx::setVertexBuffer(0, &tvb, 0, count);
+            bgfx::setTexture(0, uParticleTexColor_, particleTexture_);
+            bgfx::setState(baseState | blend);
+            bgfx::submit(viewId, particleProgram_);
+        };
+        drawBatch(smokeVerts, BGFX_STATE_BLEND_NORMAL);
+        drawBatch(sparkVerts, BGFX_STATE_BLEND_ADD);
+    }
 }
 
 void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& cars, double renderAlpha,
                             const PaceCar* pace, const MenuSelection* menu, const std::string* menuTrackName,
-                            const std::vector<Car*>* finishOrder) {
+                            const std::vector<Car*>* finishOrder, const std::vector<Particle>* particles) {
     // Phase 5c (PORT_PROGRESS.md): a new view (id 0, numerically below the
     // world view) for the sky background -- bgfx renders views in ascending
     // ID order regardless of submission order, so this MUST be a lower ID
@@ -1540,6 +1638,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     // resolved into `draws` first, because the loop that builds them advances
     // wall-clock wheel state -- see WorldDrawList's comment in renderer.h.
     WorldDrawList draws;
+    draws.particles = particles; // H4: shared read-only across every view
 
     // Step 3 (PORT_PROGRESS.md, physics-driven car rig animation): the flat
     // textured quad that used to draw here is replaced by car_rig_data.h's

@@ -529,6 +529,25 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         // old model's `demand > cap` "past the grip limit" case.
         c.wear = std::min(1.0, c.wear + yawInt.slipMagAvg * c.v * 0.0000004);
         if (yawInt.pastLimitAny) c.wear = std::min(1.0, c.wear + 0.00012);
+
+        // H4 (NT2003 engine-feel plan): tire-smoke drive signal (car.h's
+        // own slipFx comment). Boosts toward the current tick's slip
+        // intensity rather than overwriting it outright, so a car that was
+        // sliding hard a moment ago doesn't visually "unsmoke" mid-tick --
+        // the actual decay-over-time is the render-side particle tick's job
+        // (particles.cpp), exactly mirroring how JS's sim only ever SETS
+        // c.slipFx=1 and leaves emitFX() to bring it back down.
+        // kSlipFxScale=6 maps a total front+rear slip angle of ~0.17 rad to
+        // full intensity -- roughly this car's own saturation slip angle
+        // (fyMax/cf at static Fz, ~0.077 rad per axle, summed) at CAR.mu=1;
+        // pastLimitAny already guarantees a hard 1.0 right at the real
+        // friction limit regardless of this estimate's precision, so this
+        // constant only shapes the smoke's build-up just below full lock,
+        // not whether it ever reaches full intensity.
+        constexpr double kSlipFxScale = 6.0;
+        const double slipIntensity =
+            yawInt.pastLimitAny ? 1.0 : std::min(1.0, yawInt.slipMagAvg * kSlipFxScale);
+        c.slipFx = std::max(c.slipFx, slipIntensity);
     }
     c.vdir = c.hdg - wrapPi(std::atan2(c.vy, vSafe));
     c.x += std::cos(c.vdir) * c.v * DT;

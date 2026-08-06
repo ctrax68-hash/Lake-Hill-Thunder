@@ -6821,3 +6821,113 @@ manifest/icons all still valid. The harness's service-worker-ready check
 still fails in this container -- a pre-existing, already-diagnosed
 environment/timing quirk logged in Step 4's own entry above, unrelated to
 this phase's renderer changes, not a new regression.
+
+### H4: Particle system (NT2003 engine-feel plan)
+
+Ports JS's `spawnP()`/`emitFX()` (index.html:3276-3355): tire smoke off the
+rear while sliding, an impact-burst spark/gray-puff mix on a hit, and a
+wounded-engine smoke trail while badly damaged and still moving. Explicitly
+scoped to the CAR-driven effects only -- JS's `emitFX()` also spawns an
+unrelated ambient crowd camera-flash sparkle in the grandstands
+(index.html:3293-3321), which is stadium/crowd dressing, not car feel, and
+outside this plan's stated scope; not ported, logged here as a deliberate
+exclusion rather than a silent drop.
+
+**`src/render/particles.h`/`.cpp`** (new, pure logic, bgfx-free -- same
+split as `wheel_animation.h`): `Particle`/`ParticleSystem`, `spawnParticle()`
+(JS's `spawnP()`, including its exact FIFO-cap quirk -- the 220-cap check
+happens *before* the push, so it briefly holds 221 rather than capping
+exactly at 220, ported faithfully rather than "fixed"), `integrateParticles()`
+(JS's per-frame age/expire/gravity/drag block -- sparks, `size<0.15`, fall;
+everything else rises, JS's own inverted-seeming but deliberate
+convention), `emitCarParticles()` (the per-car tire-smoke/impact-burst/
+engine-smoke block, ported 1:1 including exact spawn counts, probabilities,
+velocity/color/size constants), and `tickParticles()` (the per-frame entry
+point: derives each car's world position from `pos3(track, c.s, c.lat)`,
+emits, integrates).
+
+**The port can drive tire smoke better than JS does, exactly as the plan
+called out.** JS's old `cornerCap()` model only had a binary "did this tick
+saturate" signal, so it sets `c.slipFx=1` as a flag. This port's bicycle-
+tire model (car.cpp's `integrateYawDynamics()`) already computes a real,
+continuous per-substep slip magnitude (`YawIntegrationResult::slipMagAvg`)
+that was previously only fed into tire wear. **`Car::slipFx`** (new field,
+car.h, same "cosmetic-only, decayed by the renderer/audio layer, not
+`stepCar()`" category the file's own pre-existing `hitFx` comment already
+anticipated) is now boosted in `step_car.cpp` toward
+`min(1, slipMagAvg * 6)` every tick -- a continuous ramp reflecting how
+hard the car is actually sliding -- with `pastLimitAny` (the friction-
+ellipse limit flag, the direct analogue of JS's old saturation trigger)
+still forcing a hard 1.0 at the exact moment the tires are genuinely at the
+limit. The `*6` scale is a cosmetic tuning constant (roughly this car's own
+axle slip-angle at saturation, `fyMax/cf` at static Fz and `CAR.mu=1`,
+summed front+rear) -- shaping the smoke's build-up just *below* full lock;
+`pastLimitAny` already guarantees full intensity at the limit regardless of
+this estimate's precision.
+
+**A real, previously-undocumented gap surfaced while wiring this up**:
+`Car::hitFx` had no decay mechanism anywhere in this port at all -- JS
+decays it inside `emitFX()` (`c.hitFx -= dt*2.5`, index.html:3341), but
+this port's own particle-emission code didn't exist yet, so every hit
+just accumulated toward 1.0 and stayed there. `emitCarParticles()` now
+decays both `slipFx` (`dt*3.5`) and `hitFx` (`dt*2.5`) at JS's own rates,
+closing that gap as a side effect of finally having somewhere for the
+decay to live -- matching the file's own pre-existing comment that this
+was always meant to happen in "the renderer/audio layer," it just hadn't
+been built yet.
+
+**Rendering**: camera-facing billboards (the plan's own explicit
+instruction), not GPU point sprites -- a genuine quad per particle, corners
+built each frame from `center ± right*s ± up*s`, where `right`/`up` are the
+CURRENT view's own world-space camera axes, extracted directly from that
+view's `view` matrix rows (`view[0,4,8]`/`view[1,5,9]` -- the same
+row-major-camera-basis fact H3's mirror-camera-handedness comment already
+established holds for both the main and mirror cameras here). This
+produces the identical visual result to JS's screen-space
+`gl_PointSize`-scaled point sprites (JS's own `size` field is already a
+world-space half-width by its own comment, "s is a half-width in the old
+quad math," index.html:3441) without needing any point-sprite machinery at
+all, and -- because the billboard is built fresh per view from that view's
+own camera -- correctly reorients for the rearview mirror for free, no
+special-casing needed. `particle_texture.h`/`.cpp` builds JS's
+`buildParticleSprite()` radial-gradient sprite (index.html:3357-3373)
+procedurally (this port's "no runtime asset files" convention), and a new
+`vs_particle.sc`/`fs_particle.sc` pair (own `PosUvColorVertex` layout,
+`varying_particle.def.sc`) samples it, outputting **premultiplied** color
+so one shader correctly serves both blend modes JS's two batches use --
+`BGFX_STATE_BLEND_NORMAL` (premultiplied-alpha) for the 0.38-alpha smoke
+batch, `BGFX_STATE_BLEND_ADD` for the 0.9-alpha spark batch, split by the
+same `size<0.15` test used everywhere else. Depth-tested (a particle
+genuinely behind the wall/track should be hidden) but not depth-writing
+(overlapping particles blend with each other, not occlude). `Renderer`
+never mutates `Car` state itself: `main.cpp` (which already owns mutable
+`Car` state every sim tick) ticks the whole system once per real frame
+(same placement as `audioTick()` -- after the physics-tick loop, not
+inside it) and hands `Renderer::renderFrame()` a new, read-only
+`const std::vector<Particle>*` parameter; `Renderer::WorldDrawList` carries
+it through to `submitWorld()`, which builds each view's own billboard
+geometry.
+
+**Verified**: `ctest` 31/31 (`particles_test`, new -- spawn/FIFO-cap/
+integration/gravity-direction/drag math, all four `emitCarParticles()`
+branches including the stochastic tire-smoke/engine-smoke branches run
+several times rather than once so they don't depend on Mulberry32(4242)'s
+exact first draws, and an end-to-end `tickParticles()` check against a
+real `Track`). Native `xvfb-run` + WASM/Playwright: builds and runs clean,
+zero console/page errors, no regressions across a 3000-frame/60s headless-
+fast smoke test and several rendered runs (including one mid-caution).
+
+At the shipped, deliberately subtle scale JS itself uses (0.17-unit-radius
+smoke, 0.38/0.9 alpha), individual screenshots taken during ordinary
+driving or even an active caution don't reliably show a visible puff --
+expected (real slip/impact events are momentary, and this project's own
+G12-G14/H2/H3 precedent already established that a downscaled screenshot
+of a genuinely subtle effect isn't a reliable go/no-go signal) rather than
+a defect. Positive confirmation instead came from a temporary debug pass
+(reverted immediately after): forcing every car's `slipFx=1` plus
+overriding the billboard size/color/alpha to a large fully-opaque magenta
+showed unmistakable camera-facing quads trailing correctly behind every
+car, at the right world position, oriented correctly in both `Chase` and
+`TopDown` modes -- confirming the whole pipeline (spawn -> camera-basis
+extraction -> billboard corners -> transient VB -> shader -> blend state)
+end to end, the same technique H3 used to confirm the shadow decal.

@@ -239,6 +239,18 @@ struct Car {
     // needed a real trigger signal for impact-thump/blowout-bang sounds.
     double hitFx = 0;
 
+    // c.slipFx (index.html:1134): tire-smoke intensity, same
+    // renderer-decayed/cosmetic-only category as hitFx above (JS's own
+    // emitFX() decays both at index.html:3330/3341). JS sets this as a
+    // binary 1 exactly when its old cornerCap() model saturated -- this
+    // port's real bicycle-tire model (car.cpp's integrateYawDynamics())
+    // computes actual per-substep slip magnitude instead of one binary
+    // cap, so H4 (NT2003 engine-feel plan) boosts this continuously from
+    // that (see step_car.cpp), with the friction-ellipse limit
+    // (YawIntegrationResult::pastLimitAny) still guaranteeing full
+    // intensity at the exact moment JS's old trigger would have fired.
+    double slipFx = 0;
+
     double skill = 0, aggr = 0;
     double grooveBias = 0;
 

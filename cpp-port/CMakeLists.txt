@@ -176,7 +176,8 @@ if(EMSCRIPTEN)
      OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_textured_lit.sc.bin.h
      OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/fs_grade_tonemap.sc.bin.h
      OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_skinned.sc.bin.h
-     OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_car.sc.bin.h)
+     OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_car.sc.bin.h
+     OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_particle.sc.bin.h)
     message(FATAL_ERROR
       "Phase 7 web build reuses the native build's already-compiled shader "
       "headers (see this file's own comment) instead of cross-compiling "
@@ -186,9 +187,11 @@ if(EMSCRIPTEN)
       "vs_textured_lit/fs_textured_lit, Phase 5h added "
       "fs_bloom_bright/fs_bloom_blur/fs_grade_tonemap (reusing vs_sky as "
       "their vertex stage), Step 2 (glTF skinned-mesh import) added "
-      "vs_skinned (reusing fs_textured_lit as its fragment stage), and G2 "
-      "(NASCAR Thunder 2003 graphics overhaul) added vs_car/fs_car, so a "
-      "stale native build missing any of those will also hit this guard).")
+      "vs_skinned (reusing fs_textured_lit as its fragment stage), G2 "
+      "(NASCAR Thunder 2003 graphics overhaul) added vs_car/fs_car, and H4 "
+      "(NT2003 engine-feel plan, particle system) added vs_particle/"
+      "fs_particle, so a stale native build missing any of those will also "
+      "hit this guard).")
   endif()
   set(LHT_GENERATED_SHADERS_DIR ${LHT_NATIVE_GENERATED_SHADERS})
   add_custom_target(lht_shaders) # nothing to build, just a no-op dependency target
@@ -345,11 +348,33 @@ else()
     AS_HEADERS
     OUT_FILES_VAR LHT_FS_CAR_OUTPUTS
   )
+  # H4 (NT2003 engine-feel plan): vs_particle/fs_particle -- camera-facing
+  # particle billboards (tire smoke/sparks/engine smoke). Own varying def
+  # (Position+TexCoord0+Color0 -- no normal, unlike the lit-geometry defs).
+  bgfx_compile_shaders(
+    TYPE VERTEX
+    SHADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/vs_particle.sc
+    VARYING_DEF ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/varying_particle.def.sc
+    OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders
+    INCLUDE_DIRS ${LHT_SHADER_INCLUDE_DIRS}
+    AS_HEADERS
+    OUT_FILES_VAR LHT_VS_PARTICLE_OUTPUTS
+  )
+  bgfx_compile_shaders(
+    TYPE FRAGMENT
+    SHADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/fs_particle.sc
+    VARYING_DEF ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/varying_particle.def.sc
+    OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders
+    INCLUDE_DIRS ${LHT_SHADER_INCLUDE_DIRS}
+    AS_HEADERS
+    OUT_FILES_VAR LHT_FS_PARTICLE_OUTPUTS
+  )
   add_custom_target(lht_shaders DEPENDS ${LHT_VS_FLAT_OUTPUTS} ${LHT_FS_FLAT_OUTPUTS}
     ${LHT_VS_LIT_OUTPUTS} ${LHT_FS_LIT_OUTPUTS} ${LHT_VS_SKY_OUTPUTS} ${LHT_FS_SKY_OUTPUTS}
     ${LHT_VS_TEXTURED_LIT_OUTPUTS} ${LHT_FS_TEXTURED_LIT_OUTPUTS}
     ${LHT_FS_BLOOM_BRIGHT_OUTPUTS} ${LHT_FS_BLOOM_BLUR_OUTPUTS} ${LHT_FS_GRADE_TONEMAP_OUTPUTS}
-    ${LHT_VS_SKINNED_OUTPUTS} ${LHT_VS_CAR_OUTPUTS} ${LHT_FS_CAR_OUTPUTS})
+    ${LHT_VS_SKINNED_OUTPUTS} ${LHT_VS_CAR_OUTPUTS} ${LHT_FS_CAR_OUTPUTS}
+    ${LHT_VS_PARTICLE_OUTPUTS} ${LHT_FS_PARTICLE_OUTPUTS})
   set(LHT_GENERATED_SHADERS_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders)
 endif()
 
@@ -375,6 +400,8 @@ add_executable(lht_port
   src/render/livery.cpp
   src/render/mesh_import.cpp
   src/render/minimap.cpp
+  src/render/particles.cpp
+  src/render/particle_texture.cpp
   src/render/proximity.cpp
   src/render/pylon_mesh.cpp
   src/render/renderer.cpp
@@ -690,6 +717,15 @@ target_include_directories(proximity_test PRIVATE
   third_party/bgfx.cmake/bx/include
 )
 add_test(NAME proximity_test COMMAND proximity_test)
+
+# H4 (NT2003 engine-feel plan): particles_test exercises particles.h's
+# spawn/integrate/emit logic. Entirely bgfx-free (unlike proximity_test,
+# particles.cpp never calls into bgfx at all) -- links track.cpp/
+# track_surface.cpp only, for the real Track/pos3() tickParticles() needs,
+# not the full ${SIM_SOURCES} (no stepCar()/race.cpp machinery is touched).
+add_executable(particles_test tests/particles_test.cpp src/render/particles.cpp
+  src/sim/track.cpp src/render/track_surface.cpp)
+add_test(NAME particles_test COMMAND particles_test)
 
 add_executable(determinism_test tests/determinism_test.cpp tests/determinism/trace.cpp)
 add_test(NAME determinism_test COMMAND determinism_test)
