@@ -368,12 +368,14 @@ add_executable(lht_port
   src/render/digit_mesh.cpp
   src/render/fmt_time.cpp
   src/render/gap_time.cpp
+  src/render/gauge_cluster.cpp
   src/render/hill_silhouette.cpp
   src/render/hud.cpp
   src/render/leaderboard.cpp
   src/render/livery.cpp
   src/render/mesh_import.cpp
   src/render/minimap.cpp
+  src/render/proximity.cpp
   src/render/pylon_mesh.cpp
   src/render/renderer.cpp
   src/render/skinned_mesh.cpp
@@ -674,6 +676,20 @@ target_include_directories(results_test PRIVATE
   third_party/bgfx.cmake/bx/include
 )
 add_test(NAME results_test COMMAND results_test)
+
+# G22 (PORT_PROGRESS.md): proximity_test exercises buildProximityList()'s
+# selection, start/finish wrapping, nearest-first capping and left-to-right
+# display ordering. Needs bgfx linked (like leaderboard_test) because
+# proximity.cpp's drawProximity() calls bgfx::dbgTextPrintf(), even though
+# this test only calls the pure selection half.
+add_executable(proximity_test tests/proximity_test.cpp src/render/proximity.cpp
+  src/render/ui_draw.cpp)
+target_link_libraries(proximity_test PRIVATE bgfx)
+target_include_directories(proximity_test PRIVATE
+  third_party/bgfx.cmake/bgfx/include
+  third_party/bgfx.cmake/bx/include
+)
+add_test(NAME proximity_test COMMAND proximity_test)
 
 add_executable(determinism_test tests/determinism_test.cpp tests/determinism/trace.cpp)
 add_test(NAME determinism_test COMMAND determinism_test)

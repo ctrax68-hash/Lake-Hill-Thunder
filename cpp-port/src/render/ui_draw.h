@@ -46,6 +46,20 @@ void pushRingOutline(std::vector<PosColorVertex>& out, float cx, float cy, float
 void pushFilledCircle(std::vector<PosColorVertex>& out, float cx, float cy, float radius,
                        uint32_t abgr, int segments = 16);
 
+// G22 (NT2003 presentation plan): a *partial* ring -- the open-arc case
+// pushRingOutline() can't express, since that one always closes the loop.
+// Angles are radians in the same top-left-origin, y-down pixel space as
+// everything else here, so 0 points right, PI/2 points **down**, and
+// increasing the angle sweeps clockwise on screen. The tachometer's dial
+// runs from 150 to 390 degrees, which in that convention starts at the
+// lower left, climbs over the top, and ends at the lower right, leaving the
+// bottom of the face clear for the digital readouts.
+//
+// `segments` is the count for a full circle; the arc uses a proportional
+// share of them, so arcs of different lengths get consistent smoothness.
+void pushArc(std::vector<PosColorVertex>& out, float cx, float cy, float radius, float a0, float a1,
+              float thickness, uint32_t abgr, int segments = 64);
+
 // G21 (NT2003 presentation plan): a beveled panel -- flat fill plus a
 // light top/left edge and a dark bottom/right edge. The reference HUD's
 // pos/lap, lap-time and gauge surrounds are all beveled plates rather than

@@ -12,6 +12,8 @@
 
 namespace {
 
+constexpr float kPi = 3.14159265358979323846f;
+
 bool ok = true;
 
 void check(bool cond, const char* what) {
@@ -230,6 +232,60 @@ int main() {
         std::vector<PosColorVertex> v;
         pushSevenSegText(v, 0, 0, 13.0f, 22.0f, 3.0f, "--:--.--", 0xffffffff, 0u);
         check(!v.empty(), "the '--:--.--' lap-time placeholder should emit geometry");
+    }
+
+    // G22 pushArc: an open arc, so unlike pushRingOutline it must NOT close
+    // the loop -- an N-point open polyline is N-1 segments, and every vertex
+    // sits within half a thickness of the requested radius.
+    {
+        std::vector<PosColorVertex> v;
+        // A quarter turn at segments=64 for a full turn -> 16 segments,
+        // so 17 points and 16 quads.
+        pushArc(v, 100.0f, 100.0f, 40.0f, 0.0f, kPi / 2.0f, 4.0f, 0xffffffff, 64);
+        check(v.size() == 16 * 6, "quarter-turn pushArc(segments=64) should emit 16 segments");
+        bool allNearRadius = true;
+        for (auto& p : v) {
+            const float dx = p.x - 100.0f, dy = p.y - 100.0f;
+            const float dist = std::sqrt(dx * dx + dy * dy);
+            if (dist < 37.0f || dist > 43.0f) allNearRadius = false;
+        }
+        check(allNearRadius, "pushArc vertices should sit near the requested radius");
+    }
+
+    // The arc spans only the requested angles. In this y-down space 0 points
+    // right and PI/2 points down, so a 0..PI/2 arc lives entirely in the
+    // quadrant right of and below the centre.
+    {
+        std::vector<PosColorVertex> v;
+        pushArc(v, 0.0f, 0.0f, 50.0f, 0.0f, kPi / 2.0f, 2.0f, 0xffffffff, 64);
+        check(minX(v) > -1.5f && minY(v) > -1.5f,
+              "a 0..PI/2 arc should stay in the +x/+y quadrant (y-down convention)");
+        check(maxX(v) > 48.0f && maxY(v) > 48.0f, "a 0..PI/2 arc should reach both axis endpoints");
+    }
+
+    // A longer arc gets proportionally more segments, so smoothness is
+    // consistent regardless of span.
+    {
+        std::vector<PosColorVertex> quarter, half;
+        pushArc(quarter, 0, 0, 30.0f, 0.0f, kPi / 2.0f, 2.0f, 0xffffffff, 64);
+        pushArc(half, 0, 0, 30.0f, 0.0f, kPi, 2.0f, 0xffffffff, 64);
+        check(half.size() == quarter.size() * 2, "arc segment count should scale with sweep");
+    }
+
+    // Degenerate arcs emit nothing rather than dividing by zero.
+    {
+        std::vector<PosColorVertex> v;
+        pushArc(v, 0, 0, 30.0f, 1.0f, 1.0f, 2.0f, 0xffffffff, 64); // zero sweep
+        pushArc(v, 0, 0, 0.0f, 0.0f, kPi, 2.0f, 0xffffffff, 64);   // zero radius
+        check(v.empty(), "zero-sweep and zero-radius arcs should emit nothing");
+    }
+
+    // A negative sweep runs the other way round but still emits geometry --
+    // the tachometer never needs it, but a silent no-op here would be a trap.
+    {
+        std::vector<PosColorVertex> v;
+        pushArc(v, 0, 0, 30.0f, kPi / 2.0f, 0.0f, 2.0f, 0xffffffff, 64);
+        check(v.size() == 16 * 6, "a negative sweep should emit the same segment count");
     }
 
     if (ok) {

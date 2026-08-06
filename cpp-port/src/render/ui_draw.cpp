@@ -73,6 +73,22 @@ void pushFilledCircle(std::vector<PosColorVertex>& out, float cx, float cy, floa
     }
 }
 
+void pushArc(std::vector<PosColorVertex>& out, float cx, float cy, float radius, float a0, float a1,
+              float thickness, uint32_t abgr, int segments) {
+    const float sweep = a1 - a0;
+    if (std::abs(sweep) < 1e-6f || radius <= 0.0f) return;
+    // `segments` is the count for a full turn, so a short arc gets
+    // proportionally fewer -- consistent smoothness whatever the span.
+    const int n = std::max(2, (int)std::lround(std::abs(sweep) / kTwoPi * (float)segments));
+    std::vector<std::pair<float, float>> pts;
+    pts.reserve((size_t)n + 1);
+    for (int i = 0; i <= n; ++i) {
+        const float a = a0 + sweep * ((float)i / (float)n);
+        pts.push_back({cx + radius * std::cos(a), cy + radius * std::sin(a)});
+    }
+    pushPolyline(out, pts, thickness, abgr, false);
+}
+
 void pushBevelPanel(std::vector<PosColorVertex>& out, float x, float y, float w, float h, uint32_t fillAbgr,
                      uint32_t lightAbgr, uint32_t darkAbgr, float bevel) {
     pushQuad(out, x, y, w, h, fillAbgr);

@@ -1,9 +1,11 @@
 #include "hud.h"
 #include "color.h"
 #include "fmt_time.h"
+#include "gauge_cluster.h"
 #include "gear_rpm.h"
 #include "leaderboard.h"
 #include "minimap.h"
+#include "proximity.h"
 #include "status_bars.h"
 #include "touch_buttons.h"
 #include "ui_draw.h"
@@ -11,6 +13,7 @@
 #include <bgfx/bgfx.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <string>
 
 namespace {
@@ -121,9 +124,11 @@ void drawHud(const RaceState& state, const std::vector<Car>& cars, std::vector<P
     //
     // Starts at row 7 (y=112px) so it clears the minimap plate above
     // (8..108px). LAP/POS and the lap times used to live here; G21 moved
-    // them into the corner panels below, leaving this column as pure
-    // telemetry: spotter, flag, speed, gear/RPM, then the three status bars.
-    constexpr int kRowSpotter = 7, kRowFlag = 8, kRowSpeed = 9, kRowGear = 10, kRowBars = 11;
+    // them into the corner panels. G22 then took SPD and GEAR/RPM out too --
+    // the gauge cluster below shows both, and the reference does not print
+    // the same number twice -- leaving this column as the state readouts the
+    // gauge has no dial for: spotter, flag, and the three status bars.
+    constexpr int kRowSpotter = 7, kRowFlag = 8, kRowBars = 9;
 
     // Phase 6d (PORT_PROGRESS.md): a minimal spotter caption -- index.html:
     // 4040-4046's `spotOn = S.spotT>0 && S.spotTxt` gate, ported verbatim.
@@ -139,15 +144,6 @@ void drawHud(const RaceState& state, const std::vector<Car>& cars, std::vector<P
     const bool yellow = state.flag == "yellow";
     bgfx::dbgTextPrintf(1, kRowFlag, attr(yellow ? kBlack : kWhite, yellow ? kYellow : kGreen),
                         yellow ? "CAUTION" : "GREEN  ");
-
-    bgfx::dbgTextPrintf(1, kRowSpeed, attr(kWhite, kBlack), "SPD %3d", (int)player->v);
-
-    // Phase 4d (PORT_PROGRESS.md): index.html:3800-3821's drawSpeedModule()
-    // gear+RPM readout, via the ported gearRpm() (gear_rpm.h) -- gear/RPM
-    // aren't real physics state, just a display-time function of Car::v.
-    const GearRpm gr = gearRpm(player->v);
-    bgfx::dbgTextPrintf(1, kRowGear, attr(kWhite, kBlack), "GEAR %d  RPM %3d%%", gr.gear,
-                        (int)(gr.rpm * 100));
 
     // Phase 4e (PORT_PROGRESS.md): index.html:3999-4020's segmented TIRE/
     // FUEL/CAR status strip -- the first HUD feature needing real quad
@@ -249,6 +245,58 @@ void drawHud(const RaceState& state, const std::vector<Car>& cars, std::vector<P
         bgfx::dbgTextPrintf(colAt(px + 8.0f), lapPanelRow + 3, attr(kWhite, kBlack), "BEST");
         segValueRightAligned(uiOut, px + kLapPanelW - 12.0f, lapPanelY + 66.0f, 13.0f, 22.0f, 3.0f,
                              fmtLapTime(player->bestLapT), Theme::kYellow);
+    }
+
+    // ---- G22: bottom gauge cluster and proximity strip -------------------
+    //
+    // The bottom edge between the two touch-control groups is the only band
+    // wide enough for the reference's gauge cluster: the steer pair ends at
+    // x=200 (computeTouchRegions()), and the brake/gas/pit group starts at
+    // windowW-200. The cluster takes the right of that band -- as close as
+    // this layout can get to the reference's bottom-right tachometer without
+    // sitting under the throttle button -- and the proximity strip takes
+    // what is left to its own left, centred in the gap.
+    //
+    // gearRpm() is a pure function of Car::v (gear_rpm.h), not stored physics
+    // state, so the dial cannot disagree with the car it reports on.
+    {
+        constexpr float kBandEdge = 208.0f; // touch-button groups + 8px clearance
+        constexpr float kGaugeW = 260.0f, kGaugeH = 136.0f;
+        const GearRpm gr = gearRpm(player->v);
+
+        const int gaugeRow = std::max(0, (int)(((float)windowH - 16.0f - kGaugeH + kPanelPadTop) / kCellH));
+        const float gaugeTop = (float)gaugeRow * kCellH - kPanelPadTop;
+        const float gaugeX = (float)windowW - kBandEdge - kGaugeW;
+
+        // Everything here needs the band to actually be wide enough to hold
+        // it; on a narrow window there is no room between the two button
+        // groups and the whole cluster is dropped rather than drawn over
+        // them.
+        if (gaugeX >= kBandEdge) {
+            const GaugeBox gaugeBox = {gaugeX, gaugeTop, kGaugeW, kGaugeH};
+            drawGaugeCluster(gaugeBox, gaugeRow, gr.rpm, gr.gear, player->v, player->draftF, uiOut);
+
+            // Proximity strip: centred in what is left of the band, capped so
+            // it stays a compact strip on a wide window instead of stretching
+            // the chips apart.
+            constexpr float kProxMaxW = 320.0f, kProxH = 44.0f;
+            const float gapL = kBandEdge, gapR = gaugeX - 12.0f;
+            const float proxW = std::min(kProxMaxW, gapR - gapL);
+            if (proxW >= 120.0f) {
+                const int proxRow = std::max(0, (int)(((float)windowH - 16.0f - kProxH + kPanelPadTop) / kCellH));
+                const ProximityBox proxBox = {gapL + (gapR - gapL - proxW) / 2.0f,
+                                              (float)proxRow * kCellH - kPanelPadTop, proxW, kProxH};
+                // A chip plus a two-digit number needs ~56px of slot to stay
+                // clear of its neighbour, so the number of cars shown follows
+                // the width actually available rather than being fixed at 5
+                // and running together on a narrow window.
+                const std::size_t maxChips =
+                    (std::size_t)std::clamp((int)(proxW / 56.0f), 2, 5);
+                const std::vector<ProximityCar> nearby =
+                    buildProximityList(cars, *player, trackTotal, /*sRange=*/30.0, maxChips);
+                drawProximity(proxBox, proxRow, nearby, uiOut);
+            }
+        }
     }
 
     // Roadmap Phase 0: steer/brake/gas/pit buttons, finally visible --

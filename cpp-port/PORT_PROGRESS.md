@@ -6349,3 +6349,87 @@ every emitted vertex lands inside its plate for a real lap time
 (`10:05.50`), a 7-glyph `200/200` lap count and the placeholder, at window
 sizes from 1600x900 down to 640x400 -- and that neither plate collides with
 the CAM button above or the steer buttons below. All pass.
+
+## G22 -- HUD-B: analog tachometer and proximity strip
+
+The reference HUD's strongest signature is its analog tach, and its most
+useful element is the spotter strip showing who is racing you right now.
+Both are now in the bottom band between the two touch-control groups -- the
+steer pair ends at x=200 and the brake/gas/pit group starts at windowW-200
+(`computeTouchRegions()`), so that band is the only place a gauge cluster
+fits without sitting under the throttle button. The cluster takes the right
+of it, as close to the reference's bottom-right tach as this layout allows;
+the proximity strip takes what is left, centred in the gap.
+
+**`pushArc()`** is the one new primitive: `pushRingOutline()` always closes
+its loop, so a partial arc was not expressible. Everything else the gauge
+needs already existed -- `pushFilledCircle()` for the face, `pushLineSegment()`
+for the ticks and, unchanged, for the needle (it already extrudes an
+arbitrarily-oriented quad), `pushSegBar()` for the draft bar, and G21's
+`pushSevenSegText()` for the readouts. No new shader, vertex layout or
+texture.
+
+The dial sweeps 150 to 390 degrees in `ui_draw.h`'s y-down convention (0 =
+right, 90 = down, increasing = clockwise), which starts at the lower left,
+climbs over the top and ends at the lower right. Painter order is load-
+bearing here and is documented in the header: the UI list is one
+depth-test-free draw call, so the face must be appended before the ticks and
+the needle last of all.
+
+**Two things were deliberately not built as the plan described them.**
+
+*The speed readout is captioned SPD, not MPH.* `Car::v` is the simulation's
+own speed unit -- the ported gear table breaks at 14/26/40/70
+(`gear_rpm.cpp`, index.html:1392), which are not mile-per-hour figures -- so
+an MPH caption would assert a unit this number does not carry. The first
+build did say MPH; a screenshot showing "GEAR 3 / MPH 36" alongside a
+near-redline needle is what exposed it, since 36mph in third at redline is
+not a thing. The JS original prints the same number unqualified.
+
+*Tire wear is not a second arc inside the dial.* The plan called for curved
+TIRE WEAR and DRAFT arcs on the face. Built that way first, they read as two
+more concentric tach rings competing with the needle, and the tire one
+duplicated the labelled TIRE bar the left column already carries -- the exact
+duplication that justified moving SPD/GEAR *out* of that column in the first
+place. So tire stays where it is already labelled, and draft -- the one
+signal with no display at all before G22 -- gets a labelled bar in the
+cluster's readout column instead. The dial shows rpm and nothing else.
+
+**Proximity strip.** `buildProximityList()` is pure and unit-tested
+(`proximity_test`); `drawProximity()` is the bgfx half, split the same way
+minimap.h and leaderboard.h are. Cars within 30 track units are picked
+nearest-first, then re-sorted left-to-right by lateral offset so a car
+physically on one side of the player appears on that side of the strip --
+that is what makes it a spotter display rather than a list. Cars ahead print
+on the caption row, cars behind on the row below, and chip geometry is placed
+from the dbgText row rather than the panel rect so a chip is always centred
+on the number it belongs to. The along-track difference wraps to the shorter
+way round, or a car a few units up the road but across the start/finish line
+would read as almost a full lap behind. Chip count follows the width
+available (a chip plus a two-digit number needs ~56px), so a narrow window
+shows three cars cleanly instead of five running together -- which is how the
+860x480 capture looked before that clamp.
+
+The left telemetry column lost SPD and GEAR/RPM to the cluster and is now
+just spotter, flag and the three status bars.
+
+**Verified**: native `ctest` 30/30, `ui_draw_test` extended for `pushArc`
+(open-not-closed segment count, vertices at the requested radius, the arc
+staying inside its requested angular span in the y-down convention, segment
+count scaling with sweep, zero-sweep/zero-radius emitting nothing, negative
+sweep still emitting). `proximity_test` is new. WASM rebuild, zero
+console/page errors at 1280x720, 1600x900, 1024x600 and 860x480.
+
+The needle sweep was verified by decode rather than by screenshot, per the
+G12-G14 precedent: a screenshot shows one rpm, and the player car is
+AI-driven between captures, so the sweep is not something a camera can
+establish. A scratch program calls the real `drawGaugeCluster()` across
+v = 0..90, recovers the needle from the emitted geometry (its tip vertices
+sit at 0.761r, alone in the band between the ticks at 0.70r and the sweep
+arc's inner edge at 0.785r) and compares against hand-computed
+`sweepAngle(gearRpm(v).rpm)`. Every sample matches within 0.63 degrees -- a
+constant offset from sampling the needle's own width -- the needle advances
+monotonically wherever rpm rises, idle sits at 209.4 degrees against a
+hand-computed 210, saturation at 389.4 against 390, and the lit arc's vertex
+colours flip from yellow to red exactly across the 0.80 redline (204 yellow /
+0 red at rpm 0.79; 0 yellow / 210 red at 0.81).
