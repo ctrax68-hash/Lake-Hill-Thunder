@@ -294,10 +294,49 @@ private:
     bgfx::UniformHandle uBloomParams_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uGradeParams1_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uGradeParams2_ = BGFX_INVALID_HANDLE;
-    // (Re)creates sceneFb_/bloomBrightFb_/bloomBlurFb_ at the given size --
-    // called from init() and resize() (bgfx framebuffers, unlike the real
-    // backbuffer, don't auto-resize on bgfx::reset()).
+    // (Re)creates sceneFb_/bloomBrightFb_/bloomBlurFb_/mirrorFb_ at the given
+    // size -- called from init() and resize() (bgfx framebuffers, unlike the
+    // real backbuffer, don't auto-resize on bgfx::reset()).
     void createPostFxTargets(int width, int height);
+
+    // G23 (NT2003 presentation plan): the rearview mirror's own offscreen
+    // color+depth target, same recipe as sceneFb_ but at a fixed small size
+    // (the mirror is a ~250px-wide HUD element, so rendering it at backbuffer
+    // resolution would be pure waste). Fixed rather than window-derived, so
+    // its aspect -- and therefore the rear camera's framing -- doesn't shift
+    // as the window resizes. Created alongside the post-fx targets purely
+    // because that is the one place framebuffers are (re)created.
+    //
+    // The mirror deliberately bypasses bloom/grade/tonemap: composited
+    // straight onto the already-graded backbuffer in the UI view, so it
+    // reads flatter than the main view. Running a second post-FX chain for a
+    // 256x96 inset on a mobile target is not worth it.
+    bgfx::FrameBufferHandle mirrorFb_ = BGFX_INVALID_HANDLE;
+    static constexpr int kMirrorW = 256, kMirrorH = 96;
+
+    // G23: one car's fully-resolved draw state for this frame -- model
+    // matrix, bone palette and livery texture. Built ONCE per frame, then
+    // submitted once per view.
+    //
+    // This exists because of two hazards that a naive "just call the car
+    // loop again for the mirror view" would walk straight into:
+    //   1. The car loop advances wall-clock wheel-spin/suspension state
+    //      (carWheelAnim_). Running it twice per frame double-steps every
+    //      wheel, at a rate that depends on how many views happen to be
+    //      active -- a silent, frame-rate-shaped animation bug.
+    //   2. SkinnedMesh::setBoneMatrices() must stay 1:1 with each draw() or
+    //      bgfx's checked build errors ("Uniform ... was already set for this
+    //      draw call"). Precomputing the palette and re-uploading it per view
+    //      keeps that pairing exact no matter how many views draw the car.
+    // Defined in renderer.cpp so the header needn't know the matrix type.
+    struct WorldDrawList;
+
+    // G23: submits the whole world (ground, ribbon, stadium, crowd, cars,
+    // pace car) into `viewId` with the given camera. Extracted from
+    // renderFrame()'s formerly inline block so the mirror pass can reuse it
+    // verbatim rather than growing a second, drift-prone copy.
+    void submitWorld(bgfx::ViewId viewId, const float view[16], const float proj[16], const float eye[3],
+                     const WorldDrawList& draws);
 
     bgfx::CallbackI* callback_ = nullptr;
 };

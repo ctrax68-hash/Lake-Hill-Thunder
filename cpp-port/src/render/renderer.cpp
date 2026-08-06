@@ -12,6 +12,7 @@
 #include "stadium_mesh.h"
 #include "track_surface.h"
 #include "track_surface_texture.h"
+#include "ui_draw.h" // G23: the mirror's own bevelled frame
 #include "vertex.h"
 #include "vertex_lit.h"
 #include "vertex_textured.h"
@@ -434,6 +435,21 @@ void Renderer::createPostFxTargets(int width, int height) {
     bloomBrightFb_ = bgfx::createFrameBuffer(1, &brightColor, true);
     const bgfx::TextureHandle blurColor = bgfx::createTexture2D(bw, bh, false, 1, sceneFormat, colorFlags);
     bloomBlurFb_ = bgfx::createFrameBuffer(1, &blurColor, true);
+
+    // G23 (NT2003 presentation plan): the rearview mirror's own target, same
+    // color+depth recipe as sceneFb_ but at a fixed kMirrorW x kMirrorH --
+    // it is a small HUD inset, so backbuffer resolution would be waste, and
+    // a fixed size keeps the rear camera's aspect (and therefore its
+    // framing) stable across window resizes. Recreated here with the rest
+    // only because this is where framebuffers live; nothing about it
+    // actually depends on `width`/`height`.
+    if (bgfx::isValid(mirrorFb_)) bgfx::destroy(mirrorFb_);
+    const bgfx::TextureHandle mirrorColor =
+        bgfx::createTexture2D(kMirrorW, kMirrorH, false, 1, sceneFormat, colorFlags);
+    const bgfx::TextureHandle mirrorDepth =
+        bgfx::createTexture2D(kMirrorW, kMirrorH, false, 1, bgfx::TextureFormat::D24S8, colorFlags);
+    bgfx::TextureHandle mirrorAttachments[2] = {mirrorColor, mirrorDepth};
+    mirrorFb_ = bgfx::createFrameBuffer(2, mirrorAttachments, true);
 }
 
 void Renderer::shutdown() {
@@ -463,6 +479,7 @@ void Renderer::shutdown() {
     if (bgfx::isValid(sceneFb_)) bgfx::destroy(sceneFb_);
     if (bgfx::isValid(bloomBrightFb_)) bgfx::destroy(bloomBrightFb_);
     if (bgfx::isValid(bloomBlurFb_)) bgfx::destroy(bloomBlurFb_);
+    if (bgfx::isValid(mirrorFb_)) bgfx::destroy(mirrorFb_); // G23
     if (bgfx::isValid(bloomBrightProgram_)) bgfx::destroy(bloomBrightProgram_);
     if (bgfx::isValid(bloomBlurProgram_)) bgfx::destroy(bloomBlurProgram_);
     if (bgfx::isValid(gradeTonemapProgram_)) bgfx::destroy(gradeTonemapProgram_);
@@ -982,6 +999,94 @@ bgfx::TextureHandle Renderer::getOrBuildPaceTexture() {
     return tex;
 }
 
+// G23 (NT2003 presentation plan): see renderer.h for why the car draws are
+// resolved into plain data once per frame instead of being recomputed per
+// view (wall-clock wheel state must advance exactly once; bone-matrix
+// uploads must stay 1:1 with draws).
+struct Renderer::WorldDrawList {
+    struct Item {
+        Mat4f model;
+        std::vector<float> bones;
+        int boneCount = 0;
+        bgfx::TextureHandle texture = BGFX_INVALID_HANDLE;
+    };
+    std::vector<Item> cars;
+};
+
+void Renderer::submitWorld(bgfx::ViewId viewId, const float view[16], const float proj[16],
+                            const float eye[3], const WorldDrawList& draws) {
+    bgfx::setViewTransform(viewId, view, proj);
+    const float camPos[4] = {eye[0], eye[1], eye[2], 0.0f};
+    bgfx::setUniform(uCamPos_, camPos);
+
+    // Phase 5b (PORT_PROGRESS.md): sun/hemisphere lighting uniforms, real
+    // per-track data resolved once in setTrack() (env_presets.h). Sun
+    // direction is TOWARD the sun (matches fs_lit.sc's `dot(n, u_sunDir)`).
+    // Set here rather than once per frame so each view's draws carry the
+    // values alongside that view's own camera position.
+    bgfx::setUniform(uSunDir_, sunDir_);
+    bgfx::setUniform(uSunColor_, sunColor_);
+    bgfx::setUniform(uHemiSky_, hemiSky_);
+    bgfx::setUniform(uHemiGround_, hemiGround_);
+
+    float identity[16];
+    bx::mtxIdentity(identity);
+
+    // Phase 5a (PORT_PROGRESS.md): real depth testing, now that world-space
+    // geometry has genuine 3D extent (banked ribbon, stadium/stands) --
+    // layering previously relied purely on submission order.
+    const uint64_t state =
+        BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS;
+
+    // Phase 5b: the ground plane draws first (painter's-algorithm ordering,
+    // though depth testing makes the exact order moot) so the ribbon and cars
+    // are never occluded by it.
+    if (groundVertexCount_ > 0) {
+        bgfx::setTransform(identity);
+        bgfx::setVertexBuffer(0, groundVb_, 0, groundVertexCount_);
+        bgfx::setState(state);
+        bgfx::submit(viewId, litProgram_);
+    }
+
+    // G5a: the ribbon is UV'd into asphaltTexture_ (rebuilt per track in
+    // setTrack()) instead of a flat vertex color -- same
+    // texturedLitProgram_/uSkyTexColor_ pattern the crowd-atlas stand seats
+    // use below, just a different texture bound.
+    if (trackVertexCount_ > 0 && bgfx::isValid(asphaltTexture_)) {
+        bgfx::setTransform(identity);
+        bgfx::setVertexBuffer(0, trackVb_, 0, trackVertexCount_);
+        bgfx::setTexture(0, uSkyTexColor_, asphaltTexture_);
+        bgfx::setState(state);
+        bgfx::submit(viewId, texturedLitProgram_);
+    }
+
+    // Phase 5d: stands + pit road + outer wall, drawn after the ribbon.
+    if (stadiumVertexCount_ > 0) {
+        bgfx::setTransform(identity);
+        bgfx::setVertexBuffer(0, stadiumVb_, 0, stadiumVertexCount_);
+        bgfx::setState(state);
+        bgfx::submit(viewId, litProgram_);
+    }
+
+    // Phase 5e: front-tier stand seats, crowd-atlas textured -- same lit
+    // state as everything else, just a different program/layout/texture.
+    if (stadiumTexturedVertexCount_ > 0 && bgfx::isValid(atlasTexture_)) {
+        bgfx::setTransform(identity);
+        bgfx::setVertexBuffer(0, stadiumTexturedVb_, 0, stadiumTexturedVertexCount_);
+        bgfx::setTexture(0, uSkyTexColor_, atlasTexture_);
+        bgfx::setState(state);
+        bgfx::submit(viewId, texturedLitProgram_);
+    }
+
+    // Cars (and, when it is on track, the pace car) from the prebuilt list.
+    // setBoneMatrices() is re-uploaded immediately before each draw() so the
+    // pairing bgfx's checked build requires holds for every view.
+    for (const auto& item : draws.cars) {
+        SkinnedMesh::setBoneMatrices(item.bones.data(), item.boneCount);
+        carMesh_.draw(viewId, item.model.data(), item.texture);
+    }
+}
+
 void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& cars, double renderAlpha,
                             const PaceCar* pace, const MenuSelection* menu, const std::string* menuTrackName,
                             const std::vector<Car*>* finishOrder) {
@@ -994,6 +1099,16 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     // unchanged.
     const bgfx::ViewId kSkyView = 0;
     const bgfx::ViewId kView = 1;
+    // G23 (NT2003 presentation plan): the rearview mirror renders the world a
+    // second time into mirrorFb_. bgfx executes views in ascending ID order
+    // regardless of submission order, so this must sit ABOVE the main world
+    // view (its content is the same frame's) and BELOW the UI view that
+    // samples the result -- a mirror numbered above its consumer would show
+    // the previous frame. Bloom/blur/grade and UI all shifted up one to make
+    // room (2-4 -> 3-5, 5 -> 6).
+    const bgfx::ViewId kMirrorView = 2;
+    // Set by the mirror block below; read by the UI view's composite.
+    bool mirrorReady = false;
     // Phase 4h (PORT_PROGRESS.md): the results screen fully replaces the
     // scene (opaque black clear, no track/car geometry underneath) rather
     // than drawing on top of the still-rendering track like the menu does
@@ -1068,21 +1183,15 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         // renderBlockedFrame()'s own bgfx::touch(kView) call.
         bgfx::touch(kView);
     } else {
-    // Phase 5b (PORT_PROGRESS.md): sun/hemisphere lighting uniforms, now
-    // real per-track data resolved once in setTrack() (env_presets.h)
-    // instead of Phase 5a's hardcoded 'noon-grass' constants. Sun direction
-    // is TOWARD the sun (matches fs_lit.sc's `dot(n, u_sunDir)`).
-    bgfx::setUniform(uSunDir_, sunDir_);
-    bgfx::setUniform(uSunColor_, sunColor_);
-    bgfx::setUniform(uHemiSky_, hemiSky_);
-    bgfx::setUniform(uHemiGround_, hemiGround_);
-
-    // Phase 5a (PORT_PROGRESS.md): real depth testing, now that world-space
-    // geometry has genuine 3D extent (banked ribbon, and stadium/stands
-    // starting Phase 5d) -- previously layering relied purely on
-    // submission order (no BGFX_STATE_WRITE_Z/DEPTH_TEST at all).
-    const uint64_t state =
-        BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS;
+    // G23: the camera branches below fill these; submitWorld() then consumes
+    // them, once for the main view and again for the mirror.
+    float view[16], proj[16];
+    float eyePos[3] = {0.0f, 0.0f, 0.0f};
+    // The chased car's interpolated pose, kept for the mirror camera to
+    // build its rear view from. Null in TopDown mode, or before setTrack().
+    const Car* mirrorCar = nullptr;
+    InterpPose mirrorPose{};
+    Vec3 mirrorUp{0, 1, 0};
 
     if (cameraMode_ == CameraMode::Chase) {
         const Car* car = nullptr;
@@ -1115,6 +1224,8 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             // from carModelMat(c), itself built from poseOf(c)
             // (index.html:3725-3727), rather than the raw tick-snapped Car.
             const InterpPose chasePose = interpolatedPose(*car, renderAlpha, track_->total());
+            mirrorCar = car;    // G23: the rear camera builds from this same pose
+            mirrorPose = chasePose;
 
             const Vec3 base = pos3(*track_, chasePose.s, chasePose.lat);
             const double th = chasePose.hdg;
@@ -1189,7 +1300,8 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             }
         }
 
-        float view[16], proj[16];
+        mirrorUp = upBlend; // G23: the mirror leans with the same banked up-vector
+
         const bx::Vec3 eye = {chaseEyeX_, chaseEyeY_, chaseEyeZ_};
         const bx::Vec3 at = {chaseLookX_, chaseLookY_, chaseLookZ_};
         const bx::Vec3 up = {(float)upBlend.x, (float)upBlend.y, (float)upBlend.z};
@@ -1241,9 +1353,9 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             fovYDeg = bx::toDeg(bx::atan(bx::tan(halfFovXCap) / aspect)) * 2.0f;
         }
         bx::mtxProj(proj, fovYDeg, aspect, 0.5f, 1500.0f, homogeneousDepth, bx::Handedness::Right);
-        bgfx::setViewTransform(kView, view, proj);
-        const float camPos[4] = {eye.x, eye.y, eye.z, 0.0f};
-        bgfx::setUniform(uCamPos_, camPos);
+        eyePos[0] = eye.x;
+        eyePos[1] = eye.y;
+        eyePos[2] = eye.z;
     } else {
         // TopDown: unchanged framing/purpose (a static overview of the
         // whole track), still orthographic -- now looking straight down
@@ -1257,7 +1369,6 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         } else {
             halfW = halfH * winAspect;
         }
-        float view[16], proj[16];
         const bx::Vec3 eye = {topCx_, 200.0f, topCy_};
         const bx::Vec3 at = {topCx_, 0.0f, topCy_};
         const bx::Vec3 up = {0.0f, 0.0f, -1.0f};
@@ -1266,55 +1377,16 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         bx::mtxLookAt(view, eye, at, up, bx::Handedness::Right);
         bx::mtxOrtho(proj, -halfW, halfW, -halfH, halfH, 0.1f, 1000.0f, 0.0f, homogeneousDepth,
                      bx::Handedness::Right);
-        bgfx::setViewTransform(kView, view, proj);
-        const float camPos[4] = {eye.x, eye.y, eye.z, 0.0f};
-        bgfx::setUniform(uCamPos_, camPos);
+        eyePos[0] = eye.x;
+        eyePos[1] = eye.y;
+        eyePos[2] = eye.z;
     }
 
-    // Phase 5b (PORT_PROGRESS.md): the ground plane draws first (painter's-
-    // algorithm ordering, though depth testing makes the exact order moot)
-    // so the ribbon and cars are never occluded by it.
-    if (groundVertexCount_ > 0) {
-        bgfx::setTransform(identity);
-        bgfx::setVertexBuffer(0, groundVb_, 0, groundVertexCount_);
-        bgfx::setState(state);
-        bgfx::submit(kView, litProgram_);
-    }
-
-    // G5a (NASCAR-Thunder gap-analysis plan, track surface texture): the
-    // ribbon is now UV'd into asphaltTexture_ (built once in init(), see
-    // its own member comment in renderer.h) instead of a flat vertex
-    // color -- same texturedLitProgram_/uSkyTexColor_ pattern the crowd-
-    // atlas stand seats already use below, just a different texture bound.
-    if (trackVertexCount_ > 0 && bgfx::isValid(asphaltTexture_)) {
-        bgfx::setTransform(identity);
-        bgfx::setVertexBuffer(0, trackVb_, 0, trackVertexCount_);
-        bgfx::setTexture(0, uSkyTexColor_, asphaltTexture_);
-        bgfx::setState(state);
-        bgfx::submit(kView, texturedLitProgram_);
-    }
-
-    // Phase 5d (PORT_PROGRESS.md): stands + pit road + outer wall, drawn
-    // after the ribbon (real per-triangle lighting from riser/seat slope
-    // angles is the first geometry in this port to actually vary with
-    // normal direction beyond the ribbon's own banking).
-    if (stadiumVertexCount_ > 0) {
-        bgfx::setTransform(identity);
-        bgfx::setVertexBuffer(0, stadiumVb_, 0, stadiumVertexCount_);
-        bgfx::setState(state);
-        bgfx::submit(kView, litProgram_);
-    }
-
-    // Phase 5e (PORT_PROGRESS.md): front-tier stand seats, crowd-atlas
-    // textured -- same lit state as everything else in this view, just a
-    // different program/vertex layout/bound texture.
-    if (stadiumTexturedVertexCount_ > 0 && bgfx::isValid(atlasTexture_)) {
-        bgfx::setTransform(identity);
-        bgfx::setVertexBuffer(0, stadiumTexturedVb_, 0, stadiumTexturedVertexCount_);
-        bgfx::setTexture(0, uSkyTexColor_, atlasTexture_);
-        bgfx::setState(state);
-        bgfx::submit(kView, texturedLitProgram_);
-    }
+    // G23: the world's own geometry (ground, ribbon, stadium, crowd) is
+    // submitted by submitWorld() below, once per view. The car draws are
+    // resolved into `draws` first, because the loop that builds them advances
+    // wall-clock wheel state -- see WorldDrawList's comment in renderer.h.
+    WorldDrawList draws;
 
     // Step 3 (PORT_PROGRESS.md, physics-driven car rig animation): the flat
     // textured quad that used to draw here is replaced by car_rig_data.h's
@@ -1371,14 +1443,17 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             }
             const Mat4f model = mat4Mul(mat4Translate(wx, carY, wy), mat4RotateY(-ch));
             if (!skipCarDraws()) {
-                // setBoneMatrices() must stay paired with this same car's draw()/submit() --
-                // skipping only the draw while still calling setBoneMatrices() for every car
-                // stacks multiple bgfx::setUniform(u_boneMatrices, ...) calls with no
-                // intervening submit() to flush them, which bgfx's checked build correctly
-                // rejects ("Uniform ... was already set for this draw call") -- a real bug in
-                // this diagnostic gate itself, not evidence about the crash it's meant to isolate.
-                SkinnedMesh::setBoneMatrices(boneFloats.data(), (int)bonePalette.size());
-                carMesh_.draw(kView, model.data(), getOrBuildCarTexture(c));
+                // G23: queued rather than drawn here, so submitWorld() can
+                // issue the setBoneMatrices()/draw() pair -- which bgfx's
+                // checked build requires to be 1:1 ("Uniform ... was already
+                // set for this draw call") -- once per view. The gate still
+                // skips the bone upload along with the draw, for the same
+                // reason it always did: uploading without a matching submit
+                // stacks uniform writes with nothing to flush them, which is
+                // a bug in the diagnostic gate rather than evidence about the
+                // crash it exists to isolate.
+                draws.cars.push_back({model, std::move(boneFloats), (int)bonePalette.size(),
+                                      getOrBuildCarTexture(c)});
             }
         }
 
@@ -1418,9 +1493,80 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             const Vec3 pacePos = pos3(*track_, pS, pLat);
             const Mat4f paceModel =
                 mat4Mul(mat4Translate((float)pX, (float)pacePos.y, (float)pY), mat4RotateY(-(float)pHdg));
-            SkinnedMesh::setBoneMatrices(paceBoneFloats.data(), (int)paceBones.size());
-            carMesh_.draw(kView, paceModel.data(), getOrBuildPaceTexture());
+            draws.cars.push_back({paceModel, std::move(paceBoneFloats), (int)paceBones.size(),
+                                  getOrBuildPaceTexture()});
         }
+    }
+
+    // G23: the main view. Everything above only *computed* -- this is where
+    // the world is actually submitted.
+    submitWorld(kView, view, proj, eyePos, draws);
+
+    // ---- G23: rearview mirror -------------------------------------------
+    //
+    // A second pass over the same world with a rear-facing camera, into
+    // mirrorFb_, composited into the HUD further down. View 2 so it runs
+    // after the main world view (1) but well before the UI view that samples
+    // it -- bgfx executes views in ascending ID order regardless of
+    // submission order, so a mirror view numbered above its consumer would
+    // sample the *previous* frame's contents.
+    //
+    // Only in Chase mode: a top-down overview has no meaningful "behind".
+    // (mirrorReady is declared alongside the view IDs above.)
+    if (cameraMode_ == CameraMode::Chase && mirrorCar && track_ && bgfx::isValid(mirrorFb_)) {
+        const Vec3 base = pos3(*track_, mirrorPose.s, mirrorPose.lat);
+        const double th = mirrorPose.hdg;
+        const double fwx = std::cos(th), fwz = std::sin(th); // fw.y == 0
+
+        // Just above and slightly behind the roofline, looking back down the
+        // track. Set back far enough that the player's own car is behind the
+        // near plane rather than filling the mirror with its own tail.
+        constexpr double kMirrorBack = 3.2, kMirrorHigh = 1.5, kMirrorRange = 60.0;
+        const bx::Vec3 eye = {(float)(base.x - fwx * kMirrorBack + mirrorUp.x * kMirrorHigh),
+                              (float)(base.y + mirrorUp.y * kMirrorHigh),
+                              (float)(base.z - fwz * kMirrorBack + mirrorUp.z * kMirrorHigh)};
+        const bx::Vec3 at = {(float)(eye.x - fwx * kMirrorRange), (float)(eye.y - 0.6),
+                             (float)(eye.z - fwz * kMirrorRange)};
+        const bx::Vec3 up = {(float)mirrorUp.x, (float)mirrorUp.y, (float)mirrorUp.z};
+
+        float mirrorView[16], mirrorProj[16];
+        // Same handedness as the main camera for both calls -- see the Chase
+        // branch's own comment: LH/RH is not merely an X mirror, it also
+        // flips which view-space Z sign the projection expects, so mixing
+        // them silently produces a scene that is inside-out rather than
+        // obviously broken.
+        bx::mtxLookAt(mirrorView, eye, at, up, bx::Handedness::Right);
+        const float mirrorAspect = (float)kMirrorW / (float)kMirrorH;
+        // 34 vertical over a 2.67:1 target works out to ~79 horizontal --
+        // the wide, shallow letterbox a real mirror gives, and wide enough
+        // to show a car drawing alongside rather than only dead astern.
+        bx::mtxProj(mirrorProj, 34.0f, mirrorAspect, 0.5f, 1500.0f, homogeneousDepth,
+                    bx::Handedness::Right);
+
+        bgfx::setViewFrameBuffer(kMirrorView, mirrorFb_);
+        bgfx::setViewRect(kMirrorView, 0, 0, (uint16_t)kMirrorW, (uint16_t)kMirrorH);
+        // Sequential so the sky backdrop below stays behind the world: it
+        // writes no depth, so without submission-order execution bgfx's
+        // draw-call sort could put it over the geometry instead.
+        bgfx::setViewMode(kMirrorView, bgfx::ViewMode::Sequential);
+        bgfx::setViewClear(kMirrorView, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x6a90b4ff, 1.0f, 0);
+        if (skyPaintedThisFrame) {
+            // The same fullscreen backdrop the main view uses -- identity
+            // view/proj, so it fills the mirror target exactly as it fills
+            // the screen. Submitted into the mirror's own view rather than
+            // getting a second sky view of its own.
+            float skyIdentity[16];
+            bx::mtxIdentity(skyIdentity);
+            bgfx::setViewTransform(kMirrorView, skyIdentity, skyIdentity);
+            bgfx::setTransform(skyIdentity);
+            bgfx::setVertexBuffer(0, skyVb_, 0, 6);
+            bgfx::setTexture(0, uSkyTexColor_, skyTexture_);
+            bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+            bgfx::submit(kMirrorView, skyProgram_);
+        }
+        const float mirrorEye[3] = {eye.x, eye.y, eye.z};
+        submitWorld(kMirrorView, mirrorView, mirrorProj, mirrorEye, draws);
+        mirrorReady = true;
     }
     } // !showResults
 
@@ -1439,9 +1585,9 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     // straight to the backbuffer above, so this chain would otherwise
     // overwrite that with a stale/empty sceneFb_ read.
     if (!bypassPostFx) {
-        const bgfx::ViewId kBloomBrightView = 2;
-        const bgfx::ViewId kBloomBlurView = 3;
-        const bgfx::ViewId kGradeTonemapView = 4;
+        const bgfx::ViewId kBloomBrightView = 3;
+        const bgfx::ViewId kBloomBlurView = 4;
+        const bgfx::ViewId kGradeTonemapView = 5;
         const bgfx::TextureHandle sceneColorTex = bgfx::getTexture(sceneFb_);
         const uint16_t bloomW = (uint16_t)std::max(1, width_ / 2);
         const uint16_t bloomH = (uint16_t)std::max(1, height_ / 2);
@@ -1549,10 +1695,17 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     // mode=="menu", where drawHud() early-returns before adding anything)
     // -- same "nothing submitted this frame -> nothing drawn" precedent the
     // world view's own `if (!cars.empty())` guard above relies on.
-    if (!uiVerts.empty()) {
-        const bgfx::ViewId kUiView = 5;
+    if (!uiVerts.empty() || mirrorReady) {
+        const bgfx::ViewId kUiView = 6;
         bgfx::setViewFrameBuffer(kUiView, BGFX_INVALID_HANDLE);
         bgfx::setViewRect(kUiView, 0, 0, (uint16_t)width_, (uint16_t)height_);
+        // G23: Sequential, so the mirror composite below stays UNDER the UI
+        // quads. This view now submits two different programs (skyProgram_
+        // for the textured mirror, program_ for the flat UI geometry), and
+        // bgfx's default sort key ordering makes no promise about which of
+        // two different programs runs first -- the frame that borders the
+        // mirror is drawn from uiVerts and must land on top of it.
+        bgfx::setViewMode(kUiView, bgfx::ViewMode::Sequential);
         float uiViewMtx[16], uiProj[16];
         bx::mtxIdentity(uiViewMtx);
         // Top-left origin, y-down, matching dbgText/SDL mouse coordinates --
@@ -1561,8 +1714,63 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
                      homogeneousDepth);
         bgfx::setViewTransform(kUiView, uiViewMtx, uiProj);
 
+        // ---- G23: mirror composite ---------------------------------------
+        //
+        // The textured-UI path the plan called for, and the reason it exists:
+        // a PosUvVertex quad in this same pixel-space ortho view, drawn with
+        // the already-built skyProgram_ (vs_sky.sc does a real MVP transform,
+        // fs_sky.sc is a plain texture2D), so a render-target texture can be
+        // composited into the HUD with no new shader, program or layout.
+        //
+        // Bypasses bloom/grade/tonemap by construction -- it lands on the
+        // already-graded backbuffer -- so it reads flatter than the main
+        // view. Accepted rather than running a second post-FX chain for a
+        // 256x96 inset on a mobile target.
+        if (mirrorReady && bgfx::isValid(mirrorFb_)) {
+            const float mw = std::clamp((float)width_ * 0.20f, 176.0f, 288.0f);
+            const float mh = mw * ((float)kMirrorH / (float)kMirrorW);
+            const float mx = ((float)width_ - mw) * 0.5f, my = 8.0f;
+            // The mirror flip, for free: reversed U on the composite quad, so
+            // a car passing on one side appears on the side a driver looking
+            // in a real mirror would see it.
+            constexpr float uLeft = 1.0f, uRight = 0.0f;
+            // Render-target textures are V-flipped on backends whose texture
+            // origin is bottom-left (GL/GLES, which is what the WASM build
+            // runs on) relative to the top-left pixel space this view uses.
+            const bool originBottomLeft = bgfx::getCaps()->originBottomLeft;
+            const float vTop = originBottomLeft ? 1.0f : 0.0f;
+            const float vBot = originBottomLeft ? 0.0f : 1.0f;
+            const PosUvVertex quad[6] = {
+                {mx, my, 0.0f, uLeft, vTop},          {mx + mw, my, 0.0f, uRight, vTop},
+                {mx + mw, my + mh, 0.0f, uRight, vBot}, {mx, my, 0.0f, uLeft, vTop},
+                {mx + mw, my + mh, 0.0f, uRight, vBot}, {mx, my + mh, 0.0f, uLeft, vBot},
+            };
+            if (bgfx::getAvailTransientVertexBuffer(6, skyLayout_) >= 6) {
+                bgfx::TransientVertexBuffer mtvb;
+                bgfx::allocTransientVertexBuffer(&mtvb, 6, skyLayout_);
+                std::memcpy(mtvb.data, quad, sizeof(quad));
+                bgfx::setTransform(identity);
+                bgfx::setVertexBuffer(0, &mtvb, 0, 6);
+                bgfx::setTexture(0, uSkyTexColor_, bgfx::getTexture(mirrorFb_));
+                bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+                bgfx::submit(kUiView, skyProgram_);
+            }
+            // Bevelled frame, appended after the composite so it draws over
+            // the mirror's own edges -- same chrome as the HUD's other
+            // plates, built from the same ui_draw helper.
+            constexpr float kFrame = 3.0f;
+            pushBevelPanel(uiVerts, mx - kFrame, my - kFrame, mw + kFrame * 2.0f, kFrame,
+                            packColor(Theme::kSteel, 0.95f), packColor(Theme::kGraycool, 0.6f),
+                            packColor(Theme::kSteel, 0.95f), 1.0f);
+            pushBevelPanel(uiVerts, mx - kFrame, my + mh, mw + kFrame * 2.0f, kFrame,
+                            packColor(Theme::kSteel, 0.95f), packColor(Theme::kGraycool, 0.6f),
+                            packColor(Theme::kSteel, 0.95f), 1.0f);
+            pushQuad(uiVerts, mx - kFrame, my, kFrame, mh, packColor(Theme::kSteel, 0.95f));
+            pushQuad(uiVerts, mx + mw, my, kFrame, mh, packColor(Theme::kSteel, 0.95f));
+        }
+
         const uint32_t uiVertCount = (uint32_t)uiVerts.size();
-        if (bgfx::getAvailTransientVertexBuffer(uiVertCount, layout_) >= uiVertCount) {
+        if (uiVertCount > 0 && bgfx::getAvailTransientVertexBuffer(uiVertCount, layout_) >= uiVertCount) {
             bgfx::TransientVertexBuffer tvb;
             bgfx::allocTransientVertexBuffer(&tvb, uiVertCount, layout_);
             std::memcpy(tvb.data, uiVerts.data(), uiVertCount * sizeof(PosColorVertex));

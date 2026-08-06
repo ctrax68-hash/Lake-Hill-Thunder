@@ -6433,3 +6433,90 @@ monotonically wherever rpm rises, idle sits at 209.4 degrees against a
 hand-computed 210, saturation at 389.4 against 390, and the lit arc's vertex
 colours flip from yellow to red exactly across the 0.80 redline (204 yellow /
 0 red at rpm 0.79; 0 yellow / 210 red at 0.81).
+
+## G23 -- HUD-C: rearview mirror
+
+The last HUD element from the reference, and the only one needing renderer
+surgery: a second pass over the same world with a rear-facing camera, into
+its own small offscreen target, composited into the top of the HUD.
+
+**`submitWorld()` extraction.** The world submission (ground, ribbon,
+stadium, crowd, cars, pace car) was ~150 lines inline in `renderFrame()`.
+It is now `Renderer::submitWorld(viewId, view, proj, eye, draws)`, called
+once for the main view and once for the mirror. Mechanical -- every submit
+already took the view id as a parameter, including
+`SkinnedMesh::draw(kView, ...)` -- and the point of doing it rather than
+writing a second loop is that a second loop would drift.
+
+**Both documented gotchas were real, and are handled structurally rather
+than by remembering to be careful.** The car loop advances wall-clock
+wheel-spin and suspension state (`carWheelAnim_`), and
+`SkinnedMesh::setBoneMatrices()` must stay 1:1 with each `draw()` or bgfx's
+checked build errors outright. Running the loop per view would double-step
+every wheel at a rate depending on how many views happen to be active -- a
+silent, frame-rate-shaped animation bug -- and would need the bone pairing
+re-established by hand each time. So the car draws are now resolved **once**
+per frame into a `WorldDrawList` (model matrix, bone palette, texture) and
+`submitWorld()` re-uploads the palette immediately before each draw. The
+pairing is then correct by construction for any number of views.
+
+**View renumbering.** bgfx executes views in ascending ID order regardless
+of submission order, so the mirror scene has to sit above the main world
+view (its content is the same frame's) and below the UI view that samples it
+-- a mirror numbered above its consumer would composite the *previous*
+frame. Sky 0, world 1, **mirror 2**, bloom/blur/grade 3/4/5, UI 6. Every one
+of these sets `setViewFrameBuffer` every frame: bindings persist across
+frames, a hazard this file already documents at the sceneFb_ site.
+
+**Rear camera.** A Chase variant: eye just above and 3.2 units behind the
+car's own interpolated pose, looking 60 units back down the heading, leaning
+with the same banked up-vector the main camera uses. `bx::Handedness::Right`
+for both `mtxLookAt` and `mtxProj`, matching the main camera -- LH/RH is not
+merely an X mirror, it also flips which view-space Z sign the projection
+expects, so mixing them yields an inside-out scene rather than an obviously
+broken one. FOV is 34 vertical over the target's fixed 2.67:1, giving ~79
+horizontal: the wide shallow letterbox a real mirror has, wide enough to
+show a car drawing alongside rather than only dead astern. Chase mode only
+-- a top-down overview has no meaningful "behind".
+
+**The mirror flip is free**, as the plan predicted: the composite quad's U
+coordinates are reversed. That matters and is checkable -- looking backward
+already swaps left and right, so without the flip the infield would appear
+on the wrong side.
+
+**The textured-UI path, finally built where it was actually needed.** G21
+deferred it rather than building it speculatively for a glyph atlas that
+seven-segment digits made unnecessary. Here the mirror genuinely requires it,
+and it costs nothing new: a `PosUvVertex` quad in the existing pixel-space
+ortho UI view drawn with the already-built `skyProgram_` (`vs_sky.sc` does a
+real MVP transform, `fs_sky.sc` is a plain `texture2D`). No new shader,
+program or vertex layout. That view is now `ViewMode::Sequential`, because it
+submits two different programs and bgfx's default sort makes no promise about
+which runs first -- the bevelled frame must land on top of the mirror.
+Render-target V orientation is handled off `caps->originBottomLeft` rather
+than assumed.
+
+The mirror bypasses bloom/grade/tonemap by construction (it composites onto
+the already-graded backbuffer), so it reads flatter than the main view. That
+is the accepted trade the plan named: a second post-FX chain for a 256x96
+inset is not worth it on a mobile target.
+
+**Verified**: native `ctest` 30/30, no new compiler warnings. WASM rebuild
+with zero console/page errors across the menu -> race -> results -> menu ->
+second race flow, plus a camera-toggle and mid-race resize pass (resize
+re-runs `createPostFxTargets()`, which destroys and recreates `mirrorFb_`
+while the composite samples it -- clean, and the mirror follows the new
+window centre). The checked build's bone-matrix pairing assertion is the
+thing that would have caught a `setBoneMatrices()`/`draw()` mismatch
+immediately, and it stayed silent.
+
+The content itself was verified by sampling: camera framing can't be forced
+and the player car is AI-driven, so ten frames were captured across a race
+and each one's mirror was paired against that frame's G22 proximity strip.
+One frame shows a white car in the mirror's left half while the strip's
+"behind" row reports **#88** with a white chip at its far-left (most-inboard)
+slot -- the same car, on the same side, in both. That is the check that
+matters: it confirms the mirror shows what is *behind*, and that the U-flip
+puts it on the side a driver looking in a real mirror would see it. TopDown
+correctly shows no mirror at all, and the results screen (which replaces the
+scene entirely) is unchanged.
