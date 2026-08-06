@@ -73,6 +73,97 @@ void pushFilledCircle(std::vector<PosColorVertex>& out, float cx, float cy, floa
     }
 }
 
+void pushBevelPanel(std::vector<PosColorVertex>& out, float x, float y, float w, float h, uint32_t fillAbgr,
+                     uint32_t lightAbgr, uint32_t darkAbgr, float bevel) {
+    pushQuad(out, x, y, w, h, fillAbgr);
+    // Light along the top and left, dark along the bottom and right -- the
+    // standard raised-plate read, and the direction the reference HUD's own
+    // plates are lit from.
+    pushQuad(out, x, y, w, bevel, lightAbgr);
+    pushQuad(out, x, y, bevel, h, lightAbgr);
+    pushQuad(out, x, y + h - bevel, w, bevel, darkAbgr);
+    pushQuad(out, x + w - bevel, y, bevel, h, darkAbgr);
+}
+
+namespace {
+
+// Segment order matches digit_mesh.h's own table exactly (0=top,
+// 1=top-left, 2=top-right, 3=middle, 4=bottom-left, 5=bottom-right,
+// 6=bottom) so the two rasterizers can't drift apart.
+constexpr bool kSevenSeg[10][7] = {
+    {1, 1, 1, 0, 1, 1, 1}, // 0
+    {0, 0, 1, 0, 0, 1, 0}, // 1
+    {1, 0, 1, 1, 1, 0, 1}, // 2
+    {1, 0, 1, 1, 0, 1, 1}, // 3
+    {0, 1, 1, 1, 0, 1, 0}, // 4
+    {1, 1, 0, 1, 0, 1, 1}, // 5
+    {1, 1, 0, 1, 1, 1, 1}, // 6
+    {1, 0, 1, 0, 0, 1, 0}, // 7
+    {1, 1, 1, 1, 1, 1, 1}, // 8
+    {1, 1, 1, 1, 0, 1, 1}, // 9
+};
+
+// ':' and '.' are visually narrow, so they advance less than a full digit
+// cell -- otherwise "1:23.456" reads with obvious gaps around the
+// punctuation.
+constexpr float kNarrowAdvance = 0.45f;
+
+bool isNarrowGlyph(char ch) { return ch == ':' || ch == '.'; }
+
+} // namespace
+
+void pushSevenSegDigit(std::vector<PosColorVertex>& out, float x, float y, float w, float h, int digit,
+                       uint32_t onAbgr, uint32_t offAbgr) {
+    if (digit < 0 || digit > 9) return;
+    const float t = w * 0.20f; // segment thickness
+    const float half = h * 0.5f;
+    const bool* seg = kSevenSeg[digit];
+    const auto bar = [&](int idx, float bx, float by, float bw, float bh) {
+        const uint32_t col = seg[idx] ? onAbgr : offAbgr;
+        if ((col >> 24) == 0u) return; // fully transparent -> emit nothing
+        pushQuad(out, bx, by, bw, bh, col);
+    };
+    bar(0, x, y, w, t);                   // top
+    bar(1, x, y, t, half);                // top-left
+    bar(2, x + w - t, y, t, half);        // top-right
+    bar(3, x, y + half - t * 0.5f, w, t); // middle
+    bar(4, x, y + half, t, half);         // bottom-left
+    bar(5, x + w - t, y + half, t, half); // bottom-right
+    bar(6, x, y + h - t, w, t);           // bottom
+}
+
+float measureSevenSegText(float cellW, float gap, const std::string& text) {
+    if (text.empty()) return 0.0f;
+    float adv = 0.0f;
+    for (char ch : text) adv += (isNarrowGlyph(ch) ? cellW * kNarrowAdvance : cellW) + gap;
+    return adv - gap;
+}
+
+float pushSevenSegText(std::vector<PosColorVertex>& out, float x, float y, float cellW, float cellH, float gap,
+                        const std::string& text, uint32_t onAbgr, uint32_t offAbgr) {
+    float cx = x;
+    const float t = cellW * 0.20f;
+    for (char ch : text) {
+        const float adv = isNarrowGlyph(ch) ? cellW * kNarrowAdvance : cellW;
+        if (ch >= '0' && ch <= '9') {
+            pushSevenSegDigit(out, cx, y, cellW, cellH, ch - '0', onAbgr, offAbgr);
+        } else if (ch == ':') {
+            pushQuad(out, cx + adv * 0.5f - t * 0.5f, y + cellH * 0.28f, t, t, onAbgr);
+            pushQuad(out, cx + adv * 0.5f - t * 0.5f, y + cellH * 0.64f, t, t, onAbgr);
+        } else if (ch == '.') {
+            pushQuad(out, cx + adv * 0.5f - t * 0.5f, y + cellH - t, t, t, onAbgr);
+        } else if (ch == '-') {
+            pushQuad(out, cx, y + cellH * 0.5f - t * 0.5f, cellW, t, onAbgr);
+        } else if (ch == '/') {
+            pushLineSegment(out, cx + cellW * 0.85f, y, cx + cellW * 0.15f, y + cellH, t, onAbgr);
+        }
+        // Anything else (including ' ') advances without drawing, so callers
+        // can pad to a fixed width for a stable, non-jittering readout.
+        cx += adv + gap;
+    }
+    return text.empty() ? 0.0f : cx - gap - x;
+}
+
 void pushSegBar(std::vector<PosColorVertex>& out, float x, float y, float w, float h, double frac,
                  int segN, uint32_t filledAbgr, uint32_t emptyAbgr) {
     // index.html:3868-3874's drawSegBar(): segN discrete blocks, `gap`

@@ -6,11 +6,13 @@
 
 namespace {
 
-// Rows 8-10, right below hud.cpp's own rows 1-7 (LAP/POS/flag/SPD/LAST/
-// BEST/GEAR+RPM) -- never rendered in the same frame as menu.cpp's rows
+// G21 (NT2003 presentation plan): the three rows are now placed relative to
+// a caller-supplied base row rather than hardcoded at 8-10. hud.cpp's left
+// text column moved down to clear the top-left minimap and lost four rows
+// to the new corner panels, so a fixed row range no longer describes where
+// these belong. Never rendered in the same frame as menu.cpp's rows
 // (drawHud()/drawMenu() are mutually exclusive by RaceState::mode), so no
-// cross-module row conflict.
-constexpr int kRowTire = 8, kRowFuel = 9, kRowCar = 10;
+// cross-module row conflict either way.
 constexpr float kCellW = 8.0f, kCellH = 16.0f;
 constexpr float kBarX = 6.0f * kCellW; // clears the "TIRE "/"FUEL "/"CAR  " label
 constexpr float kBarW = 200.0f;
@@ -34,16 +36,16 @@ void drawOneBar(int row, const char* label, double frac, const float* filledRgb,
 
 } // namespace
 
-void drawStatusBars(const Car& player, std::vector<PosColorVertex>& uiOut) {
+void drawStatusBars(const Car& player, int baseRow, std::vector<PosColorVertex>& uiOut) {
     // index.html:4005-4009's exact color thresholds and wr/dOK inversions
     // (the bars show "how much is left," not the raw wear/damage values).
     const double wr = 1.0 - player.wear;
     const double dOK = 1.0 - player.dmg;
 
-    drawOneBar(kRowTire, "TIRE", wr,
+    drawOneBar(baseRow, "TIRE", wr,
                wr > 0.5 ? Theme::kYellow : wr > 0.25 ? Theme::kOrange : Theme::kRed, uiOut);
-    drawOneBar(kRowFuel, "FUEL", player.fuel,
+    drawOneBar(baseRow + 1, "FUEL", player.fuel,
                player.fuel > 0.3 ? Theme::kBlue : player.fuel > 0.12 ? Theme::kOrange : Theme::kRed, uiOut);
-    drawOneBar(kRowCar, "CAR ", dOK,
+    drawOneBar(baseRow + 2, "CAR ", dOK,
                dOK > 0.6 ? Theme::kBlue : dOK > 0.3 ? Theme::kOrange : Theme::kRed, uiOut);
 }

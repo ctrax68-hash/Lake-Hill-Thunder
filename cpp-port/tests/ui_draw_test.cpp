@@ -154,6 +154,84 @@ int main() {
         check(countFilled(vOver) == 6, "pushSegBar(frac=1.5) should clamp to all 6 filled");
     }
 
+    // G21 pushBevelPanel: fill quad plus four edge quads = 5 quads, and the
+    // whole thing stays inside the requested rect (a bevel that overhung
+    // its own panel would smear onto whatever sits next to it).
+    {
+        std::vector<PosColorVertex> v;
+        pushBevelPanel(v, 10.0f, 20.0f, 100.0f, 50.0f, 0xff111111, 0xffcccccc, 0xff444444, 2.0f);
+        check(v.size() == 5 * 6, "pushBevelPanel should produce 5 quads (fill + 4 edges)");
+        check(minX(v) >= 10.0f - 1e-4f && maxX(v) <= 110.0f + 1e-4f,
+              "pushBevelPanel should stay within its x extent");
+        check(minY(v) >= 20.0f - 1e-4f && maxY(v) <= 70.0f + 1e-4f,
+              "pushBevelPanel should stay within its y extent");
+    }
+
+    // G21 pushSevenSegDigit: '1' lights 2 of 7 segments, '8' lights all 7.
+    // With a fully transparent `offAbgr` the unlit ones emit nothing, so
+    // vertex count is a direct read of the segment table.
+    {
+        std::vector<PosColorVertex> vOne, vEight, vGhost;
+        pushSevenSegDigit(vOne, 0, 0, 20.0f, 40.0f, 1, 0xffffffff, 0x00000000);
+        pushSevenSegDigit(vEight, 0, 0, 20.0f, 40.0f, 8, 0xffffffff, 0x00000000);
+        pushSevenSegDigit(vGhost, 0, 0, 20.0f, 40.0f, 1, 0xffffffff, 0xff222222);
+        check(vOne.size() == 2 * 6, "seven-seg '1' should light exactly 2 segments");
+        check(vEight.size() == 7 * 6, "seven-seg '8' should light all 7 segments");
+        check(vGhost.size() == 7 * 6, "an opaque offAbgr should still emit all 7 segment quads");
+        check(maxX(vEight) <= 20.0f + 1e-4f && maxY(vEight) <= 40.0f + 1e-4f,
+              "seven-seg digit should stay within its cell");
+    }
+
+    // Out-of-range digits draw nothing rather than reading off the table.
+    {
+        std::vector<PosColorVertex> v;
+        pushSevenSegDigit(v, 0, 0, 20.0f, 40.0f, -1, 0xffffffff, 0x00000000);
+        pushSevenSegDigit(v, 0, 0, 20.0f, 40.0f, 10, 0xffffffff, 0x00000000);
+        check(v.empty(), "out-of-range seven-seg digits should emit nothing");
+    }
+
+    // measureSevenSegText must agree with what pushSevenSegText actually
+    // advances -- hud.cpp right-aligns its readouts by subtracting the
+    // measured width, so a mismatch would silently misplace every panel
+    // value.
+    {
+        const char* cases[] = {"1", "12", "1:23.45", "--:--.--", "12/40"};
+        for (const char* s : cases) {
+            std::vector<PosColorVertex> v;
+            const float advanced = pushSevenSegText(v, 0.0f, 0.0f, 13.0f, 22.0f, 3.0f, s, 0xffffffff, 0u);
+            const float measured = measureSevenSegText(13.0f, 3.0f, s);
+            check(std::abs(advanced - measured) < 1e-3f,
+                  "measureSevenSegText should match pushSevenSegText's advance");
+        }
+        check(std::abs(measureSevenSegText(13.0f, 3.0f, "")) < 1e-4f,
+              "measureSevenSegText(\"\") should be 0");
+    }
+
+    // ':' and '.' advance narrower than a digit, so a lap time is shorter
+    // than the same glyph count of digits.
+    {
+        check(measureSevenSegText(10.0f, 2.0f, "1:23.45") < measureSevenSegText(10.0f, 2.0f, "1234567"),
+              "punctuation should advance narrower than digits");
+    }
+
+    // Unsupported characters advance without drawing, so callers can pad to
+    // a fixed width without geometry appearing.
+    {
+        std::vector<PosColorVertex> vPadded, vBare;
+        pushSevenSegText(vPadded, 0, 0, 12.0f, 20.0f, 2.0f, "  7", 0xffffffff, 0u);
+        pushSevenSegText(vBare, 0, 0, 12.0f, 20.0f, 2.0f, "7", 0xffffffff, 0u);
+        check(vPadded.size() == vBare.size(), "spaces should advance without emitting geometry");
+        check(minX(vPadded) > minX(vBare) + 1e-4f, "padded text should start further right");
+    }
+
+    // The placeholder fmtLapTime() returns for an unset lap must render --
+    // it is what the bottom-left panel shows for most of lap 1.
+    {
+        std::vector<PosColorVertex> v;
+        pushSevenSegText(v, 0, 0, 13.0f, 22.0f, 3.0f, "--:--.--", 0xffffffff, 0u);
+        check(!v.empty(), "the '--:--.--' lap-time placeholder should emit geometry");
+    }
+
     if (ok) {
         std::printf("ui_draw_test: all geometry helpers match expectations.\n");
         return 0;

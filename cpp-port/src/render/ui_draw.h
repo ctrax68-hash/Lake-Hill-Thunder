@@ -2,6 +2,7 @@
 
 #include "vertex.h"
 
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -44,6 +45,40 @@ void pushRingOutline(std::vector<PosColorVertex>& out, float cx, float cy, float
 // used for the minimap's per-car dots.
 void pushFilledCircle(std::vector<PosColorVertex>& out, float cx, float cy, float radius,
                        uint32_t abgr, int segments = 16);
+
+// G21 (NT2003 presentation plan): a beveled panel -- flat fill plus a
+// light top/left edge and a dark bottom/right edge. The reference HUD's
+// pos/lap, lap-time and gauge surrounds are all beveled plates rather than
+// flat rectangles, and it's what separates them from the scene behind.
+void pushBevelPanel(std::vector<PosColorVertex>& out, float x, float y, float w, float h, uint32_t fillAbgr,
+                     uint32_t lightAbgr, uint32_t darkAbgr, float bevel = 2.0f);
+
+// G21: UI-space seven-segment digits.
+//
+// The reference's MPH/gear readouts are segmented LCDs, not font text --
+// so rather than adding a bitmap-font atlas and a textured-UI path just to
+// print numbers, this reuses the segment layout `digit_mesh.h` already
+// established for the pylon/jumbotron and emits plain `pushQuad()` calls in
+// pixel space. `digit_mesh` itself can't serve here: it emits world-space
+// `MeshVertex` with per-triangle normals for the lit 3D pipeline, and it
+// takes an `int` (via `std::to_string`), so it can express neither ':' nor
+// '.' -- which lap times need.
+//
+// `offAbgr` paints the unlit segments as faint ghosts, the way a real LCD
+// shows its inactive bars; pass a fully transparent color to omit them.
+void pushSevenSegDigit(std::vector<PosColorVertex>& out, float x, float y, float w, float h, int digit,
+                       uint32_t onAbgr, uint32_t offAbgr);
+
+// Renders `text` as seven-segment glyphs left-to-right starting at (x, y).
+// Understands '0'-'9', ':', '.', '-', '/' and ' '; any other character
+// advances one cell without drawing (so callers can pad freely). Returns
+// the total advanced width in pixels, so callers can right-align.
+float pushSevenSegText(std::vector<PosColorVertex>& out, float x, float y, float cellW, float cellH, float gap,
+                        const std::string& text, uint32_t onAbgr, uint32_t offAbgr);
+
+// Measures what pushSevenSegText() would advance, without emitting
+// geometry -- for right-aligning a value inside a panel.
+float measureSevenSegText(float cellW, float gap, const std::string& text);
 
 // Direct port of JS's drawSegBar() (index.html:3868-3874): segN discrete
 // blocks across width `w`, `frac` (clamped to [0,1]) of them filled with

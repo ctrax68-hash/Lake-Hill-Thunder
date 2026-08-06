@@ -6266,3 +6266,86 @@ camera angle: at the roof centre the pace livery returns
 `rgb(255,179,26)` where a race livery returns its number panel, with dark
 mounting feet either side, and the bar's R channel is 1.000 against the
 0.85 bright-pass threshold -- clearing it by 0.150, so it does bloom.
+
+## G21 -- HUD-A: corner panels and seven-segment readouts
+
+The HUD was one left-hand dbgText column: rows 0-7 of text, the TIRE/FUEL/
+CAR bars at rows 8-10, then the leaderboard and minimap cascading down the
+same edge in pixel space. The reference distributes its HUD across all four
+corners and leaves the centre of the screen clear, so this phase
+redistributed what already existed rather than adding new information:
+
+- **Minimap to the top-left** (`{8, 8, 170, 100}`), on a beveled plate.
+  `drawMinimap()` deliberately draws only an outline -- a filled panel would
+  hide the live scene under it -- so the plate is pushed first and the map
+  paints over it. The UI list is one depth-test-free draw call, so painter
+  order is simply append order.
+- **Left column reduced to live telemetry** and moved down to row 7 to clear
+  the minimap: spotter, flag, SPD, GEAR/RPM, then the three status bars.
+- **POS / LAP to the top-right**, on row 4 so it clears the CAM button
+  (`computeTouchRegions()` puts `bC` at y=14..54).
+- **LAP TIME / BEST to the bottom-left**, above the steer buttons (`bL`/`bR`
+  start at `windowH-90`).
+
+**Seven-segment digits instead of the planned glyph atlas.** The plan called
+for painting a bitmap font into the atlas's spare space and adding a
+textured-UI path to sample it. That turned out to be the wrong tool for what
+G21 actually needed: the reference's corner readouts are *segmented
+displays*, and this port already had a seven-segment table in
+`digit_mesh.h`. So `ui_draw.h` gained `pushSevenSegDigit()`/
+`pushSevenSegText()`, which emit the same plain `pushQuad()` geometry as
+every other UI element -- no atlas, no new shader, no new vertex layout.
+`digit_mesh` itself could not be reused directly: it emits world-space
+`MeshVertex` with per-triangle normals for the lit 3D pipeline, and takes an
+`int` via `std::to_string`, so it can express neither `:` nor `.` -- which
+lap times need. The two segment tables are written in the same order and
+each says so, so they cannot silently drift apart. **The textured-UI path is
+deferred to G23**, where the rearview mirror genuinely needs it (a
+framebuffer texture composited into the UI view) rather than being built
+speculatively here.
+
+`dbgText` is still the right tool for the small captions, and is used for
+them -- but it is locked to one fixed 8x16 cell, so a headline number drawn
+with it would be exactly the same size as its own caption. That is the whole
+reason the values needed their own rasterizer.
+
+**Two coordinate systems, reconciled.** dbgText can only be addressed in
+whole 8x16 cells while panels are placed in pixels, so every panel is laid
+out from a caption *row* and the plate is drawn `kPanelPadTop` (6px) above
+it. Without that the caption sits flush against its own top bevel and reads
+as clipped -- which is exactly how the first build looked.
+
+**Leaderboard now yields to the lap panel.** Both live on the left edge, and
+on a short window they overlapped badly (an 860x480 tab had the lap plate
+drawn straight through the middle of the leaderboard -- caught in a
+screenshot, not by any test). The leaderboard is now trimmed to the rows
+that fit above the panel, dropping entries off the bottom of the top-N block
+but **never** the pinned player row: that is the row the player is looking
+for, and it carries the divider that makes the list readable. If nothing
+fits, it is skipped entirely.
+
+`drawStatusBars()` lost its hardcoded rows 8-10 and takes a base row from
+the caller, since a fixed row range no longer describes where those bars
+belong.
+
+**Verified**: native `ctest` 29/29, with `ui_draw_test` extended to cover the
+new helpers -- segment counts per digit (`1` lights 2, `8` lights all 7),
+out-of-range digits emitting nothing, glyphs staying inside their cell,
+bevel quads staying inside their panel, unsupported characters advancing
+without drawing, and `measureSevenSegText()` agreeing with what
+`pushSevenSegText()` actually advances (hud.cpp right-aligns by subtracting
+that measurement, so a mismatch would silently misplace every value). WASM
+rebuild, zero console/page errors at 1280x720, 1600x900, 1024x600 and
+860x480.
+
+Screenshots confirm the layout, but they can only ever show the lap time the
+player happened to set -- and an unattended player car tends to wreck on lap
+1, so every capture showed the `--:--.--` placeholder. The readout placement
+was therefore verified the camera-independent way, per the G12-G14 "decode
+it directly" precedent: a scratch program replicating hud.cpp's own panel
+arithmetic against the real `ui_draw`/`fmt_time` sources, checking that
+every emitted vertex lands inside its plate for a real lap time
+(`1:23.46`), a zero-padded sub-10s time (`0:09.87`), a 10-minute time
+(`10:05.50`), a 7-glyph `200/200` lap count and the placeholder, at window
+sizes from 1600x900 down to 640x400 -- and that neither plate collides with
+the CAM button above or the steer buttons below. All pass.

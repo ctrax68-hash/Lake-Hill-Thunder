@@ -50,6 +50,17 @@
 // input-recognized but never painted (touch_controls.h's own header
 // comment used to say so plainly).
 //
+// G21 (NT2003 presentation plan) rearranged all of the above from one
+// left-hand column into corner blocks, matching how the reference
+// distributes its HUD: minimap top-left, POS/LAP top-right, LAP TIME/BEST
+// bottom-left, and the left column reduced to live telemetry (spotter,
+// flag, speed, gear/RPM, TIRE/FUEL/CAR bars) with the leaderboard beneath
+// it. `windowW`/`windowH` now also place the two new panels, so they are no
+// longer only a touch-region input. Values in the panels are drawn with
+// ui_draw.h's seven-segment helpers rather than dbgText -- dbgText is
+// locked to one fixed 8x16 cell, so a headline number drawn with it would
+// be the same size as its own caption.
+//
 // Caller is expected to have called bgfx::setDebug(BGFX_DEBUG_TEXT) once
 // at init and bgfx::dbgTextClear() once this frame before calling this.
 void drawHud(const RaceState& state, const std::vector<Car>& cars, std::vector<PosColorVertex>& uiOut,
