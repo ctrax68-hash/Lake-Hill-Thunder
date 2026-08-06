@@ -6697,3 +6697,127 @@ the first draft of this check missed the cowl line by exactly 1px because
 landed one texel short of it) confirming each of the 6 elements paints
 darker/brighter in the expected direction at its expected location. All
 10 checks pass.
+
+### H3: Contact shadows (NT2003 engine-feel plan)
+
+Ports JS's blob shadow (`carShadowMat`, index.html:3267): a flat,
+alpha-blended decal lying in the track surface's own tangent plane under
+each car, rather than a flat world-XZ plane. This distinction is the whole
+point of the phase -- Big Sable's corners bank at 23 degrees, and this
+port's ribbon mesh (G17) already renders that banking as real 3D geometry,
+so a shadow that didn't tilt with it would visibly float above the inside
+edge and clip through the outside edge of every banked turn.
+
+**A real architectural fact surfaced while designing this, not assumed**:
+this port's car BODY does not tilt with banking at all -- its model matrix
+is the pre-existing `mat4Mul(mat4Translate(wx, carY, wy), mat4RotateY(-ch))`,
+only the Y-height follows `surfH()`, never a basis tilt. JS's own
+`carModelMat()` uses a full tilted `carBasis()` for the body too. Fixing
+that is out of scope for this phase (a car-body change, not a shadow
+change) and left as a known, pre-existing simplification. What matters for
+H3 is that the SHADOW doesn't inherit that simplification: it has to lie
+flush against the real banked asphalt regardless of whether the car
+sitting on it currently tilts to match, because the surface it's a decal
+of is real geometry, not a rendering convenience.
+
+**`carShadowBasis()`** (renderer.cpp, new): builds the shadow's own
+(right, fw, up) basis, independent of the car body's matrix above --
+`up = surfaceUp(track, s)` (the same banked-normal function the chase
+camera's lean already uses, G15/Phase 5a), and `fw` is the car's own
+heading vector re-projected into the plane perpendicular to `up` via the
+same double-cross-product trick `carBasis()` uses
+(`v3norm(cross(up, cross(f, up)))`, sign-corrected to keep pointing
+forward) -- a direct, exact port of index.html:3247-3248, just applied to
+a basis the shadow builds for itself rather than one shared with the
+body. `right = cross(fw, up)` follows the same way; JS's `upF` is
+algebraically identical to `up` for an orthonormal fw/up pair
+(`cross(cross(fw,up),fw) == up`), so this doesn't recompute a redundant
+second copy of it the way JS's `carBasis()` does.
+
+**`carShadowModelMat()`** (renderer.cpp, new): footprint 2.3 (right) x 4.6
+(forward), lifted 0.02 along the surface normal to dodge z-fighting with
+the ribbon underneath -- all three numbers straight from
+`carShadowMat()`. Column-major, matching this file's existing
+`mat4Translate`/`mat4RotateY` convention: col0=right*W, col1=fw*L, col2=up,
+col3=position -- a direct adaptation of JS's own
+`m4fromBasis(right, fw, upF, pos)`.
+
+**Geometry**: one static unit-radius (0.5, matching `THREE.PlaneGeometry(1,1)`'s
+extent) alpha-fading disc (`buildShadowDiscVertices()`), built once in
+`init()` and stretched into the real WxL footprint by the model matrix's
+own column magnitudes -- exactly how JS scales its basis vectors before
+calling `m4fromBasis()` rather than scaling the geometry, so a non-uniform
+right/fw scale distorts the disc into the same ellipse JS's stretched
+plane produces. Two-ring alpha falloff (0.5 center, 0.22 at 65% radius, 0
+at the rim) mirrors JS's canvas radial-gradient stops (index.html:3928) as
+vertex-color alpha instead of a texture lookup: the existing flat
+`vs_flat`/`fs_flat` pair (`program_`) has no UV/sampler at all, only
+`a_color0` passthrough, so a soft edge comes from interpolated vertex
+color across the fan rather than a sampled gradient -- no new shader,
+texture, or vertex layout needed.
+
+**Wiring**: `Renderer::WorldDrawList` gets a parallel `shadows` vector
+(one `Mat4f` per car, alongside the existing `cars` vector G23 built for
+the mirror pass) so it flows through the same `submitWorld()` path
+automatically -- the rearview mirror gets correct shadows for free, same
+as G23's own cars did. Drawn right after the opaque ground/ribbon/stadium
+layers and before the opaque car bodies: alpha-blended, depth-tested
+against what's already in the depth buffer, but NOT depth-writing
+(`BGFX_STATE_DEPTH_TEST_LESS` without `WRITE_Z`, matching JS's
+`depthWrite:false`) -- so a shadow occluded by, say, the stadium wall is
+still correctly hidden, without punching a hole in the depth buffer for
+the opaque car that draws over it next. The pace car gets one too (JS
+does this at index.html:4098).
+
+**Verified**: `ctest` 30/30 (no new suite -- this is bgfx-drawn geometry,
+not pure logic, same category as the car rig/livery texture). A
+"decode it directly" scratch program (`decode_h3_shadow.cpp`, not
+promoted into `tools/` -- unlike H1's `check_car_rig.py`, no later phase
+in this plan touches this same math, so there's no ongoing-reuse case for
+keeping it; links the real `track.cpp`/`track_surface.cpp` directly --
+`carShadowBasis()`/
+`carShadowModelMat()` themselves are transcribed by hand since they're
+file-local to renderer.cpp, same caveat as any renderer.cpp-internal math
+this project has verified this way before) against Big Sable Speedway's
+real 23-degree corner banking: confirms the basis is genuinely orthonormal
+at both a 5-degree straight and the 23-degree corner apex, that
+`surfaceUp()`'s own `up.y` matches `cos(bank)` exactly, that all 4 shadow
+corners are exactly coplanar with the real banked tangent plane (not a
+flat one) with the correct WxL footprint and 0.02 lift, and -- the
+decisive check -- that a shadow built from a naive flat world-up basis
+instead would sit measurably off that real plane, by an amount that scales
+with `sin(bank)` to within 5% between the two points. That last check is
+the one that would catch a regression back to a flat shadow; the rest
+would pass even for a subtly-wrong implementation.
+
+Screenshots (native `xvfb-run`, Big Sable Speedway, `Chase` and `TopDown`):
+at the shadow's real, deliberately subtle alpha (0.5/0.22/0, matching JS),
+a chase-cam shot from directly behind a car mostly hides its own shadow
+under its own body by construction -- expected for any blob shadow at that
+angle, not a defect, and confirmed as such by a temporary debug pass
+(described next). To positively confirm the decal renders, is positioned
+correctly, and isn't silently failing to submit: **(1)** a one-off debug
+build with the disc's alpha temporarily forced to fully-opaque magenta
+showed a clear magenta glow poking from under/behind every car in Chase
+mode and a distinct magenta patch beside each car in TopDown mode --
+confirming the draw call fires, at the right place, correctly clipped by
+the opaque car body in front of it (depth test working as designed); this
+was reverted immediately after. **(2)** At the shadow's real, shipped
+alpha, the WASM build's own field-formation screenshot (lighter Milltown
+Bullring asphalt, more forgiving contrast than Big Sable's darker surface)
+shows a genuinely visible soft dark smudge behind the rear tires of both
+the pace car and the field cars, with no debug aid at all -- the real,
+final look, not just the debug-amplified one.
+
+**Also added**: `LHT_START_TOPDOWN` env var (main.cpp), mirroring the
+existing `LHT_START_CHASE` -- forces `TopDown` at startup for scripted
+headless verification instead of requiring a live `C`-key/CAM-button
+click, which this sandbox's `xvfb-run` harness has no way to send. Small,
+permanent, same rationale as the flag it mirrors.
+
+**Native `ctest`**: 30/30. **WASM**: rebuilds clean under Emscripten,
+`tests/wasm_verify.js` reports zero console errors and zero page errors;
+manifest/icons all still valid. The harness's service-worker-ready check
+still fails in this container -- a pre-existing, already-diagnosed
+environment/timing quirk logged in Step 4's own entry above, unrelated to
+this phase's renderer changes, not a new regression.

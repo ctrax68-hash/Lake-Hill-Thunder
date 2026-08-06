@@ -163,6 +163,16 @@ private:
     bgfx::VertexBufferHandle trackVb_ = BGFX_INVALID_HANDLE;
     uint32_t trackVertexCount_ = 0;
 
+    // H3 (NT2003 engine-feel plan): the contact-shadow decal's static
+    // geometry -- one unit-radius alpha-fading disc (renderer.cpp's
+    // buildShadowDiscVertices()), built once in init() and reused by every
+    // car via a per-car model matrix (renderer.cpp's carShadowModelMat()),
+    // same idiom as trackVb_/skyVb_ above. Drawn through layout_/program_
+    // (the flat vs_flat/fs_flat pair already used by UI overlays), just
+    // alpha-blended into the world view instead.
+    bgfx::VertexBufferHandle shadowVb_ = BGFX_INVALID_HANDLE;
+    uint32_t shadowVertexCount_ = 0;
+
     // Phase 5a (PORT_PROGRESS.md): the lit shader/vertex layout for
     // world-space geometry (the banked track ribbon here; stadium/stands
     // join it in Phase 5d). The pixel-space UI overlay (view 1) keeps using

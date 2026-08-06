@@ -222,6 +222,123 @@ Mat4f mat4Mul(const Mat4f& a, const Mat4f& b) {
     return r;
 }
 
+// H3 (NT2003 engine-feel plan): JS's carBasis()/carShadowMat()
+// (index.html:3239-3274), reduced to just the tangent-plane basis the
+// contact-shadow decal needs. Deliberately NOT plugged into the car
+// BODY's own model matrix -- that stays the pre-existing flat
+// mat4Mul(mat4Translate(...), mat4RotateY(-ch)) below, untouched by this
+// phase (see PORT_PROGRESS.md's H3 entry for why that divergence from JS
+// is fine to leave as-is). The shadow has no such slack: a flat quad
+// under a car that doesn't tilt would still visibly float/clip through
+// the asphalt on every banked corner, since the BANKED SURFACE itself
+// (unlike this port's car body) is real 3D geometry. So the shadow gets
+// its own basis, built from the same surfaceUp() the chase camera already
+// leans against (renderFrame()'s upBlend), combined with the car's own
+// heading for the forward axis -- exactly the pairing already established
+// at this file's chase-camera site above (surfaceUp(track, s) + cos/sin
+// of the car's own pose.hdg).
+Vec3 vec3Cross(const Vec3& a, const Vec3& b) {
+    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+}
+
+Vec3 vec3Normalize(const Vec3& v) {
+    const double len = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    if (len < 1e-9) return {0.0, 1.0, 0.0};
+    return {v.x / len, v.y / len, v.z / len};
+}
+
+struct ShadowBasis {
+    Vec3 right, fw, up;
+};
+
+// fw: the car's heading vector re-projected into the plane perpendicular
+// to `up` (JS's `v3norm(cross(up, cross(f,up)))` double-cross projection,
+// sign-corrected to keep pointing the same way as the raw heading -- an
+// exact port of index.html:3247-3248; `c.pitch` is dropped, not
+// approximated, since this port's Car has no pitch field). right/up follow
+// from there exactly as carBasis() derives them; `upF` is algebraically
+// identical to `up` (cross(cross(fw,up),fw) == up for orthonormal fw/up),
+// so unlike JS this doesn't recompute a redundant second copy of it.
+ShadowBasis carShadowBasis(const Track& track, double s, double heading) {
+    const Vec3 up = surfaceUp(track, s);
+    const Vec3 f{std::cos(heading), 0.0, std::sin(heading)};
+    Vec3 fw = vec3Normalize(vec3Cross(up, vec3Cross(f, up)));
+    if (fw.x * f.x + fw.z * f.z < 0.0) fw = {-fw.x, -fw.y, -fw.z};
+    const Vec3 right = vec3Normalize(vec3Cross(fw, up));
+    return {right, fw, up};
+}
+
+// carShadowMat() (index.html:3267-3274): footprint 2.3 (right) x 4.6
+// (forward), lifted 0.02 along the surface normal to dodge z-fighting with
+// the ribbon underneath. `base` is the same pos3() point the caller already
+// computed for the car's own carY (or the pace car's), passed in rather
+// than recomputed. Columns follow this file's own column-major convention
+// (mat4Translate/mat4RotateY above): col0=right*W, col1=fw*L, col2=up,
+// col3=position -- a direct adaptation of JS's m4fromBasis(right, fw, upF,
+// pos), which uses the same column layout.
+Mat4f carShadowModelMat(const Track& track, double s, double heading, const Vec3& base) {
+    const ShadowBasis b = carShadowBasis(track, s, heading);
+    constexpr double kShadowW = 2.3, kShadowL = 4.6, kShadowLift = 0.02;
+    Mat4f m{};
+    m[0] = (float)(b.right.x * kShadowW);
+    m[1] = (float)(b.right.y * kShadowW);
+    m[2] = (float)(b.right.z * kShadowW);
+    m[3] = 0.0f;
+    m[4] = (float)(b.fw.x * kShadowL);
+    m[5] = (float)(b.fw.y * kShadowL);
+    m[6] = (float)(b.fw.z * kShadowL);
+    m[7] = 0.0f;
+    m[8] = (float)b.up.x;
+    m[9] = (float)b.up.y;
+    m[10] = (float)b.up.z;
+    m[11] = 0.0f;
+    m[12] = (float)(base.x + b.up.x * kShadowLift);
+    m[13] = (float)(base.y + b.up.y * kShadowLift);
+    m[14] = (float)(base.z + b.up.z * kShadowLift);
+    m[15] = 1.0f;
+    return m;
+}
+
+// H3: the shadow decal's own static geometry -- a unit-radius (0.5, matching
+// THREE.PlaneGeometry(1,1)'s extent) disc built once and stretched into the
+// W x L footprint by carShadowModelMat()'s own column magnitudes, exactly
+// as JS scales its basis vectors before calling m4fromBasis() rather than
+// scaling the geometry -- so a non-uniform right/fw scale distorts the disc
+// into the same ellipse JS's stretched plane produces. Two-ring alpha
+// falloff (0.5 center, 0.22 at 65% radius, 0 at the rim) mirrors JS's canvas
+// radial-gradient stops (index.html:3928) as vertex-color alpha instead of a
+// texture lookup: vs_flat/fs_flat (program_) has no UV/sampler at all, only
+// a_color0 passthrough, so a soft edge has to come from interpolated vertex
+// color across the fan rather than a sampled gradient.
+std::vector<PosColorVertex> buildShadowDiscVertices(int segments) {
+    constexpr float kMidR = 0.5f * 0.65f, kOuterR = 0.5f;
+    // Same 0.5/0.22/0 alpha stops as JS's canvas radial gradient
+    // (index.html:3928's 'rgba(0,0,0,0.5)'/'0.22'/'0'), black rgb.
+    const uint32_t kCenterColor = packColor(0.0f, 0.0f, 0.0f, 0.5f);
+    const uint32_t kMidColor = packColor(0.0f, 0.0f, 0.0f, 0.22f);
+    const uint32_t kRimColor = packColor(0.0f, 0.0f, 0.0f, 0.0f);
+    const float twoPi = 2.0f * (float)M_PI;
+    std::vector<PosColorVertex> out;
+    out.reserve((size_t)segments * 9);
+    for (int i = 0; i < segments; ++i) {
+        const float a0 = (float)i / (float)segments * twoPi;
+        const float a1 = (float)(i + 1) / (float)segments * twoPi;
+        const float c0 = std::cos(a0), s0 = std::sin(a0), c1 = std::cos(a1), s1 = std::sin(a1);
+        // Center -> mid-ring fan.
+        out.push_back({0.0f, 0.0f, 0.0f, kCenterColor});
+        out.push_back({kMidR * c0, kMidR * s0, 0.0f, kMidColor});
+        out.push_back({kMidR * c1, kMidR * s1, 0.0f, kMidColor});
+        // Mid-ring -> outer-ring (rim) strip, as two triangles.
+        out.push_back({kMidR * c0, kMidR * s0, 0.0f, kMidColor});
+        out.push_back({kOuterR * c0, kOuterR * s0, 0.0f, kRimColor});
+        out.push_back({kOuterR * c1, kOuterR * s1, 0.0f, kRimColor});
+        out.push_back({kMidR * c0, kMidR * s0, 0.0f, kMidColor});
+        out.push_back({kOuterR * c1, kOuterR * s1, 0.0f, kRimColor});
+        out.push_back({kMidR * c1, kMidR * s1, 0.0f, kMidColor});
+    }
+    return out;
+}
+
 // G15 (NASCAR-Thunder gap-analysis plan): render-side pose interpolation,
 // ported from JS's `lerpAng()`/`lerpS()`/`poseOf()` (index.html:3229-3238).
 // `tick()` runs at a fixed DT=0.02 (50Hz) while the display refreshes at an
@@ -301,6 +418,16 @@ bool Renderer::init(void* nativeDisplayHandle, void* nativeWindowHandle, int wid
     bgfx::ShaderHandle vsh = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "vs_flat");
     bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "fs_flat");
     program_ = bgfx::createProgram(vsh, fsh, true /* destroy shaders when program is destroyed */);
+
+    // H3 (NT2003 engine-feel plan): the contact-shadow disc, built once here
+    // (needs layout_, just created above) and stretched per-car by
+    // carShadowModelMat() every frame -- see renderer.h's shadowVb_ comment.
+    {
+        const auto shadowVerts = buildShadowDiscVertices(24);
+        shadowVb_ = bgfx::createVertexBuffer(
+            bgfx::copy(shadowVerts.data(), (uint32_t)(shadowVerts.size() * sizeof(PosColorVertex))), layout_);
+        shadowVertexCount_ = (uint32_t)shadowVerts.size();
+    }
 
     // Phase 5a (PORT_PROGRESS.md): lit program for world-space geometry.
     litLayout_ = PosNormalColorVertex::layout();
@@ -466,6 +593,7 @@ void Renderer::shutdown() {
     if (bgfx::isValid(skyProgram_)) bgfx::destroy(skyProgram_);
     if (bgfx::isValid(uSkyTexColor_)) bgfx::destroy(uSkyTexColor_);
     if (bgfx::isValid(skyVb_)) bgfx::destroy(skyVb_);
+    if (bgfx::isValid(shadowVb_)) bgfx::destroy(shadowVb_);
     if (bgfx::isValid(skyTexture_)) bgfx::destroy(skyTexture_);
     if (bgfx::isValid(asphaltTexture_)) bgfx::destroy(asphaltTexture_);
     if (bgfx::isValid(stadiumVb_)) bgfx::destroy(stadiumVb_);
@@ -1011,6 +1139,11 @@ struct Renderer::WorldDrawList {
         bgfx::TextureHandle texture = BGFX_INVALID_HANDLE;
     };
     std::vector<Item> cars;
+    // H3: one model matrix per car's contact-shadow decal (carShadowModelMat()),
+    // parallel to `cars` above but kept separate -- the shadow disc is a
+    // plain static VB with no bone palette/texture, so it doesn't need
+    // Item's other fields.
+    std::vector<Mat4f> shadows;
 };
 
 void Renderer::submitWorld(bgfx::ViewId viewId, const float view[16], const float proj[16],
@@ -1076,6 +1209,26 @@ void Renderer::submitWorld(bgfx::ViewId viewId, const float view[16], const floa
         bgfx::setTexture(0, uSkyTexColor_, atlasTexture_);
         bgfx::setState(state);
         bgfx::submit(viewId, texturedLitProgram_);
+    }
+
+    // H3 (NT2003 engine-feel plan): contact shadows, drawn before the opaque
+    // car bodies (matches carShadowMat()'s renderOrder=-1 intent -- sit on
+    // the track surface, with the cars on top of them) and after every
+    // opaque world layer above, so they blend over real ground/asphalt/
+    // stadium color rather than the view's raw clear color. Alpha-blended,
+    // depth-tested but NOT depth-writing (JS's `depthWrite:false`) -- so a
+    // shadow whose footprint is occluded by, say, the stadium wall still
+    // gets correctly hidden, without punching a hole in the depth buffer
+    // for whatever draws after it.
+    if (shadowVertexCount_ > 0 && !draws.shadows.empty()) {
+        const uint64_t shadowState =
+            BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_BLEND_ALPHA;
+        for (const auto& model : draws.shadows) {
+            bgfx::setTransform(model.data());
+            bgfx::setVertexBuffer(0, shadowVb_, 0, shadowVertexCount_);
+            bgfx::setState(shadowState);
+            bgfx::submit(viewId, program_);
+        }
     }
 
     // Cars (and, when it is on track, the pace car) from the prebuilt list.
@@ -1454,6 +1607,12 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
                 // crash it exists to isolate.
                 draws.cars.push_back({model, std::move(boneFloats), (int)bonePalette.size(),
                                       getOrBuildCarTexture(c)});
+                // H3: the car's own contact shadow, built from the real
+                // banked surfaceUp() rather than this car-body matrix above
+                // (which never tilts with banking) -- see carShadowBasis()'s
+                // own comment for why that's the correct call even though
+                // the body it sits under stays flat.
+                draws.shadows.push_back(carShadowModelMat(*track_, pose.s, pose.hdg, carPos));
             }
         }
 
@@ -1495,6 +1654,8 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
                 mat4Mul(mat4Translate((float)pX, (float)pacePos.y, (float)pY), mat4RotateY(-(float)pHdg));
             draws.cars.push_back({paceModel, std::move(paceBoneFloats), (int)paceBones.size(),
                                   getOrBuildPaceTexture()});
+            // H3: JS gives the pace car a shadow too (index.html:4098).
+            draws.shadows.push_back(carShadowModelMat(*track_, pS, pHdg, pacePos));
         }
     }
 

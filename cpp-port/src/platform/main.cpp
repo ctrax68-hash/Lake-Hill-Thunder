@@ -584,6 +584,7 @@ int main(int argc, char** argv)
     // live C keypress -- for scripted headless screenshot verification,
     // same rationale as LHT_FORCE_RACE below.
     if (std::getenv("LHT_START_CHASE")) S.renderer.setCameraMode(Renderer::CameraMode::Chase);
+    if (std::getenv("LHT_START_TOPDOWN")) S.renderer.setCameraMode(Renderer::CameraMode::TopDown);
 
     // Phase 4b (PORT_PROGRESS.md): the real entry point is now the menu
     // screen -- RaceState's own default mode ("menu", race_state.h) is left
