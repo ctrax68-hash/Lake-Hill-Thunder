@@ -203,6 +203,11 @@ private:
     // fake-env-reflection terms -- nothing before G2 ever needed the camera's
     // position on the GPU (the existing lit shaders are view-independent).
     bgfx::UniformHandle uCamPos_ = BGFX_INVALID_HANDLE;
+    // H6 (NT2003 engine-feel plan): x = constant taillight self-illumination
+    // boost (every car), y = pace car's amber roof-bar pulse strength (0 for
+    // the field). Set per-car in submitWorld()'s draw loop, same pattern as
+    // SkinnedMesh::setBoneMatrices() being called right before each draw.
+    bgfx::UniformHandle uEmissive_ = BGFX_INVALID_HANDLE;
 
     // Phase 5b (PORT_PROGRESS.md): the resolved ENV_PRESETS values for the
     // current track (env_presets.h), computed once in setTrack() rather
@@ -296,6 +301,11 @@ private:
     // every frame (wheels keep spinning in TopDown camera mode too).
     bool wheelAnimInitialized_ = false;
     std::chrono::steady_clock::time_point wheelAnimLastTime_;
+    // H6 (NT2003 engine-feel plan): real elapsed seconds, accumulated from
+    // the same wheel-anim wall-clock dt computed just above (no separate
+    // clock needed) -- drives the pace car's amber roof-bar pulse so it
+    // animates continuously regardless of camera mode or sim tick cadence.
+    double paceBarPulseT_ = 0.0;
 
     // Phase 5h (PORT_PROGRESS.md): the bloom+grade+tonemap postprocess
     // chain. The sky/world views now render into `sceneFb_` (an offscreen

@@ -7030,3 +7030,77 @@ the shader/renderer actually use (`speedT=1` at `v>=100` with full draft
 gives vignette 0.40/0.85 and `blurAmt=0.05`, the exact tuned max already
 hand-verified subtle at roughly half that strength) -- this project's own
 documented fallback for cases a screenshot won't reliably capture.
+
+### H6: Emissive pass (NT2003 engine-feel plan)
+
+`fs_car.sc` (the shader every car -- field and pace -- draws through) was
+ambient + sun + specular/Fresnel/fake-reflection, with no self-illumination
+term at all: a taillight lens and an ordinary painted panel were shaded
+identically, and G20's amber pace-car bar only "glowed" because it was
+painted bright enough to clear the bloom bright-pass threshold (0.85) --
+a static trick, explicitly logged there as unable to pulse without a real
+emissive path.
+
+**No new texture channel, no new geometry.** Taillight red and the pace
+bar's amber are both painted as specific, deliberately distinct RGB
+constants in `livery.cpp` (`taillight{150,18,15}/255`, the roof-bar fill
+`{1.0, 0.70, 0.10}`) -- so the shader recognizes those same constants by
+color-distance on the already-sampled livery texel and treats a close
+match as "this is a lamp, light it regardless of the sun/hemisphere term."
+Cheap and texture-free, the same "plausible look over a physical model"
+philosophy G2's own header comment already states for this file's fake
+env-reflection term.
+
+**`u_emissive` (new vec4 uniform)**: x = a constant taillight glow boost
+(every car, always on -- real tail lamps read as lit even without a brake-
+state model, which this port's `Car` doesn't carry); y = the pace car's
+amber-bar pulse strength (0 for the field). Set per-car in
+`submitWorld()`'s draw loop, immediately before `carMesh_.draw()` --
+exactly the same "set a per-draw uniform right before the call" pattern
+`SkinnedMesh::setBoneMatrices()` already established there, so no change
+was needed to `SkinnedMesh` itself. `WorldDrawList::Item` gained a new
+`isPace` bool (false for every field-car push, `true` on the pace car's)
+so the loop can tell them apart.
+
+**The pulse itself**: `Renderer::paceBarPulseT_`, a persistent real-elapsed-
+seconds accumulator fed from the wheel-animation block's own wall-clock
+`dt` (no second clock needed), driving
+`pow(max(0, sin(paceBarPulseT_ * 8.0)), 4.0)` -- a sharpened, mostly-dark
+strobe-like flash rather than a slow sine fade, closer to how a real
+caution light bar reads than a smooth glow would.
+
+**A real bug caught by a direct pixel decode, not by eyeballing the
+diff:** the shader's original color-match used `smoothstep(0.01, 0.0, d2)`
+to get a "1 at distance 0, falls to 0 at distance >=0.01" falloff --
+but HLSL and GLSL both explicitly document `smoothstep(edge0, edge1, x)`
+as **undefined when edge0 >= edge1**, and bgfx cross-compiles this exact
+shader to both. Since this port targets multiple backends across native
+and WASM, an argument order that merely happens to work on today's GL
+driver is a latent portability bug. Fixed to the spec-safe increasing form,
+`1.0 - smoothstep(0.0, 0.01, d2)`. (`fs_grade_tonemap.sc`'s H5 vignette
+smoothstep was checked against the same mistake and is fine --
+vignetteInner < vignetteOuter always holds there.)
+
+**Verified**: a scratch program (this project's "decode it directly"
+discipline) called the real `buildLiveryPixels()` -- the exact function
+both `getOrBuildCarTexture()`/`getOrBuildPaceTexture()` call -- and sampled
+the actual taillight/amber-bar UV coordinates:
+- Taillight texel: `rgb(0.588, 0.071, 0.059)`, squared-distance to the
+  shader's `tailRef` constant = `0.00000` (exact match, as expected --
+  same literal constant on both sides).
+- Amber-bar texel: `rgb(1.000, 0.702, 0.102)`, squared-distance to
+  `amberRef` = `0.00001` (matches within 8-bit quantization rounding).
+- A saturated-red field car's body paint (the case most likely to false-
+  match the taillight reference) sampled at `0.0124` squared-distance --
+  safely outside the `0.01` threshold, confirmed by the same decode rather
+  than assumed.
+
+`ctest` 31/31 (no new suite -- same reasoning as H5: this touches
+`Renderer`-internal per-draw state and a fragment shader, with no bgfx-free
+logic seam to unit-test). Native `xvfb-run` screenshots: taillights read
+clearly red/lit at the rear of every car in a close chase view, no visual
+regression from the pre-H6 look. WASM/Playwright: zero console/page errors,
+screenshot during a live race confirms the same look in the real browser
+build; the service-worker-ready check still times out in this container,
+the same pre-existing environment/timing quirk logged in prior phases'
+entries, unrelated to this phase's shader/renderer changes.

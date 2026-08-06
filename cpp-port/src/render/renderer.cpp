@@ -441,6 +441,7 @@ bool Renderer::init(void* nativeDisplayHandle, void* nativeWindowHandle, int wid
     uHemiSky_ = bgfx::createUniform("u_hemiSky", bgfx::UniformType::Vec4);
     uHemiGround_ = bgfx::createUniform("u_hemiGround", bgfx::UniformType::Vec4);
     uCamPos_ = bgfx::createUniform("u_camPos", bgfx::UniformType::Vec4);
+    uEmissive_ = bgfx::createUniform("u_emissive", bgfx::UniformType::Vec4);
 
     // Phase 5c (PORT_PROGRESS.md): sky program for the fullscreen textured
     // background quad.
@@ -610,6 +611,7 @@ void Renderer::shutdown() {
     if (bgfx::isValid(uHemiSky_)) bgfx::destroy(uHemiSky_);
     if (bgfx::isValid(uHemiGround_)) bgfx::destroy(uHemiGround_);
     if (bgfx::isValid(uCamPos_)) bgfx::destroy(uCamPos_);
+    if (bgfx::isValid(uEmissive_)) bgfx::destroy(uEmissive_);
     if (bgfx::isValid(skyProgram_)) bgfx::destroy(skyProgram_);
     if (bgfx::isValid(uSkyTexColor_)) bgfx::destroy(uSkyTexColor_);
     if (bgfx::isValid(skyVb_)) bgfx::destroy(skyVb_);
@@ -1160,6 +1162,11 @@ struct Renderer::WorldDrawList {
         std::vector<float> bones;
         int boneCount = 0;
         bgfx::TextureHandle texture = BGFX_INVALID_HANDLE;
+        // H6 (NT2003 engine-feel plan): distinguishes the pace car from the
+        // field so submitWorld()'s draw loop can give it the amber-bar
+        // pulse uniform; every field-car push_back below leaves this at its
+        // default (false).
+        bool isPace = false;
     };
     std::vector<Item> cars;
     // H3: one model matrix per car's contact-shadow decal (carShadowModelMat()),
@@ -1266,6 +1273,15 @@ void Renderer::submitWorld(bgfx::ViewId viewId, const float view[16], const floa
     // pairing bgfx's checked build requires holds for every view.
     for (const auto& item : draws.cars) {
         SkinnedMesh::setBoneMatrices(item.bones.data(), item.boneCount);
+        // H6 (NT2003 engine-feel plan): x = constant taillight glow (every
+        // car); y = pace car's amber roof-bar pulse, sharpened toward a
+        // real strobe-like flash (mostly dark, brief bright peak) rather
+        // than a slow sine fade -- 0 for the field, so their (unlit)
+        // taillight lenses stay dim, matching real everyday-off tail lamps.
+        const float paceAmberPulse =
+            item.isPace ? (float)std::pow(std::max(0.0, std::sin(paceBarPulseT_ * 8.0)), 4.0) : 0.0f;
+        const float emissiveParams[4] = {0.55f, paceAmberPulse, 0.0f, 0.0f};
+        bgfx::setUniform(uEmissive_, emissiveParams);
         carMesh_.draw(viewId, item.model.data(), item.texture);
     }
 
@@ -1686,6 +1702,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         wheelAnimLastTime_ = now;
         wheelAnimInitialized_ = true;
         dt = std::clamp(dt, 0.0, 0.1); // guard against a huge dt after a pause/hitch
+        paceBarPulseT_ += dt; // H6: real elapsed seconds for the amber-bar pulse below
 
         // Real per-axle rest load (static split, mass*G*weightDistF), the
         // baseline computeWheelTransforms() measures live fzFront/fzRear
@@ -1777,7 +1794,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             const Mat4f paceModel =
                 mat4Mul(mat4Translate((float)pX, (float)pacePos.y, (float)pY), mat4RotateY(-(float)pHdg));
             draws.cars.push_back({paceModel, std::move(paceBoneFloats), (int)paceBones.size(),
-                                  getOrBuildPaceTexture()});
+                                  getOrBuildPaceTexture(), /*isPace=*/true});
             // H3: JS gives the pace car a shadow too (index.html:4098).
             draws.shadows.push_back(carShadowModelMat(*track_, pS, pHdg, pacePos));
         }

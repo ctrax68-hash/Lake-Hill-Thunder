@@ -29,6 +29,20 @@ $input v_normal, v_texcoord0, v_worldPos
 // derived from a physical model -- this project has no measured reference
 // BRDF to fit, and a cheap, plausible look is the actual goal.
 //
+// H6 (NT2003 engine-feel plan): a self-illumination term, added on top of
+// everything above rather than a new material/pass. No emissive texture
+// channel exists (or is needed) -- taillight red and the pace car's amber
+// roof bar are both painted as specific, deliberately distinct RGB
+// constants (livery.cpp's `taillight`/amber-bar fills), so this shader
+// just recognizes those same constants by color-distance and treats a
+// close match as "this texel is a lamp, light it regardless of the sun/
+// hemisphere term". Cheap and texture-free, same "plausible look over a
+// physical model" philosophy as this file's own fake-env-reflection term
+// above. u_emissive.x is a constant taillight boost (every car); .y is the
+// pace car's amber-bar pulse strength (0 for the field, animated in
+// renderer.cpp) -- replacing G20's "painted bright enough to clear the
+// bloom threshold" stand-in with a real, independently-animatable glow.
+//
 // H2 (NT2003 engine-feel plan) retune: these constants were fitted while
 // gen_car_rig.py's body was a 4-corner box, i.e. every panel's normal was
 // completely flat across its whole area. A spec power of 180 (an
@@ -52,6 +66,7 @@ uniform vec4 u_sunColor;
 uniform vec4 u_hemiSky;
 uniform vec4 u_hemiGround;
 uniform vec4 u_camPos;
+uniform vec4 u_emissive; // x=taillight glow boost, y=pace amber-bar pulse
 
 SAMPLER2D(s_texColor, 0);
 
@@ -78,6 +93,23 @@ void main()
 	float reflT = clamp(reflectDir.y * 0.5 + 0.5, 0.0, 1.0);
 	vec3 envColor = mix(u_hemiGround.rgb, u_hemiSky.rgb, reflT);
 
-	vec3 rgb = mix(diffuse, envColor, fresnel * 0.30) + u_sunColor.rgb * spec;
+	// H6: color-match against livery.cpp's own taillight/amber-bar paint
+	// constants (RGB, not affected by texture filtering enough to matter --
+	// each is a solid-fill rect many texels wide). Squared distance kept
+	// tight so no ordinary body/stripe/sponsor paint color can false-match.
+	vec3 tailRef = vec3(150.0 / 255.0, 18.0 / 255.0, 15.0 / 255.0);
+	vec3 amberRef = vec3(1.0, 0.70, 0.10);
+	float tailD2 = dot(texel - tailRef, texel - tailRef);
+	float amberD2 = dot(texel - amberRef, texel - amberRef);
+	// smoothstep(edge0, edge1, x) is spec-undefined when edge0 >= edge1
+	// (HLSL/GLSL both document this) -- bgfx cross-compiles this shader to
+	// both, so the "1 at distance 0, 0 at distance >=0.01" falloff must be
+	// built from the standard increasing-edge form, not by swapping the
+	// smoothstep arguments themselves.
+	float tailMatch = 1.0 - smoothstep(0.0, 0.01, tailD2);
+	float amberMatch = 1.0 - smoothstep(0.0, 0.01, amberD2);
+	vec3 emissive = texel * (tailMatch * u_emissive.x + amberMatch * u_emissive.y);
+
+	vec3 rgb = mix(diffuse, envColor, fresnel * 0.30) + u_sunColor.rgb * spec + emissive;
 	gl_FragColor = vec4(rgb, 1.0);
 }
