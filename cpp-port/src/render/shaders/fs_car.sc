@@ -28,6 +28,22 @@ $input v_normal, v_texcoord0, v_worldPos
 // mix weight) are tuned empirically against close-up screenshots, not
 // derived from a physical model -- this project has no measured reference
 // BRDF to fit, and a cheap, plausible look is the actual goal.
+//
+// H2 (NT2003 engine-feel plan) retune: these constants were fitted while
+// gen_car_rig.py's body was a 4-corner box, i.e. every panel's normal was
+// completely flat across its whole area. A spec power of 180 (an
+// extremely tight hotspot) made sense there: it was the only way to keep
+// the highlight from reading as a big flat lit rectangle covering an
+// entire facet, since there was no normal variation within a facet to
+// naturally localize it. H1 gave the body continuously-varying normals, so
+// that job is now done by the geometry itself -- a tight power on top of
+// that just makes the highlight vanishingly small and flickery as it
+// sweeps across the now-curved surface. Lowered to 60 (a rounder,
+// more-visible highlight, still nowhere near a diffuse-looking spread) and
+// the reflection mix nudged up slightly (0.25->0.30) since the Fresnel
+// term now varies smoothly across a real curve instead of jumping at
+// facet boundaries, so a stronger reflection sweep no longer produces the
+// hard per-facet banding the old geometry would have shown.
 
 #include <bgfx_shader.sh>
 
@@ -53,7 +69,7 @@ void main()
 	vec3 diffuse = texel * (ambient + u_sunColor.rgb * ndotl);
 
 	float ndoth = max(dot(n, halfDir), 0.0);
-	float spec = pow(ndoth, 180.0) * 0.35;
+	float spec = pow(ndoth, 60.0) * 0.35;
 
 	float ndotv = max(dot(n, viewDir), 0.0);
 	float fresnel = pow(1.0 - ndotv, 5.0);
@@ -62,6 +78,6 @@ void main()
 	float reflT = clamp(reflectDir.y * 0.5 + 0.5, 0.0, 1.0);
 	vec3 envColor = mix(u_hemiGround.rgb, u_hemiSky.rgb, reflT);
 
-	vec3 rgb = mix(diffuse, envColor, fresnel * 0.25) + u_sunColor.rgb * spec;
+	vec3 rgb = mix(diffuse, envColor, fresnel * 0.30) + u_sunColor.rgb * spec;
 	gl_FragColor = vec4(rgb, 1.0);
 }

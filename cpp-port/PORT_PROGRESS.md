@@ -6624,3 +6624,76 @@ as vertical bands.
 Deliberately left for H2: raising the livery to 1024 and retuning
 `fs_car.sc`'s specular/Fresnel constants, which were fitted against flat
 facets and now have real varying normals to work with.
+
+## H2 -- Car surface detail: 1024 livery, panel shutlines, shader retune
+
+H1 gave the body real curved geometry; this phase gives it something to
+show and paint that curve makes visible for the first time.
+
+**Texture resolution 512 -> 1024**, now above JS's original 768. This
+port's chase camera sits close enough to the car that the new hairline
+detail below (panel shutlines, window rubber, the wheel-arch lip) needs
+more than one texel per line, or `downsampleBox()`'s own box filter turns
+a line into a soft smear before it ever reaches the GPU.
+
+**Six new surface-detail elements, all alpha-blended rather than opaque**
+-- a stripe graphic is a decal painted ON the body; a panel line is a
+crease IN the body, so it has to read through whatever paint scheme sits
+on top of it, the way a real seam would under any wrap:
+
+- **Beltline pinstripe**, full nose-to-tail, at the seam between the
+  greenhouse glass and the door panel below it (v~0.32/0.677) -- the
+  crease every real stock car has at the base of its windows.
+- **Door shutlines**, two per side (front-fender/door break and
+  door/quarter-panel break), spanning only the door panel itself, not the
+  window above it.
+- **Cowl line and decklid line**, just outside the windshield and rear
+  glass respectively -- the panel edges the glass actually sits in.
+- **Window rubber**: the windshield and rear glass (the two panes the
+  chase camera holds in frame for an entire race) now get a full 4-sided
+  dark frame plus a subtle highlight line along the top edge only, the way
+  real rubber molding catches light on its upper lip and not its lower one.
+  Previously only the A/B pillar sides were framed.
+- **Wheel-arch lip**: a thin bright line at the one place H1's
+  `ring_normals()` puts a real 93.7-degree crease (the relief boundary,
+  where the fender flares back out after tucking around the tire) --
+  the single spot on the body where a hard edge is geometrically real
+  rather than a shading artifact, so it's the one place a crisp painted
+  line belongs rather than a soft one.
+- **A "clearcoat gradient"**: three graduated alpha-blended steps softening
+  the shadow band's own hard edge (previously a single jump from 0.70x to
+  0.94x tone right at v=0.11/0.89) into something closer to a smooth
+  falloff. The three original shadow/base/hilite tones are untouched --
+  same v-ranges, same values -- these are additive steps riding on top,
+  confirmed to land clear of `livery_test.cpp`'s existing sample windows.
+
+**`fs_car.sc` retuned** for normals that actually vary now. Spec power 180
+was tuned against a body where every panel had one constant normal across
+its whole area -- an extremely tight hotspot was the only way to keep a
+highlight from reading as a flat lit rectangle covering an entire facet.
+H1 made the geometry do that localizing job instead, so the same power now
+produces a highlight so small it flickers as it sweeps a curved surface.
+Lowered to 60 (rounder, more visible, nowhere near diffuse-looking), and
+the reflection mix nudged 0.25->0.30 since Fresnel now varies smoothly
+across a real curve instead of jumping at facet boundaries -- a stronger
+sweep no longer produces the per-facet banding the old geometry would have
+shown.
+
+**Verified**: `livery_test` (unchanged assertions, all pass -- the
+shadow/base/hilite ordering, the 5 distinct stripe styles, per-number
+distinctness, every ROSTER entry and the player's null-scheme fallback all
+build correctly at the new resolution). Native `ctest` 30/30. WASM
+rebuild, zero console/page errors. Close 3/4-view screenshots show a
+visibly rounder, less matte body with a highlight that sweeps the roof.
+
+The six new elements are individually subtle by design (low-alpha
+creases, 3-4px wide even at 1024) -- exactly the kind of change a
+downscaled/compressed screenshot can't reliably confirm one way or the
+other. Verified instead by the G12-G14 "decode it directly" discipline: a
+scratch program built against the real `buildLiveryPixels()`, scanning
+small per-feature pixel windows (not single hand-computed columns --
+the first draft of this check missed the cowl line by exactly 1px because
+`fillRect`'s `fx*size` rounds via `std::lround` and a truncated column
+landed one texel short of it) confirming each of the 6 elements paints
+darker/brighter in the expected direction at its expected location. All
+10 checks pass.

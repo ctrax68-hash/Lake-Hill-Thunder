@@ -68,7 +68,14 @@
 // finally visible on the body instead of mostly landing on the one flat
 // (0.4,0.5) texel every non-roof face used to sample -- still well under
 // JS's original 768, no pixel-exact-fidelity requirement.
-inline constexpr int kLiveryTextureSize = 512;
+//
+// H2 (NT2003 engine-feel plan): bumped again, 512->1024, now ABOVE JS's
+// original 768. H1 gave the body real curved geometry and this port's
+// chase camera sits close enough to it that hairline detail -- panel
+// shutlines, window rubber, the wheel-arch lip -- needs more than one
+// texel per line to read as a line rather than a soft smear once
+// downsampleBox()'s box filter gets to it.
+inline constexpr int kLiveryTextureSize = 1024;
 
 // body: car.col (or CarPalette::White for a pace car -- not built here,
 // see this file's own note below). accent: auto-derived from body's

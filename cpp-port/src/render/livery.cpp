@@ -196,6 +196,23 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     c.fillRect(0, 0.89, 1.0, 0.11, tone(kShadowM));
     c.fillRect(0, 0.40, 1.0, 0.20, tone(std::min(1.0, kHiliteM)));
 
+    // H2 (NT2003 engine-feel plan): a "clearcoat gradient" -- graduated
+    // steps softening the hard 0.70->0.94 jump right at the shadow band's
+    // own edge (v=0.11/0.89) into something closer to a smooth falloff.
+    // Distinct from the three tones above, which stay exactly as they were
+    // (the existing shadow/base/hilite sample windows in livery_test.cpp
+    // land at v<0.05, v 0.15-0.20 and v 0.45-0.55, none of which this new
+    // band at v 0.11-0.148 touches). Alpha-blended rather than opaque, so
+    // it reads as a soft roll-off riding on top of the base tone rather
+    // than a fourth hard step.
+    for (int i = 0; i < 3; ++i) {
+        const double t = (i + 1) / 4.0; // 0.25, 0.5, 0.75 -> shadow toward base
+        const double m = kShadowM + (kBaseM - kShadowM) * t;
+        const double vLo = 0.110 + i * 0.0127, vHi = 0.890 - i * 0.0127;
+        c.fillRect(0, vLo, 1.0, 0.0127, tone(m), 0.6);
+        c.fillRect(0, vHi - 0.0127, 1.0, 0.0127, tone(m), 0.6);
+    }
+
     const double U0 = 0.02, U1 = 0.78;
     // accent auto-derived from body luminance (index.html:2867-2868).
     const double lum = body[0] * 0.5 + body[1] * 0.4 + body[2] * 0.1;
@@ -259,6 +276,27 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         }
     }
 
+    // H2 (NT2003 engine-feel plan): wheel-arch lip. Distinct from the
+    // shadow rings above (which paint the dark cavity INSIDE the opening,
+    // centered at the rocker); this is the crisp sheet-metal edge AT the
+    // opening, where gen_car_rig.py's wheel-arch relief actually creases
+    // the mesh (H1's ring_normals() shows a 93.7deg normal turn right here
+    // -- the one place on the body a hard edge is real and wanted rather
+    // than a shading artifact). That crease sits at ring index k=2/3 (the
+    // last relieved point before the fender flares back out), which H1's
+    // car_v() maps to v~0.825 on the +z side / ~0.175 on the -z side --
+    // not re-derived from gen_car_rig.py here (this file has no import
+    // path to it), just placed at the same handful of anchor points this
+    // file already uses elsewhere (rocker 0.055/0.945, beltline
+    // 0.335/0.665) which the H1 decode check confirmed line up. A thin
+    // bright line, the way a fender lip catches light along its edge.
+    const std::array<double, 3> archLip{
+        std::min(1.0, body[0] * 1.35 + 0.05), std::min(1.0, body[1] * 1.35 + 0.05), std::min(1.0, body[2] * 1.35 + 0.05)};
+    for (double ux : {carU(1.395), carU(-1.395)}) {
+        c.fillRect(ux - 0.028, 0.812, 0.056, 0.006, archLip, 0.55);
+        c.fillRect(ux - 0.028, 0.182, 0.056, 0.006, archLip, 0.55);
+    }
+
     // rubber/dirt smudge behind rear wheel arches only (index.html:2680-2685).
     for (double vy : {0.055, 0.945}) {
         c.fillEllipse(carU(-1.395) + 0.035, vy, 0.05, 0.035, {10 / 255.0, 10 / 255.0, 12 / 255.0}, 0.35);
@@ -266,11 +304,53 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // exhaust soot smudge, right side only (index.html:2686-2691).
     c.fillEllipse(0.615, 0.058, 0.055, 0.028, {8 / 255.0, 8 / 255.0, 9 / 255.0}, 0.30);
 
-    // ---- glass (index.html:2692-2727) ----
+    // Glass rect bounds, hoisted above both the H2 shutlines (which anchor
+    // to the windshield/rear-glass edges) and the glass section itself
+    // below (index.html:2692-2727), which is where these were originally
+    // declared.
     const double uWS0 = carU(0.68), uWS1 = carU(0.02);
     const double uSG0 = carU(0.30), uSG1 = carU(-0.95);
     const double uRG0 = carU(-1.00), uRG1 = carU(-1.75);
     constexpr double GV0 = 0.335, GVH = 0.330;
+
+    // ---- H2 (NT2003 engine-feel plan): panel shutlines ----
+    //
+    // A flat-shaded box car has no panels to speak of, so there was nothing
+    // for a shutline to sit on. H1's real hood/roof/deck/door surfaces give
+    // these somewhere to go. All painted as thin, low-alpha dark lines --
+    // real panel gaps read as a subtle shadow line, not a bold graphic, and
+    // alpha-blending (rather than an opaque fill like the stripe styles
+    // above) means the crease shows through whatever paint scheme is
+    // underneath, the way a real seam would regardless of the wrap on it.
+    const std::array<double, 3> seamShadow{0.0, 0.0, 0.0};
+    constexpr double kSeamW = 0.0035;
+
+    // Beltline character line: right where the glass band starts/ends
+    // (GV0=0.335 / GV0+GVH=0.665 below), the crease real cars have at the
+    // base of the greenhouse. Runs the full nose-to-tail body wrap; stops
+    // just shy of the door-number badges (centered at v=0.235/0.765,
+    // fry=0.082, so their far edges sit at v~0.317/0.683) so it reads as
+    // running behind them rather than through them.
+    c.fillRect(U0, 0.320, U1 - U0, kSeamW, seamShadow, 0.30);
+    c.fillRect(U0, 0.677, U1 - U0, kSeamW, seamShadow, 0.30);
+
+    // Door shutlines: one ahead of the door (roughly the front-fender/
+    // door break, x~1.00) and one behind it (roughly the door/quarter-panel
+    // break, at the roof-peak station x~-0.60), each side, spanning only
+    // the door panel itself (rocker to beltline) rather than the full
+    // body height -- a shutline doesn't cross the window.
+    for (double ux : {carU(1.00), carU(-0.60)}) {
+        c.fillRect(ux, 0.062, kSeamW, 0.320 - 0.062, seamShadow, 0.28);   // -z door panel
+        c.fillRect(ux, 0.680, kSeamW, 0.945 - 0.680, seamShadow, 0.28);  // +z door panel
+    }
+
+    // Cowl line (hood meets windshield) and decklid line (trunk meets rear
+    // glass), each just outside its glass rect so the crease reads as the
+    // panel edge the glass sits in, not a line drawn across the glass.
+    c.fillRect(uWS0 - 0.012, GV0, kSeamW, GVH, seamShadow, 0.30);
+    c.fillRect(uRG1 + 0.008, GV0, kSeamW, GVH, seamShadow, 0.30);
+
+    // ---- glass (index.html:2692-2727) ----
     const std::array<double, 3> glassDark{16 / 255.0, 20 / 255.0, 30 / 255.0};
     c.fillRect(uWS0, GV0, uWS1 - uWS0, GVH, glassDark);
     c.fillRect(uRG0, GV0, uRG1 - uRG0, GVH, glassDark);
@@ -301,6 +381,30 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     c.fillRect(uWS0 - 2.0 / kLiveryTextureSize, GV0, 4.0 / kLiveryTextureSize, GVH, pillarDark);
     c.fillRect(uSG1 - 2.0 / kLiveryTextureSize, 0.335, 4.0 / kLiveryTextureSize, 0.075, pillarDark);
     c.fillRect(uSG1 - 2.0 / kLiveryTextureSize, 0.590, 4.0 / kLiveryTextureSize, 0.075, pillarDark);
+
+    // H2 (NT2003 engine-feel plan): window rubber. The pillar edges above
+    // only frame the SIDES of each glass rect (the A/B pillars, which are
+    // real structural members); a window also has rubber trim running its
+    // full perimeter, and at 1024px there's finally enough texel density
+    // for that trim to read as a frame rather than noise. Two elements per
+    // glass rect: a thin dark seal on all four edges, and a thinner bright
+    // line just inside the TOP edge only -- the way real window rubber
+    // catches a highlight along its upper lip, never the lower one. Only
+    // the windshield and rear glass get it (the two glass panes the chase
+    // camera actually holds in frame for an entire race); the side windows
+    // stay as they were.
+    const std::array<double, 3> rubberHi{40 / 255.0, 46 / 255.0, 58 / 255.0};
+    constexpr double kTrim = 3.0;
+    auto glassFrame = [&](double gu0, double gu1, double gv0, double gvh) {
+        const double t = kTrim / kLiveryTextureSize;
+        c.fillRect(gu0 - t, gv0 - t, (gu1 - gu0) + 2 * t, t, pillarDark);       // top
+        c.fillRect(gu0 - t, gv0 + gvh, (gu1 - gu0) + 2 * t, t, pillarDark);     // bottom
+        c.fillRect(gu0 - t, gv0, t, gvh, pillarDark);                          // left
+        c.fillRect(gu1, gv0, t, gvh, pillarDark);                              // right
+        c.fillRect(gu0, gv0 - t * 0.5, gu1 - gu0, t * 0.6, rubberHi);          // top highlight
+    };
+    glassFrame(uWS0, uWS1, GV0, GVH);
+    glassFrame(uRG0, uRG1, GV0, GVH);
     // roof flaps
     c.fillRect(carU(-0.45), 0.435, 0.045, 0.052, tone(0.72));
     c.fillRect(carU(-0.45), 0.513, 0.045, 0.052, tone(0.72));
