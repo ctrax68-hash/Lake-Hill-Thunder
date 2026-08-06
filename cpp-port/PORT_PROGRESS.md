@@ -6520,3 +6520,107 @@ matters: it confirms the mirror shows what is *behind*, and that the U-flip
 puts it on the side a driver looking in a real mirror would see it. TopDown
 correctly shows no mirror at all, and the results screen (which replaces the
 scene entirely) is unchanged.
+
+## H1 -- Car geometry: rounded cross-sections and smooth normals
+
+Asked to make the engine feel like NASCAR Thunder 2003, the user named the
+cars as the priority: *"car detail might be most important. Want the cars to
+be realistic they look like shit right now."* They were right, and the cause
+turned out to be two things, both structural rather than cosmetic.
+
+**The whole car was 448 vertices / 300 triangles** -- chassis, four wheels
+and spoiler combined. That is a PS1-era budget.
+
+**Every cross-section was a rectangle.** `_corners()` returned exactly four
+points and the loft walled them together, so the rocker, the shoulder and
+the roof were all hard 90-degree edges. This file's own comment already said
+so: "with this loft's simple 4-corner trapezoid cross-section (**not JS's
+14-point round ring**)". A 4-point section cannot express a crowned roof or a
+shoulder radius at all.
+
+**And the shading was flat.** `emit_quad()` computed a correct per-quad plane
+normal, but every vertex of that quad took it -- nothing shared or averaged
+between stations, so each facet read as its own plate. G2's specular, Fresnel
+and env-reflection terms in `fs_car.sc` had a constant normal per facet to
+work with, which is why the paint looked matte no matter how those constants
+were tuned. **That was the actual reason the cars looked flat**, and no
+amount of texture work would have fixed it.
+
+**None of this needed inventing** -- index.html already had the answer and
+the port had simplified it away. Ported over: `RINGF`'s 14 ring points,
+`SHOULDER`, `ringPts()`, the wheel-arch relief, and the tangent-cross smooth
+normal construction. The full 5-column `CAR_ST` came with it: the port had
+kept only `x`/`halfWidth`/`roofY` and derived a top width from a fixed
+0.60/0.92 greenhouse ratio, dropping `beltY` (the SHOULDER split every ring
+point interpolates around) and `yLow` (the rocker height every bottom point
+sits at, previously pinned to one flat `FLOOR_Y`). All 16 stations keep their
+tuned values -- this changed the *cross-section*, never the profile, so
+CAR-D/G8/CAR-K..CAR-O's proportion work survives untouched.
+
+Result: **1220 vertices / 720 triangles**, and the lengthwise normal turn --
+the metric that decides whether a body reads as a curved shell or a stack of
+plates -- drops from a hard facet at every one of the 15 spans to a peak of
+38 degrees.
+
+**Three real defects the decode check caught, none of which a screenshot
+would have shown in time:**
+
+1. **The tires were 0.08 too far outboard.** `TRACK_HALF` was
+   `CAR_WID * 0.42 = 0.84`, putting the tire's outer face at 0.98 while the
+   widest bodywork is 0.95 -- the tires stuck out past the fenders, and worse,
+   JS's `WHEEL_INNER_Z = 0.62` no longer described where the tire actually
+   was, so the relief the whole wheel-arch fix depends on was aimed at the
+   wrong place. A real Gen-4 runs ~60in track on ~11in tires: centreline
+   0.762, inner face 0.62. Setting `TRACK_HALF = 0.76` makes
+   `WHEEL_INNER_Z` exact again *and* matches the real proportion. The check
+   asserts both facts directly.
+2. **A hard shading seam along both rockers.** The ring-tangent estimate
+   clamped at the ends of RINGF's open arc, leaving the two rocker points with
+   a one-sided tangent and a 93.7-degree jump to their neighbour. The section
+   is genuinely closed through the flat underbody, so the tangent now wraps
+   modulo NK.
+3. **The tail lamps came out as a radial bullseye.** A ring cap is a fan, and
+   feeding it the ring's own `car_v(k)` put v=0.5 at the apex and swept
+   0.03..0.97 around the rim -- so G16's dark centre panel and the red lamp
+   bands either side got smeared into concentric wedges. Caught in the first
+   screenshot. The cap's UV is now planar (v from the point's lateral z),
+   which lays those bands out as vertical stripes, which is how G16 drew them.
+
+Also decoupled the spoiler's width from `TRACK_HALF` (it was `TRACK_HALF*0.6`,
+so moving the wheels inboard would have silently narrowed the spoiler too);
+it is pinned to the tail station's own half-width, which is what G8's comment
+says it is sized against. Wheel side count 10 -> 16, since a decagon tire has
+the same faceting problem the body had.
+
+**On the UV risk this phase was flagged for:** it largely evaporated on
+contact with the JS source. Both schemes are the same cylindrical unwrap --
+the port had merely collapsed it to four samples. JS's `carV(k)` reversed to
+this port's orientation (livery.cpp paints the +z flank at HIGH v) lands
+within 0.03 of all four anchors the old corner rule pinned: +z rocker
+0.970 vs 0.945, +z beltline 0.681 vs 0.700, -z beltline 0.319 vs 0.300, -z
+rocker 0.030 vs 0.055. Every band livery.cpp paints stays where it is.
+
+**One accepted imperfection, bounded rather than hidden:** the relief tapers
+with distance from the axle (JS's `t = 1 - dx/RANGE`), so the fender leading
+edge keeps a 0.063 sliver inside the tire barrel. JS has the identical
+formula and constants. Every fix for it -- hard-clamping, widening the range
+-- trades that graze for a visible *step* in the rocker line between
+stations, which is the CAR-L/CAR-M dent all over again. So the check bounds
+it instead: it must stay under 0.08 and must occur only at rocker height
+(hf<=0.30), behind the tire from every external viewpoint. Anything at fender
+height would be the real bug and fails the check.
+
+**Verified**: `tools/check_car_rig.py` -- kept as a committed tool rather than
+a throwaway scratch program, because H2 will touch these same UVs. It asserts
+ring/station counts, unwrap monotonicity, tire clearance and its bound, the
+relief acting at the axles and nowhere above hf=0.30, all four V anchors, every
+livery band falling inside the ring's V span, exact nose/tail U, unit-length
+outward normals, lengthwise smoothness, and around-ring smoothness away from
+the (legitimately creased) arch. Native `ctest` 30/30. WASM rebuild with zero
+console/page errors. Chase-cam screenshots show curved flanks with a highlight
+that actually sweeps them, a crowned roof, round tires, and tail lamps reading
+as vertical bands.
+
+Deliberately left for H2: raising the livery to 1024 and retuning
+`fs_car.sc`'s specular/Fresnel constants, which were fitted against flat
+facets and now have real varying normals to work with.

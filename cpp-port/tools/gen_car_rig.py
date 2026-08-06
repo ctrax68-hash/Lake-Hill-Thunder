@@ -23,7 +23,16 @@ CAR_LEN = 5.08
 CAR_WID = 2.0
 WHEELBASE = 2.79
 WHEEL_RADIUS = 0.35
-TRACK_HALF = CAR_WID * 0.42  # slightly narrower than full body width
+# H1: 0.76, not the old CAR_WID*0.42 = 0.84. A real Gen-4 runs ~60in track
+# with ~11in tires, so the tire centreline sits at 0.762 and its inner face
+# lands at 0.762-0.14 = 0.62 -- which is exactly index.html's WHEEL_INNER_Z,
+# the constant its wheel-arch relief is written against. At 0.84 the tires
+# sat 0.08 too far outboard: their outer face reached 0.98 while the widest
+# bodywork is only 0.95, so the tires stuck out past the fenders AND the
+# JS-tuned relief band no longer described where the tire actually was.
+# The H1 decode check caught the body passing through the tire barrel at the
+# fender because of it.
+TRACK_HALF = 0.76
 HALF_LEN = CAR_LEN / 2.0
 
 positions = []
@@ -170,8 +179,55 @@ def _norm(a):
     l = math.sqrt(_dot(a, a))
     return (a[0] / l, a[1] / l, a[2] / l) if l > 1e-9 else (0.0, 0.0, 0.0)
 
+def emit_smooth_quad(v0, v1, v2, v3, outward_hint, joint_idx=0):
+    """H1: appends one SMOOTH-shaded quad to the chassis mesh.
+
+    Each argument is a (position, normal, uv) triple -- unlike emit_quad()
+    below, the normal is supplied per vertex by the caller rather than
+    derived from the quad's own plane, which is the whole point: the loft's
+    normals now come from the surrounding surface's tangents (see
+    ring_normals()), so adjacent quads share a continuous normal field
+    instead of each reading as its own flat plate.
+
+    Winding is still corrected against `outward_hint` so callers don't have
+    to hand-verify it, exactly as emit_quad() does.
+    """
+    p0, p1, p2, p3 = v0[0], v1[0], v2[0], v3[0]
+    face = _norm(_cross(_sub(p1, p0), _sub(p3, p0)))
+    if _dot(face, outward_hint) < 0:
+        v0, v1, v2, v3 = v0, v3, v2, v1
+    base = len(positions)
+    for (p, n, uv) in (v0, v1, v2, v3):
+        positions.append(p)
+        normals.append(n)
+        uvs.append(uv)
+        joints0.append((joint_idx, 0, 0, 0))
+        weights0.append((1.0, 0.0, 0.0, 0.0))
+    indices.extend([base, base + 1, base + 2, base, base + 2, base + 3])
+
+def emit_smooth_tri(v0, v1, v2, outward_hint, joint_idx=0):
+    """H1: the triangle form of emit_smooth_quad(), for the nose/tail cap
+    fans -- a ring can be closed by a fan to a single apex, which a
+    4-corner box section had no way to express."""
+    p0, p1, p2 = v0[0], v1[0], v2[0]
+    face = _norm(_cross(_sub(p1, p0), _sub(p2, p0)))
+    if _dot(face, outward_hint) < 0:
+        v0, v1, v2 = v0, v2, v1
+    base = len(positions)
+    for (p, n, uv) in (v0, v1, v2):
+        positions.append(p)
+        normals.append(n)
+        uvs.append(uv)
+        joints0.append((joint_idx, 0, 0, 0))
+        weights0.append((1.0, 0.0, 0.0, 0.0))
+    indices.extend([base, base + 1, base + 2])
+
 def emit_quad(p0, p1, p2, p3, outward_hint, joint_idx=0):
     """Appends one flat-shaded quad (2 triangles) to the chassis mesh.
+
+    Superseded for the chassis loft by emit_smooth_quad() above (H1); kept
+    because its UV derivation is the reference the ring's own carU()/carV()
+    still matches, and because add_box() callers may want it again.
 
     `outward_hint` is a rough direction the face should point; the actual
     normal is computed from the quad's own plane and the winding is flipped
@@ -257,66 +313,212 @@ FLOOR_Y = 0.45
 # fender bulge above the tire) is computed from the PRE-relief width so the
 # flare itself stays full width; only the rocker corner right at the wheel
 # gets tucked in so the body doesn't visually poke through the tire.
+# H1 (NT2003 engine-feel plan): the loft finally uses JS's real 14-point
+# round ring. This file's own comment used to say so plainly -- "with this
+# loft's simple 4-corner trapezoid cross-section (NOT JS's 14-point round
+# ring)" -- which is exactly why the body read as a faceted tube: a
+# 4-corner section is a trapezoid with hard 90-degree edges at the rocker,
+# the shoulder and the roof, and no amount of shading can round something
+# that has no roundness in it. fs_car.sc's G2 specular/Fresnel/env terms
+# had nothing to catch, so the paint looked matte no matter how it was
+# tuned.
+#
+# RINGF, SHOULDER, NK and the wheel-relief constants are all transcribed
+# from index.html (ringPts(), :2419-2446). The ring runs from the
+# bottom-RIGHT rocker (k=0, z=+0.76w) up the right flank, across the roof,
+# and down to the bottom-LEFT rocker (k=NK-1) -- an open arc; the underbody
+# closes it (see the loft loop).
+RINGF = [
+    (0.00, 0.76), (0.09, 0.96), (0.28, 1.00), (0.56, 0.99), (0.80, 0.885),
+    (0.94, 0.58), (1.00, 0.22),
+    (1.00, -0.22), (0.94, -0.58), (0.80, -0.885), (0.56, -0.99), (0.28, -1.00),
+    (0.09, -0.96), (0.00, -0.76),
+]
+NK = len(RINGF)
+
+# heightFrac at/below this rides the beltline curve (yLow -> beltY); above
+# it rides the roof rise (beltY -> roofY). 0.80 is RINGF's k=4, right where
+# the side-glass band starts, so the glass sits exactly where the roof rise
+# begins (index.html:2429).
+SHOULDER = 0.80
+
+# Wheel-arch relief, now applied the way JS actually does it. The old
+# 4-corner version could only pull in `halfWidthBottom`, because that was
+# the only knob a trapezoid had. On a real ring the fix is per-ring-point
+# and JS already worked out which points need it: only k=0,1,2 (hf<=0.28)
+# reach into the wheel's cylindrical volume; k=3 (hf=0.56) and above are
+# already clear at every axle-adjacent station. Correcting a taller band is
+# what used to show up as a visible dent (index.html:2440-2446, and this
+# port's own CAR-L/CAR-M/CAR-N history).
 _WHEEL_AXLE_X = [WHEELBASE / 2.0, -WHEELBASE / 2.0]
 _WHEEL_NOTCH_RANGE = 0.45
-_WHEEL_INNER_Z = 0.65
+_WHEEL_INNER_Z = 0.62
+_WHEEL_RELIEF_HF = 0.30
 
-def _relief(x, bw):
-    for wx in _WHEEL_AXLE_X:
-        dx = abs(x - wx)
-        if dx < _WHEEL_NOTCH_RANGE and bw > _WHEEL_INNER_Z:
-            t = 1.0 - dx / _WHEEL_NOTCH_RANGE
-            bw += (_WHEEL_INNER_Z - bw) * t
-    return bw
+def _station(x_js, w, belt_y, y_low, roof_y):
+    # x scaled so the nose/tail stations land exactly on +-HALF_LEN, keeping
+    # carU()'s mapping exact at the tips (unchanged from the previous loft).
+    return (x_js * (HALF_LEN / 2.51), w, belt_y, y_low, roof_y)
 
-_GREENHOUSE_ROWS = {6, 7, 8, 9, 10}  # 0-indexed rows: cowl .. fastback-glass-start
-
-def _station(i, x_js, bw, ty):
-    x = x_js * (HALF_LEN / 2.51)
-    tw = bw * (0.60 if i in _GREENHOUSE_ROWS else 0.92)
-    return (x, _relief(x, bw), FLOOR_Y, tw, ty)
-
-# (x_js, halfWidth, roofY) per row, transcribed verbatim from index.html's
-# CAR_ST (buildCarMesh(), the comment there explains each row's role).
+# (x_js, halfWidth, beltY, yLow, roofY) per row, transcribed verbatim from
+# index.html's CAR_ST. The previous port kept only columns 0/1/4 and
+# derived a top width from a fixed 0.60/0.92 greenhouse ratio; `beltY` and
+# `yLow` are restored here because the ring genuinely needs them -- beltY
+# is the SHOULDER split point every ring point interpolates around, and
+# yLow is the rocker/valance height the ring's bottom points sit at (the
+# old loft pinned every bottom corner to a single flat FLOOR_Y).
 _CAR_ST_JS = [
-    (2.51,  0.50, 0.40),    # bumper cap (low, narrow, pointed nose tip)
-    (2.34,  0.66, 0.485),
-    (2.04,  0.82, 0.585),   # nose fascia
-    (1.70,  0.92, 0.685),   # fender leading edge
-    (1.40,  0.95, 0.735),   # front axle -- fender bulge (full width)
-    (1.05,  0.93, 0.795),
-    (0.68,  0.91, 0.89),    # cowl / windshield base
-    (0.34,  0.875, 1.10),   # windshield mid -- roof rakes up above the belt
-    (0.02,  0.835, 1.22),   # A-pillar top
-    (-0.60, 0.825, 1.26),   # roof peak
-    (-1.00, 0.91, 1.22),    # fastback glass start
-    (-1.40, 0.95, 1.055),   # rear axle -- quarter-panel bulge, belt/roof rejoin
-    (-1.75, 0.92, 1.02),    # deck start
-    (-2.10, 0.885, 0.99),
-    (-2.34, 0.845, 0.955),
-    (-2.51, 0.76, 0.92),    # tail (spoiler base)
+    (2.51,  0.50,  0.40,  0.13,  0.40),   # bumper cap (low, narrow, pointed nose tip)
+    (2.34,  0.66,  0.485, 0.11,  0.485),
+    (2.04,  0.82,  0.585, 0.11,  0.585),  # nose fascia -- gradual taper into the fender
+    (1.70,  0.92,  0.685, 0.12,  0.685),  # fender leading edge
+    (1.40,  0.95,  0.735, 0.14,  0.735),  # front axle -- fender bulge (full width)
+    (1.05,  0.93,  0.795, 0.16,  0.795),
+    (0.68,  0.91,  0.89,  0.175, 0.89),   # cowl / windshield base -- belt and roof still equal
+    (0.34,  0.875, 0.917, 0.18,  1.10),   # windshield mid -- roof rakes up above the belt
+    (0.02,  0.835, 0.942, 0.185, 1.22),   # A-pillar top
+    (-0.60, 0.825, 0.992, 0.195, 1.26),   # roof peak
+    (-1.00, 0.91,  1.023, 0.20,  1.22),   # fastback glass start
+    (-1.40, 0.95,  1.055, 0.205, 1.055),  # rear axle -- quarter-panel bulge, belt/roof rejoin
+    (-1.75, 0.92,  1.02,  0.205, 1.02),   # deck start
+    (-2.10, 0.885, 0.99,  0.19,  0.99),
+    (-2.34, 0.845, 0.955, 0.32,  0.955),
+    (-2.51, 0.76,  0.92,  0.50,  0.92),   # tail -- yL raised so the cap fan's apex doesn't
+                                           # read as an inverted-V boat hull from behind
 ]
-CHASSIS_STATIONS = [_station(i, x_js, bw, ty) for i, (x_js, bw, ty) in enumerate(_CAR_ST_JS)]
+CHASSIS_STATIONS = [_station(*row) for row in _CAR_ST_JS]
 
-def _corners(station):
-    x, bw, by, tw, ty = station
-    return {
-        "BR": (x, by, bw), "BL": (x, by, -bw),
-        "TR": (x, ty, tw), "TL": (x, ty, -tw),
-    }
+def ring_pts(station):
+    """Direct port of index.html's ringPts() (:2447)."""
+    x, w, belt_y, y_low, roof_y = station
+    out = []
+    for (hf, wf) in RINGF:
+        if hf <= SHOULDER:
+            py = y_low + (hf / SHOULDER) * (belt_y - y_low)
+        else:
+            py = belt_y + ((hf - SHOULDER) / (1.0 - SHOULDER)) * (roof_y - belt_y)
+        pz = wf * w
+        if hf <= _WHEEL_RELIEF_HF:
+            for wx in _WHEEL_AXLE_X:
+                dx = abs(x - wx)
+                if dx < _WHEEL_NOTCH_RANGE and abs(pz) > _WHEEL_INNER_Z:
+                    t = 1.0 - dx / _WHEEL_NOTCH_RANGE
+                    pz += ((_WHEEL_INNER_Z if pz > 0 else -_WHEEL_INNER_Z) - pz) * t
+        out.append((x, py, pz))
+    return out
 
-for i in range(len(CHASSIS_STATIONS) - 1):
-    c0 = _corners(CHASSIS_STATIONS[i])
-    c1 = _corners(CHASSIS_STATIONS[i + 1])
-    emit_quad(c0["BR"], c1["BR"], c1["TR"], c0["TR"], (0, 0, 1))   # right side wall
-    emit_quad(c0["BL"], c0["TL"], c1["TL"], c1["BL"], (0, 0, -1))  # left side wall
-    emit_quad(c0["TL"], c1["TL"], c1["TR"], c0["TR"], (0, 1, 0))   # top deck (hood/roof/decklid)
-    emit_quad(c0["BL"], c0["BR"], c1["BR"], c1["BL"], (0, -1, 0))  # underbody
+RINGS = [ring_pts(st) for st in CHASSIS_STATIONS]
 
-nose = _corners(CHASSIS_STATIONS[0])
-emit_quad(nose["BR"], nose["BL"], nose["TL"], nose["TR"], (1, 0, 0))   # nose cap
-tail = _corners(CHASSIS_STATIONS[-1])
-emit_quad(tail["BL"], tail["BR"], tail["TR"], tail["TL"], (-1, 0, 0))  # tail cap
+def ring_normals():
+    """Smooth per-vertex normals from surface tangents -- port of the NRM
+    block in index.html's buildCarMesh().
+
+    The normal at ring point (i,k) is the cross product of the tangent
+    around the ring and the tangent along the body's length, so it varies
+    continuously across the whole surface. This is what makes the body
+    shade as one curved shell rather than as a stack of separate plates,
+    and it is what finally gives fs_car.sc's specular/Fresnel terms
+    something to sweep across.
+    """
+    out = []
+    for i, r in enumerate(RINGS):
+        row = []
+        for k, p in enumerate(r):
+            rp = RINGS[min(len(RINGS) - 1, i + 1)][k]
+            rm = RINGS[max(0, i - 1)][k]
+            # H1: the ring tangent WRAPS (modulo NK) rather than clamping at
+            # the ends. RINGF is an open arc from one rocker to the other,
+            # but the section is genuinely closed through the flat underbody,
+            # so wrapping gives the two rocker points a real two-sided
+            # tangent. Clamping instead left them with a one-sided estimate
+            # and a 93.7-degree jump to their neighbour -- a hard shading
+            # seam right along the rocker, which the decode check caught.
+            kp = r[(k + 1) % NK]
+            km = r[(k - 1) % NK]
+            t_len = _sub(rp, rm)   # along the body's length
+            t_ring = _sub(kp, km)  # around the cross-section
+            n = _norm(_cross(t_ring, t_len))
+            # Flip inward-facing normals: measure against the outward
+            # direction from the section's own mid-height axis.
+            mid = (CHASSIS_STATIONS[i][2] + CHASSIS_STATIONS[i][3]) / 2.0
+            if n[1] * (p[1] - mid) + n[2] * p[2] < 0:
+                n = (-n[0], -n[1], -n[2])
+            row.append(n)
+        out.append(row)
+    return out
+
+RING_NRM = ring_normals()
+
+def car_u(x):
+    return 0.02 + (HALF_LEN - x) / (2.0 * HALF_LEN) * 0.76
+
+def car_v(k):
+    """Ring index -> livery V.
+
+    JS's own carV() is `0.03 + k/(NK-1)*0.94`, but this port's livery is
+    mirrored relative to JS's (livery.cpp paints the +z flank at HIGH v --
+    see the previous loft's own corner rule, which used v=0.945 for p[2]>0),
+    so the mapping is reversed here. That keeps every band livery.cpp
+    already paints exactly where it is today.
+
+    Checked against the four anchors the old 4-corner rule pinned:
+      k=0  (+z rocker)   -> 0.970   (old 0.945, inside the same rocker band)
+      k=4  (+z beltline) -> 0.681   (old 0.700)
+      k=6/7 (roof edges) -> 0.536 / 0.464, straddling 0.500 as before
+      k=9  (-z beltline) -> 0.319   (old 0.300)
+      k=13 (-z rocker)   -> 0.030   (old 0.055, same seam band)
+    Every one lands within ~0.03 of the value the old mesh used, so this is
+    a refinement of the existing unwrap rather than a new one.
+    """
+    return 0.97 - (k / (NK - 1)) * 0.94
+
+def _rv(i, k):
+    """(position, normal, uv) for ring point k of station i."""
+    return (RINGS[i][k], RING_NRM[i][k], (car_u(CHASSIS_STATIONS[i][0]), car_v(k)))
+
+for i in range(len(RINGS) - 1):
+    for k in range(NK - 1):
+        # Outward hint from the ring point's own smooth normal -- already
+        # corrected to face outward by ring_normals().
+        emit_smooth_quad(_rv(i, k), _rv(i + 1, k), _rv(i + 1, k + 1), _rv(i, k + 1),
+                          RING_NRM[i][k])
+    # Underbody: RINGF is an open arc (bottom-right .. bottom-left), so the
+    # floor closes it. Never visible in normal play, but leaving a hole
+    # would show the body's inside from a low angle -- this renderer does no
+    # backface culling (renderer.cpp's own convention).
+    emit_smooth_quad(
+        (RINGS[i][NK - 1], (0, -1, 0), (car_u(CHASSIS_STATIONS[i][0]), 0.01)),
+        (RINGS[i + 1][NK - 1], (0, -1, 0), (car_u(CHASSIS_STATIONS[i + 1][0]), 0.01)),
+        (RINGS[i + 1][0], (0, -1, 0), (car_u(CHASSIS_STATIONS[i + 1][0]), 0.99)),
+        (RINGS[i][0], (0, -1, 0), (car_u(CHASSIS_STATIONS[i][0]), 0.99)),
+        (0, -1, 0))
+
+# Nose/tail caps: a fan to a single apex at the section's own mid-height,
+# which is what a ring makes possible and a 4-corner quad never could.
+#
+# The cap's UV is PLANAR (v from the point's own lateral z), not the ring's
+# car_v(k). Using the ring index here instead put v=0.5 at the apex and swept
+# 0.03..0.97 around the rim, so every livery band G16 painted across the tail
+# -- the dark centre panel at v 0.462-0.538 and the red lamp bands either
+# side -- came out smeared into radial wedges around a bullseye. Mapping v
+# from z instead lays those bands out as vertical stripes across the tail,
+# which is how G16 drew them and what the old flat cap quad produced.
+def _cap_v(z, wmax):
+    return min(0.97, max(0.03, 0.5 + (z / wmax) * 0.47))
+
+for (idx, outward) in ((0, (1, 0, 0)), (len(RINGS) - 1, (-1, 0, 0))):
+    st = CHASSIS_STATIONS[idx]
+    ring = RINGS[idx]
+    wmax = max(abs(p[2]) for p in ring) or 1.0
+    u = car_u(st[0])
+    apex_y = (st[2] + st[3]) / 2.0
+    apex = ((st[0], apex_y, 0.0), outward, (u, _cap_v(0.0, wmax)))
+    def cv(p):
+        return (p, outward, (u, _cap_v(p[2], wmax)))
+    for k in range(NK - 1):
+        emit_smooth_tri(apex, cv(ring[k]), cv(ring[k + 1]), outward)
+    # close the fan across the underbody edge
+    emit_smooth_tri(apex, cv(ring[NK - 1]), cv(ring[0]), outward)
 
 # G8 (Gen-4 car overhaul): spoiler -- a flat angled blade plus two small
 # corner risers down to the deck, ported from index.html's own spoiler
@@ -327,7 +529,12 @@ emit_quad(tail["BL"], tail["BR"], tail["TR"], tail["TL"], (-1, 0, 0))  # tail ca
 # spoilers sit on short riser blocks) makes the mount read as intentional
 # rather than a detached plate. Bound to joint 0 like the rest of the
 # chassis -- a spoiler doesn't move independently, no new joint needed.
-_spz = TRACK_HALF * 0.6
+# H1: pinned to the tail station's own half-width, which is what G8's
+# comment below says the blade is sized against anyway. It used to be
+# TRACK_HALF*0.6, which accidentally coupled the spoiler's width to the
+# wheel track -- so moving the wheels inboard would have silently narrowed
+# the spoiler too.
+_spz = CHASSIS_STATIONS[-1][1] * 0.6
 _sp_x0, _sp_x1 = -(HALF_LEN - 0.12), -(HALF_LEN + 0.06)
 _sp_deckY = CHASSIS_STATIONS[-1][4]  # tail station's own yTop
 _sp_y0, _sp_y1, _sp_th = _sp_deckY + 0.02, _sp_deckY + 0.24, 0.03
@@ -381,7 +588,10 @@ for i, (wx, wz) in enumerate(wheel_offsets):
     # short-term simplification" pending exactly this replacement.
     # G8 (Gen-4 car overhaul): narrower tire width (was 0.6) -- matches
     # JS's own wW/2 ratio relative to its wheel radius more closely.
-    add_wheel(wx, WHEEL_RADIUS, wz, WHEEL_RADIUS, WHEEL_RADIUS * 0.4, joint_idx=i + 1)
+    # H1: sides 10 -> 16. At 10 the tire silhouette was visibly a decagon at
+    # chase-cam distance, which is the same faceting problem the body had;
+    # 16 costs ~28 extra tris per wheel and reads round.
+    add_wheel(wx, WHEEL_RADIUS, wz, WHEEL_RADIUS, WHEEL_RADIUS * 0.4, joint_idx=i + 1, sides=16)
 
 def pack_f32(vals):
     return b"".join(struct.pack("<f", v) for tup in vals for v in tup)
