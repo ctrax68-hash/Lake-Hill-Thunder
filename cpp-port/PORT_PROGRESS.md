@@ -7104,3 +7104,105 @@ screenshot during a live race confirms the same look in the real browser
 build; the service-worker-ready check still times out in this container,
 the same pre-existing environment/timing quirk logged in prior phases'
 entries, unrelated to this phase's shader/renderer changes.
+
+### P1: Per-axle grip -- the loose/tight axis (NT2003 engine-feel plan)
+
+The centerpiece of the physics half of this plan. `mu` was a single global
+scalar and `c.wear` a single accumulator shared by both axles -- the car
+could get uniformly slower as its tires wore, but could never develop a
+real handling balance (push into a corner too hard and the whole car just
+scrubbed speed evenly; there was no way for it to specifically go loose or
+tight). The signal to drive a real split already existed and was being
+thrown away: `integrateYawDynamics()` (car.cpp) computed `alpha.front` and
+`alpha.rear` separately every substep, then summed them into one
+`slipMagSum` before the caller ever saw them.
+
+**The mechanism**: `YawIntegrationResult` now exposes `slipFrontAvg`/
+`slipRearAvg` and `pastLimitFront`/`pastLimitRear` alongside the existing
+combined `slipMagAvg`/`pastLimitAny` (kept for H4's slipFx signal and this
+file's own substep-convergence tests, which want the combined view).
+`integrateYawDynamics()`'s single `muEff` parameter split into
+`muEffFront`/`muEffRear`, each now bounding only that axle's own friction
+ellipse inside `axleLateralForce()` -- a function that already took `mu`
+per call, it was just being fed the same value twice. `Car` gained real
+`wearFront`/`wearRear` fields, grown in `step_car.cpp`'s shared physics
+tail from that SAME axle's own slip/limit output (not a shared combined
+signal), and `step_car.cpp` computes `muEffLateralFront`/`muEffLateralRear`
+from each axle's own wear (plus the existing grass/blown/banking terms)
+before calling into the yaw integration. `Car::wear` itself stays a real
+field -- now DERIVED every tick as `max(wearFront, wearRear)` -- so every
+existing consumer (`cornerSpeed()`/`targetSpeed()`'s AI corner-speed
+lookahead, race.cpp's pit-strategy thresholds, the five `muNow*` yaw-limit
+lookahead sites in step_car.cpp) keeps working unchanged; none of them have
+a front/rear concept to split into, and the worse axle is the correct
+conservative value for an aggregate "how worn is this car" reading.
+`fxFracFront`/`fxFracRear` and the rear-axle traction-budget/brake-force
+cap stay on the existing combined `muEff` -- deliberately out of scope,
+since that's longitudinal grip, not the cornering balance this phase is
+about.
+
+**A real tuning decision, not an oversight**: the per-axle wear-rate
+constant is `0.0000008`, not the old shared `0.0000004` split in half. The
+old formula summed BOTH axles' slip magnitudes into one term before
+scaling, so under ordinary, roughly-symmetric driving each axle's own
+magnitude was already only about half of that combined sum. Halving the
+old constant again per axle would have made `max(wearFront, wearRear)`
+climb at roughly half the pace every prior phase's tuning was fitted
+against; doubling it instead keeps an unworn car's overall wear pace where
+it already was, and only the front-vs-rear SPLIT is new behavior.
+
+**HUD**: `status_bars.cpp`'s single TIRE bar is now two (`TIR-F`/`TIR-R`,
+`Car::wearFront`/`wearRear`), plus a new `BAL` row between them and FUEL --
+a center-zero track (not `pushSegBar()`'s left-fill bar, since there's no
+"how full" reading here, only a signed position) with `L`/`T` dbgText
+brackets and a marker at `wearFront - wearRear` (already naturally in
+`[-1, 1]` since wear itself is `[0, 1]`), colored neutral gray near zero
+and warming orange (tight) or blue (loose) toward either extreme.
+`hud.cpp`'s leaderboard placement, the only caller that assumed a fixed
+3-row block below the bars, updated from `kRowBars+3` to `kRowBars+5`.
+
+**Verified**: extended `tire_model_test.cpp` (31/31 -> still 31 files,
+more assertions) with a closed-loop test using a small proportional
+yaw-rate-tracking steer controller (`steerAngle = kP*(rTarget - r)`) --
+holding `steerAngle` FIXED and just degrading one axle's mu, tried first,
+does NOT reproduce the mechanism: a weaker front axle then generates less
+yaw torque overall, so the WHOLE car corners more gently and every slip
+number drops, front included, because there's no driver in that open loop
+pushing harder to compensate. The closed-loop version (mirroring what
+`step_car.cpp`'s real `yawCorrGain` feedback actually does) cleanly
+reproduces it: a front-worn car steering to hold the same yaw rate loads
+its front axle far harder than a symmetric baseline (understeer), a
+rear-worn car loads its rear harder (oversteer), confirmed via both
+accumulated slip and friction-limit hit-count.
+
+**The "headless run" regression pass, including a methodology correction
+caught mid-investigation**: an initial single-track (`Lake Hill 400`)
+`LHT_FORCE_RACE`+`LHT_NATURAL_START`+`LHT_HEADLESS_FAST` 600-simulated-
+second comparison against a `git worktree` baseline at the pre-P1 commit
+looked alarming -- `wreckCount` 1->2, several AI cars' `lastLapT` spiking
+into the 100-230s range (vs. a clean ~35-55s baseline spread), 3 DNFs
+instead of 1. A temporary `LHT_WEAR_DEBUG` hook (removed before this
+commit) printing a representative car's `wearFront`/`wearRear` every 5
+simulated seconds ruled out the obvious suspect immediately: wear stayed
+below 0.05 the entire time a car sat stalled near `v=0` for 55+ seconds --
+nowhere near enough to meaningfully change `mu` (0.05 * 0.12 = 0.6%). The
+actual cause was methodological: re-running the SAME comparison across
+tracks 1-3 showed the PRE-P1 baseline produces its own large `lastLapT`
+outliers there too (one baseline run on track 1 hit a 501-second lap), and
+comparable wreck counts overall (baseline 5 across 4 tracks, P1 3 across
+the same 4) -- `LHT_FORCE_RACE`'s instant-bunched-field stress condition
+is already known, documented elsewhere in this file, to produce exactly
+this kind of high-variance outlier; track 0 happened to sample an unusually
+clean baseline run, making a single-track comparison look like a
+regression that a wider sample shows is within this harness's normal
+noise. Logged here in full rather than only reporting the final "looks
+fine" conclusion, per this project's own precedent (the Step 1 tire-model
+regression pass) of recording the actual investigation, including the
+paths that turned out to be red herrings.
+
+`ctest` 31/31. Native `xvfb-run` screenshot confirms the new TIR-F/TIR-R/
+BAL/FUEL/CAR HUD block renders correctly with no leaderboard overlap.
+WASM/Playwright: zero console/page errors; the service-worker-ready check
+still times out in this container, the same pre-existing environment/
+timing quirk logged in prior phases' entries, unrelated to this phase's
+sim/HUD changes.

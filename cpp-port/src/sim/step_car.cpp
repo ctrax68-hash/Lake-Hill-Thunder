@@ -86,6 +86,17 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         const double txo = pTo.x - std::sin(pTo.hdg) * lane, tyo = pTo.y + std::cos(pTo.hdg) * lane;
         double dHo = wrapPi(std::atan2(tyo - c.y, txo - c.x) - c.hdg);
         const double cFo = track.pointAt(c.s + std::max(6.0, c.v * 0.3)).curv;
+        // P1 (NT2003 engine-feel plan): this and the other four muNow*
+        // sites below are the AI's own aggregate yaw-limit lookahead (feeds
+        // cornerCap(), the same single-scalar planning heuristic
+        // cornerSpeed()/targetSpeed() use), not the actual per-tick tire
+        // force integration -- that's the friction ellipse further down,
+        // which now reads muEffLateralFront/muEffLateralRear instead.
+        // Deliberately left on c.wear (now `max(wearFront, wearRear)`,
+        // updated once per tick below) rather than split: a lookahead
+        // yaw-rate CAP has no separate front/rear concept to split into,
+        // and using the worse axle keeps this planning heuristic exactly
+        // as conservative as before a car develops any front/rear split.
         const double muNowO = CAR.mu * (1 - 0.12 * c.wear) + CAR.dfK * c.v * c.v;
         const double yawLimO = std::min({1.3, std::max(0.05, c.v * 0.24),
                                           cornerCap(muNowO, track.bankAt(c.s + 10)) / std::max(3.0, c.v) * 1.15});
@@ -124,6 +135,8 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
             c.pitT -= DT;
             if (c.pitT <= 0) {
                 c.wear = 0;
+                c.wearFront = 0;
+                c.wearRear = 0;
                 c.fuel = 1;
                 c.dmg = std::max(0.0, c.dmg - 0.5);
                 c.blown = false;
@@ -397,8 +410,22 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
     // integration specifically so planning and physics agree on how much
     // banking is worth (longitudinal accel/brake traction below is left on
     // the flat muEff -- banking's main effect is cornering grip).
+    //
+    // P1 (NT2003 engine-feel plan, the loose/tight axis): muEff/muSurf above
+    // stay a single shared value for the LONGITUDINAL grip they gate (the
+    // rear-axle traction-budget cap on engine force, and brake force split
+    // across both axles by brakeBiasFront) -- out of this phase's scope,
+    // which is specifically the cornering (lateral) friction ellipse.
+    // muEffLateralFront/Rear replace the old single muEffLateral there: each
+    // axle's OWN wear now degrades only that axle's own cornering grip, so
+    // axleLateralForce() (car.cpp) genuinely bounds the front and rear
+    // differently once they've worn unevenly -- the mechanism the whole
+    // loose/tight axis runs on.
     const double bankTan = std::tan(bank);
-    const double muEffLateral = (muEff + bankTan) / std::max(0.25, 1.0 - muEff * bankTan);
+    const double muBaseFront = CAR.mu * (onGrass ? 0.72 : 1.0) * (1 - 0.12 * c.wearFront) * (c.blown ? 0.7 : 1);
+    const double muBaseRear = CAR.mu * (onGrass ? 0.72 : 1.0) * (1 - 0.12 * c.wearRear) * (c.blown ? 0.7 : 1);
+    const double muEffLateralFront = (muBaseFront + bankTan) / std::max(0.25, 1.0 - muBaseFront * bankTan);
+    const double muEffLateralRear = (muBaseRear + bankTan) / std::max(0.25, 1.0 - muBaseRear * bankTan);
 
     c.fuel = std::max(0.0, c.fuel - c.thr * c.v * DT * 5e-5);
     const double dragMod = (1 - 0.25 * c.draftF) * (c.dirty ? 1.10 : 1) * (1 + 0.5 * c.dmg);
@@ -515,20 +542,38 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         // inside integrateYawDynamics() (car.cpp) -- fixes a numerical
         // divergence in this coupled oscillator at highway speed under
         // sustained full-lock steering (see CarConstants::yawSubsteps).
-        const YawIntegrationResult yawInt = integrateYawDynamics(
-            CAR, c.vy, c.r, vDyn, vSafe, steerAngle, fz, muEffLateral, fxFracFront, fxFracRear, DT, CAR.yawSubsteps);
+        const YawIntegrationResult yawInt =
+            integrateYawDynamics(CAR, c.vy, c.r, vDyn, vSafe, steerAngle, fz, muEffLateralFront, muEffLateralRear,
+                                 fxFracFront, fxFracRear, DT, CAR.yawSubsteps);
         c.vy = yawInt.vy;
         c.r = yawInt.r;
         c.hdg += yawInt.hdgDelta;
 
-        // Mirrors the old model's two wear contributions: a steady rate
-        // proportional to slip while cornering (equivalent to the old
-        // |yaw|*v term, now a time-weighted average across substeps), plus
-        // an extra flat bump once an axle's demanded force actually got
-        // friction-ellipse-clamped in ANY substep -- the equivalent of the
-        // old model's `demand > cap` "past the grip limit" case.
-        c.wear = std::min(1.0, c.wear + yawInt.slipMagAvg * c.v * 0.0000004);
-        if (yawInt.pastLimitAny) c.wear = std::min(1.0, c.wear + 0.00012);
+        // P1 (NT2003 engine-feel plan, the loose/tight axis): the old model's
+        // two wear contributions (a steady rate proportional to slip while
+        // cornering, plus a flat bump once the friction ellipse actually
+        // clamped) now apply PER AXLE, from that same axle's own slip/limit
+        // output -- this is the entire mechanism the loose/tight axis runs
+        // on: push the car into understeer and the fronts genuinely see more
+        // slip and clamp more often than the rears, so wearFront specifically
+        // grows faster, tightening the car further; drive it loose and the
+        // rears wear instead, loosening it further.
+        //
+        // The per-axle rate constant is 2x the old shared 0.0000004 (not the
+        // same value split in half): the old formula summed BOTH axles'
+        // slip magnitudes into one term before scaling, so under perfectly
+        // symmetric slip each axle's OWN magnitude was already only half of
+        // that sum. Applying the old constant unscaled per axle would make
+        // max(wearFront, wearRear) climb at half the old combined pace for
+        // an ordinary, roughly-symmetric driving line -- doubling it keeps
+        // an unworn car's overall wear pace matching every prior phase's
+        // tuning/playtest baseline, and only the FRONT-vs-REAR split is new.
+        constexpr double kWearRate = 0.0000008;
+        c.wearFront = std::min(1.0, c.wearFront + yawInt.slipFrontAvg * c.v * kWearRate);
+        c.wearRear = std::min(1.0, c.wearRear + yawInt.slipRearAvg * c.v * kWearRate);
+        if (yawInt.pastLimitFront) c.wearFront = std::min(1.0, c.wearFront + 0.00012);
+        if (yawInt.pastLimitRear) c.wearRear = std::min(1.0, c.wearRear + 0.00012);
+        c.wear = std::max(c.wearFront, c.wearRear);
 
         // H4 (NT2003 engine-feel plan): tire-smoke drive signal (car.h's
         // own slipFx comment). Boosts toward the current tick's slip

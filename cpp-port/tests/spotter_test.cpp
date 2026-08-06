@@ -126,7 +126,15 @@ int main() {
                                             // spotter block's own !done gate
         f.player->lap = f.state.laps - 3;
         f.player->fuel = 0.10;
-        f.player->wear = 0.90;
+        // P1 (NT2003 engine-feel plan): Car::wear is now DERIVED every tick
+        // as max(wearFront, wearRear) by stepCar()'s own physics tail (see
+        // car.h's comment on the field) -- setting `wear` directly here
+        // would get silently overwritten back toward 0 by the very tick()
+        // call below, since wearFront/wearRear are the real, persistent
+        // per-axle state now. Set those instead to actually simulate a worn
+        // car across a real stepCar() tick.
+        f.player->wearFront = 0.90;
+        f.player->wearRear = 0.90;
         f.player->dmg = 0.70;
         tick(f.state, f.cars, f.pace, f.track, rngR, input, f.finishOrder);
         // Only the last-fired message's text survives in spotTxt (each
@@ -160,7 +168,13 @@ int main() {
         Field f;
         bool triggered = false;
         for (int i = 0; i < 200000 && !triggered; ++i) {
-            f.player->wear = 0.95;
+            // P1 (NT2003 engine-feel plan): see this file's own comment
+            // above the first tireMsg check -- wear is now derived from
+            // wearFront/wearRear every tick, so those are what must be
+            // force-set here for it to actually read back as 0.95 after
+            // tick()'s stepCar() call runs.
+            f.player->wearFront = 0.95;
+            f.player->wearRear = 0.95;
             f.player->v = 31;
             // With no steering input the player drives straight while the
             // track curves, eventually taking wall damage; left unchecked

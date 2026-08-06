@@ -177,7 +177,10 @@ void drawHud(const RaceState& state, const std::vector<Car>& cars, std::vector<P
     const std::vector<const Car*> order = computeRaceOrder(cars);
     std::vector<LeaderboardRow> lbRows =
         buildLeaderboardRows(order, state.mode, state.flag, state.t, trackTotal);
-    const float lbY = (float)(kRowBars + 3) * kCellH + 8.0f;
+    // P1 (NT2003 engine-feel plan, the loose/tight axis): +5, not +3 --
+    // drawStatusBars() now draws TIR-F/TIR-R/BAL/FUEL/CAR (5 rows) instead
+    // of TIRE/FUEL/CAR (3), see status_bars.h's own comment.
+    const float lbY = (float)(kRowBars + 5) * kCellH + 8.0f;
     const int lbMaxRows = (int)((lapPanelTop - 8.0f - lbY - kCellH) / kCellH);
     if (lbMaxRows <= 0) {
         lbRows.clear();

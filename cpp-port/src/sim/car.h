@@ -130,15 +130,36 @@ double axleLateralForce(double stiffness, double slipAngle, double mu, double fz
 // the caller, outside this function, exactly as before this fix.
 // `vDyn`/`vSafe` are also caller-supplied (both derived from `c.v`, which
 // doesn't change across substeps within one tick).
+// P1 (NT2003 engine-feel plan, the loose/tight axis): slipMagAvg used to be
+// the ONLY signal wear() derived from -- |alpha.front|+|alpha.rear| summed
+// together and averaged, throwing away which axle actually did the
+// sliding. slipFrontAvg/slipRearAvg keep that same per-substep time-
+// weighted-average convention but per axle, so step_car.cpp can grow
+// Car::wearFront/wearRear independently instead of one shared scalar.
+// slipMagAvg (= slipFrontAvg+slipRearAvg) and pastLimitAny (=
+// pastLimitFront||pastLimitRear) are kept alongside the new per-axle
+// fields rather than removed -- H4's slipFx tire-smoke signal and this
+// file's own substep-convergence tests want the combined view, and
+// recomputing it at every call site would just be the same sum done twice.
 struct YawIntegrationResult {
     double vy, r;       // updated state, replaces c.vy/c.r
-    double hdgDelta;     // sum of r_i*dtSub across substeps -- add to c.hdg
-    double slipMagAvg;   // time-weighted average of |alpha.front|+|alpha.rear|
-    bool pastLimitAny;   // true if any substep's force hit the friction ellipse
+    double hdgDelta;      // sum of r_i*dtSub across substeps -- add to c.hdg
+    double slipMagAvg;    // time-weighted average of |alpha.front|+|alpha.rear|
+    double slipFrontAvg;  // time-weighted average of |alpha.front| alone
+    double slipRearAvg;   // time-weighted average of |alpha.rear| alone
+    bool pastLimitAny;    // true if any substep's force hit the friction ellipse (either axle)
+    bool pastLimitFront;  // true if any substep's FRONT force hit the friction ellipse
+    bool pastLimitRear;   // true if any substep's REAR force hit the friction ellipse
 };
+// P1: muEffFront/muEffRear replace the single shared muEff -- each axle's
+// own current grip (CAR.mu degraded by that axle's own wear, see
+// step_car.cpp) now genuinely bounds only that axle's friction ellipse,
+// which is what lets an asymmetrically-worn car actually understeer/
+// oversteer instead of just going uniformly slower everywhere.
 YawIntegrationResult integrateYawDynamics(const CarConstants& c, double vy0, double r0, double vDyn,
-                                           double vSafe, double steerAngle, const AxleLoads& fz, double muEff,
-                                           double fxFracFront, double fxFracRear, double dt, int substeps);
+                                           double vSafe, double steerAngle, const AxleLoads& fz,
+                                           double muEffFront, double muEffRear, double fxFracFront,
+                                           double fxFracRear, double dt, int substeps);
 
 // Drivetrain upgrade: shapes engine force within gearRpm()'s reused
 // breakpoint table -- peaks at 1.0 in the middle of each gear's rpm band,
@@ -224,7 +245,21 @@ struct Car {
 
     double steer = 0, thr = 0, brk = 0;
 
-    double wear = 0, draftF = 0;
+    // P1 (NT2003 engine-feel plan, the loose/tight axis): wear is now a
+    // DERIVED value, `max(wearFront, wearRear)`, recomputed every tick right
+    // after step_car.cpp updates the two real per-axle accumulators below --
+    // every existing consumer (AI corner-speed planning's cornerSpeed()/
+    // targetSpeed(), race.cpp's pit-strategy thresholds, status_bars.cpp's
+    // CAR/FUEL-adjacent bars) wants "how worn is this car overall," and none
+    // of them need to change now that there's a real axle split underneath.
+    // wearFront/wearRear are the new authoritative state: the actual per-
+    // axle grip loss step_car.cpp's bicycle-model friction ellipse now reads
+    // (see integrateYawDynamics()'s muEffFront/muEffRear), grown from that
+    // SAME axle's own slip (YawIntegrationResult::slipFrontAvg/slipRearAvg)
+    // instead of a shared combined signal -- this is what makes a car that's
+    // pushed into understeer wear its fronts specifically, tightening it
+    // further, and a car driven loose wear its rears, loosening it further.
+    double wear = 0, wearFront = 0, wearRear = 0, draftF = 0;
     bool dirty = false;
 
     // c.hitFx (index.html:1067,1227,4238): impact-severity accumulator,

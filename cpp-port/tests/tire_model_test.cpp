@@ -177,7 +177,7 @@ int main() {
             double vy = 0.0, r = 0.0;
             for (int t = 0; t < ticks; ++t) {
                 YawIntegrationResult res =
-                    integrateYawDynamics(c, vy, r, v, v, steerAngle, fz, c.mu, 0.0, 0.0, 0.02, substeps);
+                    integrateYawDynamics(c, vy, r, v, v, steerAngle, fz, c.mu, c.mu, 0.0, 0.0, 0.02, substeps);
                 vy = res.vy;
                 r = res.r;
             }
@@ -204,13 +204,80 @@ int main() {
         const double v = 30.0;
         const double steerAngle = 0.05; // mild steer, not saturating
         const AxleLoads fz = axleLoads(c, v, 0.0);
-        YawIntegrationResult r1 = integrateYawDynamics(c, 0.0, 0.0, v, v, steerAngle, fz, c.mu, 0.0, 0.0, 0.02, 1);
-        YawIntegrationResult r4 = integrateYawDynamics(c, 0.0, 0.0, v, v, steerAngle, fz, c.mu, 0.0, 0.0, 0.02, 4);
-        YawIntegrationResult r8 = integrateYawDynamics(c, 0.0, 0.0, v, v, steerAngle, fz, c.mu, 0.0, 0.0, 0.02, 8);
+        YawIntegrationResult r1 = integrateYawDynamics(c, 0.0, 0.0, v, v, steerAngle, fz, c.mu, c.mu, 0.0, 0.0, 0.02, 1);
+        YawIntegrationResult r4 = integrateYawDynamics(c, 0.0, 0.0, v, v, steerAngle, fz, c.mu, c.mu, 0.0, 0.0, 0.02, 4);
+        YawIntegrationResult r8 = integrateYawDynamics(c, 0.0, 0.0, v, v, steerAngle, fz, c.mu, c.mu, 0.0, 0.0, 0.02, 8);
         expect(std::fabs(r1.slipMagAvg - r4.slipMagAvg) < 0.01,
                "slipMagAvg roughly substep-count-invariant (n=1 vs n=4)");
         expect(std::fabs(r4.slipMagAvg - r8.slipMagAvg) < 0.01,
                "slipMagAvg roughly substep-count-invariant (n=4 vs n=8)");
+        expectNear("slipMagAvg equals slipFrontAvg+slipRearAvg (r4)", r4.slipMagAvg,
+                   r4.slipFrontAvg + r4.slipRearAvg, 1e-9);
+        expect(r4.pastLimitAny == (r4.pastLimitFront || r4.pastLimitRear),
+               "pastLimitAny equals pastLimitFront||pastLimitRear");
+    }
+
+    // ---- P1 (NT2003 engine-feel plan, the loose/tight axis): the actual
+    // "push into understeer -> fronts wear -> tighter -> push harder" loop
+    // step_car.cpp runs on is CLOSED-loop -- the AI's steerIn is a feedback
+    // term on yaw-rate error (CarConstants::yawCorrGain), not a fixed
+    // steer angle. Holding steerAngle fixed and just degrading one axle's mu
+    // (tried first, and left as a cautionary note rather than deleted
+    // outright) does NOT reproduce the effect: a weaker front axle then just
+    // generates less yaw torque overall, so the WHOLE car corners more
+    // gently and every slip number drops, front included -- there is no
+    // driver in that loop pushing harder to compensate. A tiny proportional
+    // controller here (steerAngle = kP*(rTarget-r), clamped to
+    // maxSteerAngle) stands in for that missing feedback -- "hold this yaw
+    // rate no matter what" is exactly what dHdg-driven steerIn is doing in
+    // the real game -- and is enough to reproduce the mechanism cleanly:
+    // a front-worn car must steer harder to hold the same line, which loads
+    // its (now weaker) front axle far more than the rear; a rear-worn car
+    // shows the mirror image. This is the "deliberately-understeering line
+    // drives wearFront > wearRear" verification, at the level this file
+    // already operates (integrateYawDynamics() in isolation -- stepCar()
+    // itself has no bgfx-free harness to run this same check against the
+    // real AI code path). ----
+    {
+        const double v = 28.0;
+        const double rTarget = 0.35; // a sustained, moderate cornering yaw rate
+        const double kP = 3.0;       // steer-feedback gain, standing in for yawCorrGain's role
+        const AxleLoads fz = axleLoads(c, v, 0.0);
+
+        auto drive = [&](double muFront, double muRear) {
+            double vy = 0.0, r = 0.0, frontSum = 0.0, rearSum = 0.0;
+            int pfCount = 0, prCount = 0;
+            constexpr int kTicks = 80, kWarmup = 20; // skip the initial transient before measuring
+            for (int t = 0; t < kTicks; ++t) {
+                const double steerAngle =
+                    std::max(-c.maxSteerAngle, std::min(c.maxSteerAngle, kP * (rTarget - r)));
+                YawIntegrationResult res = integrateYawDynamics(c, vy, r, v, v, steerAngle, fz, muFront, muRear,
+                                                                 0.0, 0.0, 0.02, c.yawSubsteps);
+                vy = res.vy;
+                r = res.r;
+                if (t >= kWarmup) {
+                    frontSum += res.slipFrontAvg;
+                    rearSum += res.slipRearAvg;
+                    if (res.pastLimitFront) ++pfCount;
+                    if (res.pastLimitRear) ++prCount;
+                }
+            }
+            return std::tuple<double, double, int, int>{frontSum, rearSum, pfCount, prCount};
+        };
+
+        const auto [symF, symR, symPf, symPr] = drive(c.mu, c.mu);
+        const auto [twF, twR, twPf, twPr] = drive(c.mu * 0.6, c.mu);
+        const auto [rwF, rwR, rwPf, rwPr] = drive(c.mu, c.mu * 0.6);
+        (void)twPr;
+        (void)rwPf;
+
+        expect(twF > symF, "a front-worn car steering to hold the same line loads its front MORE than the symmetric baseline");
+        expect(twF > twR, "a front-worn car's front slip exceeds its own rear slip (the understeer signature)");
+        expect(twPf > symPf, "a front-worn car's front axle hits the friction limit more often than the symmetric baseline");
+
+        expect(rwR > symR, "a rear-worn car steering to hold the same line loads its rear MORE than the symmetric baseline");
+        expect(rwR > rwF, "a rear-worn car's rear slip exceeds its own front slip (the oversteer signature)");
+        expect(rwPr > symPr, "a rear-worn car's rear axle hits the friction limit more often than the symmetric baseline");
     }
 
     // ---- integrateYawDynamics(): a sustained, non-saturating steer input
@@ -247,7 +314,7 @@ int main() {
         bool everPastLimit = false;
         for (int t = 0; t < 200; ++t) {
             YawIntegrationResult res =
-                integrateYawDynamics(c, vy, r, v, v, steerAngle, fz, c.mu, 0.0, 0.0, 0.02, c.yawSubsteps);
+                integrateYawDynamics(c, vy, r, v, v, steerAngle, fz, c.mu, c.mu, 0.0, 0.0, 0.02, c.yawSubsteps);
             vy = res.vy;
             r = res.r;
             if (res.pastLimitAny) everPastLimit = true;
