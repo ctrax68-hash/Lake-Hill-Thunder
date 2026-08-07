@@ -83,8 +83,21 @@ void main()
 	vec3 texel = texture2D(s_texColor, v_texcoord0).rgb;
 	vec3 diffuse = texel * (ambient + u_sunColor.rgb * ndotl);
 
+	// I4 (car visual fidelity plan): retuned from 60/0.35. H1 already made
+	// this safe to tighten again -- the body has had continuous per-vertex
+	// normals since then, so a tighter power sweeps as the camera/light
+	// move rather than flickering the way it did on the old flat-faceted
+	// geometry (the exact reason this was lowered from an original 180 to
+	// 60 in the first place, see H2's own comment above). 90 lands well
+	// short of that old 180 -- reference NASCAR Thunder images show a
+	// harder, more defined gloss streak than this file's own 60 produced,
+	// and the multiplier is nudged down (0.35->0.30) so peak brightness at
+	// ndoth=1 doesn't rise even though the falloff is tighter, keeping the
+	// shared bloom bright-pass threshold (renderer.cpp's 0.85) from
+	// tripping any harder than it already does for the same view/light
+	// geometry.
 	float ndoth = max(dot(n, halfDir), 0.0);
-	float spec = pow(ndoth, 60.0) * 0.35;
+	float spec = pow(ndoth, 90.0) * 0.30;
 
 	float ndotv = max(dot(n, viewDir), 0.0);
 	float fresnel = pow(1.0 - ndotv, 5.0);
@@ -110,6 +123,44 @@ void main()
 	float amberMatch = 1.0 - smoothstep(0.0, 0.01, amberD2);
 	vec3 emissive = texel * (tailMatch * u_emissive.x + amberMatch * u_emissive.y);
 
-	vec3 rgb = mix(diffuse, envColor, fresnel * 0.30) + u_sunColor.rgb * spec + emissive;
+	// I3 (car visual fidelity plan): the same H6 color-match technique,
+	// extended to give glass and the metallic wheel rim their own material
+	// response, cheaper than a real material-ID system since every color
+	// to distinguish is already a known, geometry-isolated flat-swatch RGB
+	// constant (see livery.cpp's glassDark/glassHi and gen_car_rig.py's
+	// SW_RIM). No new uniforms -- texel/n/viewDir/halfDir are already
+	// computed above.
+	//
+	// Glass needs a MUCH tighter threshold than tailRef/amberRef's 0.01:
+	// glassDark (16,20,30)/255 sits only 0.0036-0.0057 squared-distance
+	// from the wheel's own near-black tread/sidewall swatches (all four are
+	// "near black", so any sufficiently loose threshold catches all of
+	// them) -- confirmed by direct calculation before picking this value,
+	// not assumed safe. 0.0015 catches glassDark/glassHi (solid-fill rects,
+	// so an on-rect sample reads essentially exact) while staying below
+	// that collision distance.
+	vec3 glassDarkRef = vec3(16.0 / 255.0, 20.0 / 255.0, 30.0 / 255.0);
+	vec3 glassHiRef = vec3(26.0 / 255.0, 33.0 / 255.0, 46.0 / 255.0);
+	float glassD2 = min(dot(texel - glassDarkRef, texel - glassDarkRef),
+	                     dot(texel - glassHiRef, texel - glassHiRef));
+	float glassMatch = 1.0 - smoothstep(0.0, 0.0015, glassD2);
+	// Glass reads darker and more mirror-like, not brighter: damp the
+	// diffuse/ambient response and let the reflection sweep dominate more
+	// of the mix than the body paint's fixed 0.30 weight.
+	diffuse *= (1.0 - glassMatch * 0.55);
+	float reflectMix = fresnel * 0.30 + glassMatch * 0.35;
+
+	// Metallic rim: SW_RIM's bright, well-separated color (198,200,206)/255
+	// has no collision risk with the near-black cluster above, so the
+	// existing 0.01 threshold is fine. A second, much tighter/higher-power
+	// specular lobe than the body's own -- a hard chrome-like glint,
+	// distinct from the paint's rounder highlight -- without touching the
+	// shared base `spec` term every other texel still uses.
+	vec3 rimRef = vec3(198.0 / 255.0, 200.0 / 255.0, 206.0 / 255.0);
+	float rimD2 = dot(texel - rimRef, texel - rimRef);
+	float rimMatch = 1.0 - smoothstep(0.0, 0.01, rimD2);
+	float chromeSpec = pow(ndoth, 300.0) * rimMatch;
+
+	vec3 rgb = mix(diffuse, envColor, reflectMix) + u_sunColor.rgb * (spec + chromeSpec) + emissive;
 	gl_FragColor = vec4(rgb, 1.0);
 }

@@ -7647,3 +7647,71 @@ swatch decodes to a color distinct from the wheel swatches, and the direct
 glTF-blob decode confirms exactly 48 vertices at `SW_MIRROR`'s UV (2
 mirrors x 6 box faces x 4 vertices). `check_car_rig.py` and native `ctest`
 (32/32) both still pass.
+
+## I3 -- Glass + chrome material color-match (car visual fidelity plan)
+
+Every triangle of the car -- body paint, both tire faces, the spoiler, and
+the windshield/glass -- went through the exact same one Blinn-Phong +
+Fresnel + fake-env-reflection formula in `fs_car.sc`, one draw call, one
+program. That's very likely the single largest reason everything read as
+uniform flat plastic instead of glossy paint / matte rubber / glossy dark
+glass / metallic rim. Reused H6's existing texture-color-match technique
+(already proven for the taillight/pace-amber emissive pass) rather than
+building a real per-vertex material-ID system: `PosNormalUVSkinnedVertex`
+has no spare attribute channel, and adding one means touching the vertex
+layout, both shaders, the glTF reader, and every emit call site in
+`gen_car_rig.py` -- five files, for something the color-match trick
+already delivers exactly, since every material to distinguish (glass, the
+I1 rim) is already a known, geometry-isolated, exact flat-swatch RGB
+constant.
+
+**A real collision risk found and fixed before it shipped, not assumed
+safe.** The plan's first draft would have matched `glassDark` at the same
+loose 0.01 squared-distance threshold H6 already uses for
+taillight/amber. Computing the actual distances first: `glassDark`
+(16,20,30)/255 sits only 0.0036-0.0057 squared-distance from I1's own
+near-black tread/sidewall wheel swatches -- **every near-black color in
+this scene sits close to every other near-black color** in normalized RGB
+space, so a threshold loose enough to reliably catch `glassDark` would
+also have caught the tires, giving them the same darkened/reflective
+"glass" treatment. Tightened to 0.0015 (comfortably below the 0.0036
+collision distance, still well above zero for a solid-fill rect's on-rect
+samples) and verified against the *actual* computed distances, not
+against an assumed separation.
+
+The I1 rim's swatch color (198,200,206/255) is bright and well-separated
+from every other reference color in the scene (nearest is >0.05 squared-
+distance, no threshold tuning needed), so it keeps the existing 0.01
+threshold and gets a second, much tighter/higher-power specular lobe
+(`pow(ndoth,300)`) layered on top of the body's own -- a hard chrome-like
+glint distinct from the paint's rounder highlight. Glass gets the opposite
+treatment: matched texels have their diffuse/ambient response damped and
+the reflection-sweep mix weight raised, so it reads darker and more
+mirror-like rather than brighter. `SW_MIRROR` (I2) was deliberately left
+out of this pass -- its color sits inside `glassHi`'s own collision radius,
+and giving it a special material response wasn't worth reopening the
+threshold question for a two-box trim prop.
+
+## I4 -- Specular retune (car visual fidelity plan)
+
+Sequenced immediately after I3 (same file, one combined verification
+pass) rather than as a separate commit, specifically to holistically check
+total additive brightness against the shared bloom/tonemap pipeline once
+rather than twice. Raised the base specular power 60->90 and lowered the
+energy multiplier 0.35->0.30: H1's continuous per-vertex normals are
+exactly what makes this safe now (the same reasoning the H2 180->60 retune
+already used one notch down) -- a tighter highlight sweeps rather than
+flickers on today's curved geometry, and reference NASCAR Thunder images
+show a harder, more defined gloss streak than the old 60/0.35 produced.
+
+**Verified with a measurement, not just a look**: captured the same fixed
+menu-showcase frame before and after (I2's own screenshot vs. a fresh one),
+decoded both PNGs, and counted pixels exceeding the bloom pipeline's own
+0.85 bright-pass threshold (`renderer.cpp:1936`). The count went DOWN
+slightly (9680 -> 9424 pixels), confirming the lowered multiplier
+successfully offset the tighter falloff rather than assuming it would --
+this is the project's own established "decode it directly" discipline
+applied to a blowout-regression question a screenshot alone can't answer
+precisely. A race chase-cam screenshot shows a visibly more defined
+highlight streak along the roofline compared to the pre-I3/I4 baseline.
+Native `ctest` 32/32.
