@@ -572,8 +572,23 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // order -- coordinates must match gen_car_rig.py's own
     // SW_TREAD/SW_SIDEWALL constants (loose cross-file sync, same
     // convention this codebase already uses for carU()/livery bands).
+    // I1 (car visual fidelity plan): SW_SIDEWALL used to stand in for the
+    // wheel cap's *entire* face (hence the mid-gray, "not solid black"
+    // choice); now it's only the outer rubber annulus, so recolor it
+    // near-black -- distinct from SW_TREAD's own near-black so the two
+    // stay independently checkable, but visually reads the same "tire
+    // rubber" as the reference images.
     c.fillRect(0.85, 0.0, 0.10, 0.5, std::array<double, 3>{12 / 255.0, 12 / 255.0, 13 / 255.0});  // tire rubber
-    c.fillRect(0.85, 0.5, 0.10, 0.5, std::array<double, 3>{70 / 255.0, 70 / 255.0, 72 / 255.0});  // sidewall
+    c.fillRect(0.85, 0.5, 0.10, 0.5, std::array<double, 3>{14 / 255.0, 14 / 255.0, 16 / 255.0});  // sidewall (outer annulus, rubber)
+
+    // I1: the two new concentric wheel-cap bands, in the true open UV
+    // margin (0.792, 0.85) -- livery.cpp's own nose/tail lamp decals
+    // (kTailU0=0.764, kTailUW=0.028) reach u=0.792, past the body wrap's
+    // U1=0.78, so u=0.80 was NOT actually free. u=0.83-0.85 stays reserved
+    // for I2's mirror swatch. Coordinates must match gen_car_rig.py's
+    // SW_TIRE_LETTER/SW_RIM constants.
+    c.fillRect(0.80, 0.0, 0.03, 0.5, std::array<double, 3>{130 / 255.0, 130 / 255.0, 132 / 255.0});  // tire lettering band
+    c.fillRect(0.80, 0.5, 0.03, 0.5, std::array<double, 3>{198 / 255.0, 200 / 255.0, 206 / 255.0});  // metallic rim/hub
 
     // G8 (Gen-4 car overhaul): two more swatches for gen_car_rig.py's new
     // spoiler geometry, in the same reserved-margin column, a separate

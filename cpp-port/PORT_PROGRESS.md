@@ -7559,3 +7559,57 @@ coordinates were recomputed for the new bar geometry (`104, 456`, up from
 coordinates would have missed the new Start bar, made the click a no-op,
 and caused the rest of the script to hang or silently pass having tested
 nothing.
+
+## I1 -- Wheel rim/hub + tire sidewall banding (car visual fidelity plan)
+
+The user played the live deployed build and supplied real NASCAR Thunder
+2003/2004/1999 reference images, calling the car rendering "still way off"
+and cars the single biggest priority. This phase targets the most
+structurally broken gap: `add_wheel()` (`tools/gen_car_rig.py`) built each
+flat end cap as a single fan where **every vertex sampled one fixed UV
+point** (`SW_SIDEWALL`). That's not a color choice that happened to look
+flat -- it is structurally incapable of ever showing a rim/tire
+distinction, since every vertex on the cap decodes to the identical
+texel no matter what that one swatch is painted. Real geometry was
+required, not a repaint.
+
+Each end cap is now three concentric bands, each a real ring of geometry
+sampling its own swatch point: an outer rubber annulus (`SW_SIDEWALL`,
+recolored near-black now that it's not standing in for the whole cap),
+a thin lighter "tire lettering" annulus (new `SW_TIRE_LETTER`), and a
+bright metallic hub disc (new `SW_RIM`). Two boundary rings at the same
+radius are deliberately separate vertices where they belong to different
+bands -- the same rule `emit_swatch_quad()` already enforces (every vertex
+of a flat-color region must share one swatch UV), so two differently-
+colored bands meeting at a radius can't share a vertex there without one
+of them sampling the wrong color.
+
+**UV placement bug caught before it shipped**: the obvious "free" margin
+looked like `u∈(0.78,0.85)` (body wrap's own `U1=0.78` vs. the wheel/
+spoiler swatch column starting at `u=0.85`), but `livery.cpp`'s nose/tail
+lamp decals (`kTailU0=0.764`, `kTailUW=0.028`) actually reach `u=0.792` --
+past the body wrap's own stated boundary. Placing the new swatches at
+`u=0.80` (the plan's first draft) would have sat close enough to that edge
+to risk supersample/downsample bleed from the tail decal. Moved to
+`u=0.815`, with `u=0.83-0.85` still reserved for a future mirror swatch.
+
+**Verified two ways past the usual screenshot check**, because chase-cam
+framing kept occluding the wheel behind the fender on every angle tried
+(menu showcase camera, race chase cam, a banked-turn pit-request shot) --
+this project's own established "decode it directly" fallback for exactly
+this situation:
+- `livery_test.cpp` gained a check decoding all four wheel swatch
+  coordinates and confirming they're pairwise distinct, plus that the rim
+  reads meaningfully brighter than the tread rubber (luminance +0.3) --
+  the actual visual point of this phase.
+- Went one level deeper: wrote a scratch script that parses the *compiled*
+  `car_rig_data.h` glTF blob directly (base64-decodes the buffer, unpacks
+  the `TEXCOORD_0` accessor) and counts vertices at each swatch UV.
+  Confirmed exact expected counts: `SW_TREAD` 128, `SW_SIDEWALL` 256,
+  `SW_TIRE_LETTER` 256, `SW_RIM` 136 (128 ring + 8 center vertices across
+  4 wheels) -- proof the geometry pipeline is correctly wired end-to-end
+  from the Python generator through the actual binary mesh data the
+  renderer loads, independent of any camera angle.
+
+`tools/check_car_rig.py` still passes unchanged (it validates body
+geometry, untouched by this phase). Native `ctest` 32/32.

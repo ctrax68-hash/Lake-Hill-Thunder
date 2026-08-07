@@ -61,7 +61,22 @@ FACES = [
 # since this is a Python generator and a C++ file, same loose-sync
 # convention this codebase already uses for carU()/livery band constants.
 SW_TREAD = (0.90, 0.25)     # near-black rubber, cylindrical tread band
-SW_SIDEWALL = (0.90, 0.75)  # mid-gray sidewall, the two flat end caps
+SW_SIDEWALL = (0.90, 0.75)  # near-black rubber, the outer end-cap annulus
+
+# I1 (car visual fidelity plan): the wheel end caps used to be a single fan
+# sampling one fixed UV point (SW_SIDEWALL) for every vertex -- structurally
+# incapable of ever showing a rim/tire distinction no matter what that one
+# swatch is painted, since every vertex decodes to the identical texel. Real
+# reference NASCAR Thunder cars show a clearly separate metallic hub from
+# the black tire plus a lighter sidewall-lettering band, so add_wheel()
+# below now builds each cap as three concentric annuli/disc, each sampling
+# its own swatch. Placed at u=0.815, NOT the naively-free-looking u=0.80:
+# livery.cpp's nose/tail lamp decals (kTailU0=0.764, kTailUW=0.028) actually
+# reach u=0.792, past the body wrap's own U1=0.78 -- the true open margin is
+# (0.792, 0.85), not (0.78, 0.85). u=0.83-0.85 stays reserved for I2's
+# mirror swatch, a separate column in the same margin.
+SW_TIRE_LETTER = (0.815, 0.25)  # lighter "lettering" annulus, inside the rubber
+SW_RIM = (0.815, 0.75)          # bright metallic hub disc, innermost
 
 # G8 (Gen-4 car overhaul): two more fixed-color swatches for the new
 # spoiler, in the same reserved-UV-margin column as the G1c wheel swatches
@@ -91,15 +106,30 @@ def add_wheel(cx, cy, cz, radius, half_width, joint_idx, sides=10):
     """A radial (cylindrical) tire mesh, replacing the placeholder box --
     thin along local Z (the axle axis, matching the rig's existing
     convention: a real tire is thin along its axle and full-radius in the
-    X-Y plane it rolls in). The two flat end caps (normal +-Z) sample
-    SW_SIDEWALL; the cylindrical tread band between them (normal radially
+    X-Y plane it rolls in). The cylindrical tread band (normal radially
     outward in X-Y) samples SW_TREAD -- geometry alone gives the wheel a
-    round silhouette from every angle, and the two swatches give it a
-    tread/sidewall color distinction without any new texture or sampler.
-    `sides` end-cap fan tris x2 + `sides` tread quads (2 tris each): with
-    the default sides=10 that's (10-2)*2 + 10*2 = 36 tris/wheel, ~2.9k
-    tris total across a 20-car field's 80 wheels -- negligible next to
-    the car body loft itself.
+    round silhouette from every angle.
+
+    I1 (car visual fidelity plan): each flat end cap is now three
+    concentric bands rather than one single-swatch fan -- an outer rubber
+    annulus (SW_SIDEWALL), a thin lighter "lettering" annulus
+    (SW_TIRE_LETTER), and an inner metallic hub disc (SW_RIM). A fan whose
+    every vertex samples one fixed UV point is structurally incapable of
+    ever showing a rim/tire distinction no matter what that single swatch
+    is painted -- every vertex decodes to the identical texel -- so real
+    concentric geometry is required, not just a repaint. Each band's own
+    two boundary rings are separate vertices even where they sit at the
+    same 3D position (same "flat swatch" convention emit_swatch_quad()
+    already uses: every vertex of a same-color region must share one
+    swatch UV, so two differently-colored bands meeting at a radius can't
+    share vertices there without one of them sampling the wrong swatch).
+
+    Triangle cost: per cap, `sides*2` (outer annulus) + `sides*2` (mid
+    annulus) + `sides` (inner disc fan) = `sides*5`; two caps + the
+    `sides*2` tread band = `sides*12` per wheel. At sides=16 (this rig's
+    actual call-site value) that's 192 tris/wheel, ~15.4k across a 20-car
+    field's 80 wheels -- still negligible next to the car body loft's own
+    720 triangles x20 cars.
     """
     base = len(positions)
     ring = [(math.cos(2 * math.pi * i / sides), math.sin(2 * math.pi * i / sides)) for i in range(sides)]
@@ -111,20 +141,51 @@ def add_wheel(cx, cy, cz, radius, half_width, joint_idx, sides=10):
         joints0.append((joint_idx, 0, 0, 0))
         weights0.append((1.0, 0.0, 0.0, 0.0))
 
-    # End caps (sidewalls): a center vertex + a ring, fanned into triangles.
-    # Normals/winding are hand-set per vertex (not derived from winding, as
-    # emit_quad() does), and this renderer applies no backface culling
-    # anywhere (renderer.cpp's own convention), so triangle winding here
-    # only needs to describe valid triangles, not a specific facing.
+    # I1: end-cap radii for the three concentric bands.
+    R_OUTER = radius
+    R_MID = radius * 0.78
+    R_INNER = radius * 0.68
+
+    # End caps: normals/winding are hand-set per vertex (not derived from
+    # winding, as emit_quad() does), and this renderer applies no backface
+    # culling anywhere (renderer.cpp's own convention), so triangle winding
+    # here only needs to describe valid triangles, not a specific facing --
+    # the side_sign-based order flip below just keeps the two caps
+    # consistent with each other and with this file's own care elsewhere
+    # about winding, not because culling would otherwise hide anything.
     for side_sign in (1, -1):
         z = cz + side_sign * half_width
+        n = (0, 0, side_sign)
+
+        def make_ring(r, swatch):
+            ring_base = len(positions)
+            for (rx, ry) in ring:
+                add_vertex((cx + rx * r, cy + ry * r, z), n, swatch)
+            return ring_base
+
+        def annulus_tris(outer_base, inner_base):
+            for i in range(sides):
+                i2 = (i + 1) % sides
+                a0, a1 = outer_base + i, outer_base + i2
+                b0, b1 = inner_base + i, inner_base + i2
+                if side_sign > 0:
+                    indices.extend([a0, b0, b1, a0, b1, a1])
+                else:
+                    indices.extend([a0, b1, b0, a0, a1, b1])
+
+        outer_o = make_ring(R_OUTER, SW_SIDEWALL)
+        outer_i = make_ring(R_MID, SW_SIDEWALL)
+        annulus_tris(outer_o, outer_i)
+
+        mid_o = make_ring(R_MID, SW_TIRE_LETTER)
+        mid_i = make_ring(R_INNER, SW_TIRE_LETTER)
+        annulus_tris(mid_o, mid_i)
+
+        inner_ring = make_ring(R_INNER, SW_RIM)
         center_idx = len(positions)
-        add_vertex((cx, cy, z), (0, 0, side_sign), SW_SIDEWALL)
-        ring_base = len(positions)
-        for (rx, ry) in ring:
-            add_vertex((cx + rx * radius, cy + ry * radius, z), (0, 0, side_sign), SW_SIDEWALL)
+        add_vertex((cx, cy, z), n, SW_RIM)
         for i in range(sides):
-            i0, i1 = ring_base + i, ring_base + (i + 1) % sides
+            i0, i1 = inner_ring + i, inner_ring + (i + 1) % sides
             if side_sign > 0:
                 indices.extend([center_idx, i0, i1])
             else:

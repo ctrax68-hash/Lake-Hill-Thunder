@@ -111,6 +111,35 @@ int main() {
                    pixels.size() == (size_t)kLiveryTextureSize * kLiveryTextureSize * 4);
     }
 
+    // I1 (car visual fidelity plan): the wheel end-cap swatches -- tread,
+    // sidewall (outer rubber annulus), tire-lettering annulus, and the
+    // metallic rim disc -- must all decode to distinct colors from each
+    // other. A fan sampling one fixed UV point is structurally incapable of
+    // showing a rim/tire distinction no matter what that swatch is painted
+    // (every vertex on it decodes to the identical texel), so this is a
+    // real regression guard: if any two of these four swatch coordinates
+    // ever collapsed to the same color, the wheel would silently lose its
+    // rim/tire read even though the geometry itself still has 3 bands.
+    // Coordinates must track gen_car_rig.py's SW_TREAD/SW_SIDEWALL/
+    // SW_TIRE_LETTER/SW_RIM constants exactly (loose cross-file sync, same
+    // convention this file's other swatch coordinates already follow).
+    {
+        LiveryScheme scheme{0, 0, 0, CarPalette::White};
+        const auto pixels = buildLiveryPixels(red, 7, 1, &scheme);
+        const auto tread = pixelAt(pixels, (int)(0.90 * kLiveryTextureSize), (int)(0.25 * kLiveryTextureSize));
+        const auto sidewall = pixelAt(pixels, (int)(0.90 * kLiveryTextureSize), (int)(0.75 * kLiveryTextureSize));
+        const auto tireLetter = pixelAt(pixels, (int)(0.815 * kLiveryTextureSize), (int)(0.25 * kLiveryTextureSize));
+        const auto rim = pixelAt(pixels, (int)(0.815 * kLiveryTextureSize), (int)(0.75 * kLiveryTextureSize));
+        expectTrue("wheel tread differs from sidewall", tread != sidewall);
+        expectTrue("wheel sidewall differs from tire-lettering band", sidewall != tireLetter);
+        expectTrue("tire-lettering band differs from the metallic rim", tireLetter != rim);
+        expectTrue("wheel tread differs from the metallic rim", tread != rim);
+        // The rim should read as a bright, roughly-neutral metallic tone --
+        // clearly lighter than the near-black tread/sidewall rubber, which
+        // is the whole visual point of I1 (a hub distinct from the tire).
+        expectTrue("metallic rim is brighter than the tread rubber", luminance(rim) > luminance(tread) + 0.3);
+    }
+
     if (g_failures == 0) {
         std::printf("livery_test: shading bands, stripe styles, and number decals all match expectations.\n");
         return 0;
