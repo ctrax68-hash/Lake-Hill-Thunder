@@ -1469,6 +1469,43 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     InterpPose mirrorPose{};
     Vec3 mirrorUp{0, 1, 0};
 
+    // G24: shared perspective-camera finisher for Chase and Showcase -- both
+    // use the same FOV convention (60 vertical, capped horizontal at wide
+    // aspects to avoid the near-fisheye blowup a real phone's landscape
+    // aspect can otherwise trigger, see the historic bug this logic fixed),
+    // so the capping math lives in one place rather than as two copies that
+    // could silently drift apart.
+    //
+    // Right-handed explicitly: bx::mtxLookAt defaults to Handedness::Left,
+    // whose `right = cross(up, at-eye)` is the NEGATION of the standard
+    // right-handed `right = cross(forward, up)` this project's whole
+    // world-space convention already assumes (track_surface.cpp's
+    // pos3()/surfaceUp()). mtxProj must use the same handedness -- it isn't
+    // just an X-mirror, LH/RH also flips which view-space Z sign the
+    // projection matrix expects.
+    // `baseFovYDeg`: Chase passes chaseFov_ (Phase H5's smoothed speed-driven
+    // push, 58 at rest rising to 76 at speed with a full draft); Showcase
+    // passes a fixed 60 (JS's original constant) since the showcase car
+    // never moves and has no speed to drive a push.
+    auto applyPerspectiveCamera = [&](const bx::Vec3& eye, const bx::Vec3& at, const bx::Vec3& up,
+                                       float baseFovYDeg) {
+        bx::mtxLookAt(view, eye, at, up, bx::Handedness::Right);
+        const float aspect = (height_ > 0) ? (float)width_ / (float)height_ : 1.0f;
+        const float kBaseFovYDeg = baseFovYDeg;
+        constexpr float kMaxFovXDeg = 100.0f;
+        float fovYDeg = kBaseFovYDeg;
+        const float halfFovYBase = bx::toRad(kBaseFovYDeg) * 0.5f;
+        const float fovXAtBaseDeg = bx::toDeg(bx::atan(bx::tan(halfFovYBase) * aspect)) * 2.0f;
+        if (fovXAtBaseDeg > kMaxFovXDeg) {
+            const float halfFovXCap = bx::toRad(kMaxFovXDeg) * 0.5f;
+            fovYDeg = bx::toDeg(bx::atan(bx::tan(halfFovXCap) / aspect)) * 2.0f;
+        }
+        bx::mtxProj(proj, fovYDeg, aspect, 0.5f, 1500.0f, homogeneousDepth, bx::Handedness::Right);
+        eyePos[0] = eye.x;
+        eyePos[1] = eye.y;
+        eyePos[2] = eye.z;
+    };
+
     if (cameraMode_ == CameraMode::Chase) {
         const Car* car = nullptr;
         for (auto& c : cars) {
@@ -1594,61 +1631,47 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         const bx::Vec3 eye = {chaseEyeX_, chaseEyeY_, chaseEyeZ_};
         const bx::Vec3 at = {chaseLookX_, chaseLookY_, chaseLookZ_};
         const bx::Vec3 up = {(float)upBlend.x, (float)upBlend.y, (float)upBlend.z};
-        // Right-handed explicitly: bx::mtxLookAt defaults to Handedness::Left,
-        // whose `right = cross(up, at-eye)` is the NEGATION of the standard
-        // right-handed `right = cross(forward, up)` this project's whole
-        // world-space convention already assumes (track_surface.cpp's
-        // pos3()/surfaceUp(), and mat4RotateY(-ch)'s own derivation comment
-        // above, both verified right-handed). Left the camera's screen-X
-        // axis mirrored relative to every other piece of world geometry --
-        // a real, user-reported bug ("going around the track backwards",
-        // steering feeling inverted), not a sim bug: the simulation's own
-        // left-hand-turn convention and player steering sign are both
-        // independently verified correct against the original JS (see
-        // PORT_PROGRESS.md). mtxProj below must use the same handedness --
-        // it isn't just an X-mirror, LH/RH also flips which view-space Z
-        // sign the projection matrix expects.
-        bx::mtxLookAt(view, eye, at, up, bx::Handedness::Right);
-        const float aspect = (height_ > 0) ? (float)width_ / (float)height_ : 1.0f;
         // Base FOV (vertical) was a fixed 60, matching JS's own
         // `new THREE.PerspectiveCamera(60, 1, 0.5, 1500)` exactly. Phase H5
         // (PORT_PROGRESS.md) replaces the constant with chaseFov_, a smoothed
         // speed-driven push computed above (JS's own fovTgt formula,
         // index.html:4058-4066) -- 58 at rest, rising to as much as 76 at
-        // speed with a full draft. near 0.5, far 1500 unchanged. bx's
-        // `mtxProj(fovy, aspect, ...)` overload takes `_fovy` in DEGREES
-        // and converts internally (`toRad(_fovy)` inside math.cpp) -- do
-        // NOT pre-convert here, that double-converts and produces a
-        // near-zero effective FOV (a real bug hit and fixed this session:
-        // it manifested as the entire frame being covered by whatever
-        // geometry was nearest the camera, with ~75x too much magnification).
-        //
-        // Holding vertical FOV fixed at chaseFov_ while deriving horizontal
-        // FOV from `aspect` (the standard convention) works fine for
-        // desktop-ish aspects, but a real phone in landscape with the
-        // browser chrome eating vertical space can reach an aspect as
-        // extreme as ~2.7:1 -- at that ratio 60 vertical implies a ~115
-        // horizontal FOV, a near-fisheye view where nearby ground/wall
-        // geometry looms huge and fills most of the frame while distant
-        // things (the track ahead, other cars) shrink toward the center --
-        // exactly the "huge close-up color bands, no visible cars, doesn't
-        // look 3D" complaint a real device reported. Cap horizontal FOV at
-        // kMaxFovXDeg by shrinking vertical FOV instead once `aspect`
-        // exceeds the point where the base vertical FOV would already blow
-        // past it; narrower/normal aspects are completely unaffected.
-        const float kBaseFovYDeg = chaseFov_;
-        constexpr float kMaxFovXDeg = 100.0f;
-        float fovYDeg = kBaseFovYDeg;
-        const float halfFovYBase = bx::toRad(kBaseFovYDeg) * 0.5f;
-        const float fovXAtBaseDeg = bx::toDeg(bx::atan(bx::tan(halfFovYBase) * aspect)) * 2.0f;
-        if (fovXAtBaseDeg > kMaxFovXDeg) {
-            const float halfFovXCap = bx::toRad(kMaxFovXDeg) * 0.5f;
-            fovYDeg = bx::toDeg(bx::atan(bx::tan(halfFovXCap) / aspect)) * 2.0f;
+        // speed with a full draft -- passed into the shared
+        // applyPerspectiveCamera() lambda above rather than duplicated here.
+        applyPerspectiveCamera(eye, at, up, chaseFov_);
+    } else if (cameraMode_ == CameraMode::Showcase) {
+        // G24: the menu's static hero-shot camera. Front-3/4, not
+        // rear-follow -- see the CameraMode::Showcase enum comment
+        // (renderer.h) for why this can't be a Chase variant. The car never
+        // moves (menu mode's showcase car is parked, v=0), so unlike Chase
+        // there's no smoothing state to maintain: the eye/look are just
+        // recomputed fresh from the car's pose every frame.
+        if (!cars.empty() && track_) {
+            const Car& car = cars[0];
+            const Vec3 base = pos3(*track_, car.s, car.lat);
+            const double th = car.hdg;
+            const double fwx = std::cos(th), fwz = std::sin(th);
+            const double sx = -std::sin(th), sz = std::cos(th); // left-perpendicular
+            const Vec3 up3 = surfaceUp(*track_, car.s);
+            // Eye sits ahead of and to the side of the car, looking back at
+            // it -- the geometry that actually produces a front-3/4 shot.
+            constexpr double kDistFront = 7.0, kLateral = 4.5, kEyeHeight = 1.4, kLookHeight = 0.7;
+            const bx::Vec3 eye = {
+                (float)(base.x + fwx * kDistFront + sx * kLateral + up3.x * kEyeHeight),
+                (float)(base.y + up3.y * kEyeHeight),
+                (float)(base.z + fwz * kDistFront + sz * kLateral + up3.z * kEyeHeight)};
+            const bx::Vec3 at = {(float)(base.x + up3.x * kLookHeight), (float)(base.y + up3.y * kLookHeight),
+                                  (float)(base.z + up3.z * kLookHeight)};
+            const bx::Vec3 up = {(float)up3.x, (float)up3.y, (float)up3.z};
+            applyPerspectiveCamera(eye, at, up, 60.0f);
+        } else {
+            // No car yet -- shouldn't happen once main.cpp always populates
+            // the showcase-car vector before entering menu mode, but avoid
+            // leaving view/proj as zero-initialized garbage if it ever does.
+            applyPerspectiveCamera({0, 3, -10}, {0, 1, 0}, {0, 1, 0}, 60.0f);
         }
-        bx::mtxProj(proj, fovYDeg, aspect, 0.5f, 1500.0f, homogeneousDepth, bx::Handedness::Right);
-        eyePos[0] = eye.x;
-        eyePos[1] = eye.y;
-        eyePos[2] = eye.z;
+        // mirrorCar stays null: the mirror inset is gated on CameraMode::Chase
+        // (see below), so Showcase never activates it -- no extra guard needed.
     } else {
         // TopDown: unchanged framing/purpose (a static overview of the
         // whole track), still orthographic -- now looking straight down
@@ -1997,7 +2020,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         // for mode=="menu" (hud.cpp:21), so both can unconditionally run here
         // without stepping on each other's dbgText rows.
         if (raceState.mode == "menu" && menu && menuTrackName) {
-            drawMenu(*menu, raceState.laps, raceState.tilt, *menuTrackName);
+            drawMenu(*menu, raceState.laps, raceState.tilt, *menuTrackName, uiVerts);
         }
         // P4 (NT2003 engine-feel plan, pit adjustments): drawn on top of
         // the ordinary HUD (not mode-exclusive, unlike menu/results above)

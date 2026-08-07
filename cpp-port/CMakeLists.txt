@@ -645,7 +645,10 @@ add_test(NAME touch_controls_test COMMAND touch_controls_test)
 # menu.cpp calls bgfx::dbgTextPrintf() in drawMenu() (not exercised by this
 # test, but still a symbol the linker must resolve), so this target needs
 # bgfx's include paths and library the same way lht_port itself does.
-add_executable(menu_test tests/menu_test.cpp src/ui/menu.cpp)
+# G24: menu.cpp now also calls ui_draw.h's pushQuad()/pushBevelPanel() for
+# its beveled bars, so this target needs ui_draw.cpp linked too (same
+# precedent as leaderboard_test/results_test below).
+add_executable(menu_test tests/menu_test.cpp src/ui/menu.cpp src/render/ui_draw.cpp)
 target_link_libraries(menu_test PRIVATE SDL2::SDL2 bgfx)
 target_include_directories(menu_test PRIVATE
   third_party/bgfx.cmake/bgfx/include

@@ -7452,3 +7452,110 @@ not something a bit-for-bit no-op change could have caused either way.)
 
 With P4 done, all ten phases of the NT2003 engine-feel plan (H1-H6, P1-P4)
 are complete.
+
+## G24 -- Home screen: hero-shot camera + beveled menu bars
+
+The user's request ("make Home Screen look similar to this") came with a
+screenshot of the real game's own main menu -- a glamour shot of the hero
+car behind a stack of beveled bars, one bold/highlighted. Reproducing that
+*layout and style* is fair game; reproducing the actual logo, game title,
+or real livery is not (this project's standing "no real branding" rule --
+stated repeatedly throughout its history, most recently in the G16-G23
+plan's own scoping note). So this recreates the shape of the reference
+using this project's own fictional title and roster, nothing lifted.
+
+The menu had a second, unrelated problem worth fixing at the same time:
+`mode=="menu"` rendering was never actually broken, but it was never
+*good* either. `renderFrame()` always ran the full 3D world submission even
+in menu mode, but with an empty `cars` vector (no `gridStart()` yet) and a
+`Chase` camera that had never been initialized (its eye/look default to
+zero because the only code path that sets them requires a car to exist).
+The result was a track and sky rendering correctly behind a completely
+blank, carless frame -- the menu screen showed no error, just nothing
+interesting.
+
+**Showcase, a third camera mode.** The natural first idea -- reuse `Chase`
+for a menu car -- doesn't survive contact with its own math: `Chase`'s eye
+is always placed *behind* the car along its own heading, looking *through*
+it in its direction of travel (`renderer.cpp`'s Chase branch, `dist =
+6.9 + v*0.02`, `look = base + fw*8`). No amount of repositioning the car
+changes that relative geometry; it will always frame the car's tail, never
+a front-3/4 "glamour" angle. So `CameraMode` gained a third value,
+`Showcase`, with its own eye/look math computed directly from the sole car
+in `cars` (`renderer.cpp`'s new branch): eye ahead-and-to-the-side of the
+car, looking back at it. Unlike `Chase` it carries no smoothing state --
+the showcase car never moves, so eye/look are just recomputed fresh every
+frame from its (fixed) pose. The FOV-capping perspective math that `Chase`
+already had (a fix for a real near-fisheye bug on wide phone aspects) is
+now factored into a small `applyPerspectiveCamera` lambda shared by both
+branches, rather than a second copy that could drift.
+
+**The showcase car, built off its own RNG.** `main.cpp` gained
+`LoopState::menuShowcaseCars` (a one-element `std::vector<Car>`, not a bare
+`Car`, so it hands straight to `renderFrame()`'s `const std::vector<Car>&`
+without a temporary) and `rebuildMenuShowcaseCar()`, which calls
+`makeCar(false, kShowcaseCarIdx, S.track, showcaseRng)` with a **fresh,
+local `Mulberry32`** -- never `S.rng`/`S.rngR`, whose exact draw sequence
+`gridStart()`'s determinism tests depend on. `kShowcaseCarIdx` is a real
+constant (3), not a placeholder: `makeCar(false, 0, ...)` would have been
+an out-of-bounds `ROSTER[-1]` read (`car.cpp` indexes `ROSTER[idx-1]`
+whenever `isPlayer==false`; idx 0 is reserved for the player, who has no
+livery). Rebuilt on startup and again on every `trackBtn` click, since the
+spawn pose is `track.pointAt(0)`-derived.
+
+**Camera-mode lifecycle**, the part that doesn't show up in a single
+screenshot but breaks on the very next transition if skipped:
+- `startRaceFromMenu()` now explicitly restores `Chase`/`TopDown` (whichever
+  the player last had) before `gridStart()` -- without it, a race would
+  start still under `Showcase`'s static single-car math.
+- `handleResultsClick()`'s "BACK TO MENU" now sets `CameraMode::Showcase`
+  explicitly, and the menu's render call now always passes
+  `S.menuShowcaseCars`, never `S.cars` -- `S.cars` still holds the full
+  finished field after a race (nothing clears it on the way back to the
+  menu), so the old single call site would have rendered twenty parked cars
+  instead of one hero car the moment a player finished a race and returned.
+- `toggleChaseCam()` (the `c` key / CAM button) now no-ops while
+  `mode=="menu"` -- there is nothing meaningful to toggle on a static shot,
+  and without the guard it would stomp `Showcase` with `Chase`/`TopDown`
+  and nothing would ever put it back.
+
+**The bars themselves.** `menu.cpp`'s seven rows were single 16px dbgText
+lines over whatever rendered behind them; `drawMenu()` gained a
+`std::vector<PosColorVertex>& uiOut` parameter (matching `drawHud()`/
+`drawResults()`'s existing convention) and each row is now a 3-text-row-tall
+(48px) beveled plate via `pushBevelPanel()` -- the same primitive
+`status_bars.cpp` already uses, just for a whole labeled row instead of a
+segmented value bar. A dark backdrop panel and an axis-aligned checkered
+accent band (a generic racing motif, not a reproduction of any real
+lockup) sit behind the title, and Start keeps its existing *position*
+(bottommost -- `menu_test.cpp` hard-asserts this ordering, and reordering
+to match the reference's top-of-stack "Quick Race" would have needed that
+test rewritten and every downstream click coordinate re-derived for no
+functional gain) but gets the reference's highlighted *treatment*: a bold
+red fill with a bright accent edge instead of the other rows' plain steel.
+The one new call site this required, `renderer.cpp`'s `drawMenu(...)` call,
+now threads `uiVerts` through -- which incidentally is what makes the
+pixel-space UI view (`kUiView`) start getting created during menu mode at
+all, since its creation was gated on `!uiVerts.empty()` and nothing had
+ever pushed into it there before.
+
+**`menu_test` needed a new link dependency** (`src/render/ui_draw.cpp`),
+the same precedent `leaderboard_test`/`results_test` already established
+for pulling in `pushQuad()`/`pushBevelPanel()`.
+
+**Verified**: native `ctest` 30/30, including `menu_test` unchanged (row
+order/regions are structurally the same 7 rects, just bigger). Screenshots
+confirm the fix for the old blank-menu problem -- a lit showcase car now
+sits in frame behind a stack of beveled bars with a bold red Start plate,
+directly comparable to the reference's layout. Explicitly exercised the
+fragile transitions this change touches: `LHT_FORCE_RACE` shows the field
+racing normally under `Chase` (proving the camera-mode restore works), and
+the WASM Playwright flow (menu -> click Start -> race -> `k` -> results ->
+click Back -> **menu again, showing the single showcase car, not the
+twenty-car finished field** -> click Start -> second race) confirms the
+whole lifecycle end to end. `tests/wasm_verify.js`'s Start-button click
+coordinates were recomputed for the new bar geometry (`104, 456`, up from
+`104, 184`) and its derivation comment updated -- left unfixed, the old
+coordinates would have missed the new Start bar, made the click a no-op,
+and caused the rest of the script to hang or silently pass having tested
+nothing.

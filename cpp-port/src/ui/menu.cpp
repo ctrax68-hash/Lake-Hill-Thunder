@@ -1,9 +1,19 @@
 #include "menu.h"
 
+#include "../render/color.h"
+#include "../render/ui_draw.h"
+
 #include <bgfx/bgfx.h>
 
 #include <algorithm>
 #include <cstdio>
+
+// G24 (NT2003 presentation plan): the reference's menu is a stack of thick,
+// beveled bars (one bold/highlighted) over a dark backdrop with a checkered
+// accent -- this was previously a bare column of 16px dbgText rows over
+// whatever blurry 3D vignette happened to render behind it. Reproduces the
+// LAYOUT/STYLE only, with this project's own fictional title/roster (no
+// real logo, game title, or livery) -- see PORT_PROGRESS.md's G24 entry.
 
 namespace {
 
@@ -12,17 +22,32 @@ namespace {
 // text row/column positions into the pixel rects computeMenuRegions()
 // returns, so the clickable area always lines up with what drawMenu()
 // prints, without hand-duplicating pixel numbers in two places.
-constexpr int kCellW = 8, kCellH = 16;
+constexpr float kCellW = 8.0f, kCellH = 16.0f;
 constexpr int kCol = 1; // all menu rows start at column 1, matching hud.cpp
 
 constexpr int kRowTitle = 1;
-constexpr int kRowTrack = 3;
-constexpr int kRowLaps = 4;
-constexpr int kRowQual = 5;
-constexpr int kRowSound = 6;
-constexpr int kRowTilt = 7;
-constexpr int kRowVolume = 9;
-constexpr int kRowStart = 11;
+
+// G24: each row is now a 3-text-row-tall (48px) beveled bar instead of a
+// single 16px dbgText line, with a blank row's worth of gap between bars --
+// matching the reference's visibly thick plates. Row order is intentionally
+// UNCHANGED from before this pass (track/laps/qual/sound/tilt/volume/start,
+// Start last) -- menu_test.cpp hard-asserts Start stays the bottommost bar,
+// and reordering to put Start at the top (as the reference's "Quick Race"
+// sits) would need that test rewritten and wasm_verify.js's click
+// coordinates re-derived for no functional benefit, so Start instead gets
+// the reference's highlighted *treatment* (bigger fill contrast, warm
+// accent) while keeping its position.
+constexpr int kBarRowsTall = 3; // 48px
+constexpr int kBarRowStep = 4;  // 3 rows of bar + 1 row of gap
+constexpr int kFirstBarRow = 3;
+
+constexpr int kRowTrack = kFirstBarRow;
+constexpr int kRowLaps = kRowTrack + kBarRowStep;
+constexpr int kRowQual = kRowLaps + kBarRowStep;
+constexpr int kRowSound = kRowQual + kBarRowStep;
+constexpr int kRowTilt = kRowSound + kBarRowStep;
+constexpr int kRowVolume = kRowTilt + kBarRowStep;
+constexpr int kRowStart = kRowVolume + kBarRowStep;
 
 // Generous click width in character cells -- covers the full label+value
 // text with room to spare, not a precise glyph-bounding hit test (matching
@@ -33,10 +58,10 @@ constexpr int kStartColsWide = 24;
 
 SDL_Rect rowRect(int row, int cols) {
     SDL_Rect r;
-    r.x = kCol * kCellW;
-    r.y = row * kCellH;
-    r.w = cols * kCellW;
-    r.h = kCellH;
+    r.x = (int)(kCol * kCellW);
+    r.y = (int)(row * kCellH);
+    r.w = (int)(cols * kCellW);
+    r.h = (int)(kBarRowsTall * kCellH);
     return r;
 }
 
@@ -45,6 +70,38 @@ constexpr uint8_t kBlack = 0, kGreen = 2, kYellow = 14, kWhite = 15, kGrey = 7;
 
 constexpr uint8_t attr(uint8_t fg, uint8_t bg) {
     return (uint8_t)((bg << 4) | fg);
+}
+
+// Fills a beveled bar behind row `row` (same pixel rect rowRect() returns)
+// and prints `label` centered on the bar's middle text-row -- reuses
+// pushBevelPanel() exactly as status_bars.cpp's drawOneBar() already does,
+// just for a whole labeled row instead of a segmented value bar.
+void drawBar(int row, int cols, uint8_t fg, const float fillRgb[3], const float lightRgb[3],
+             const float darkRgb[3], const char* text, std::vector<PosColorVertex>& uiOut) {
+    const SDL_Rect r = rowRect(row, cols);
+    pushBevelPanel(uiOut, (float)r.x, (float)r.y, (float)r.w, (float)r.h, packColor(fillRgb),
+                   packColor(lightRgb), packColor(darkRgb));
+    // Middle of the 3-row-tall bar -- rowRect()'s `row` is the bar's top
+    // row, so +1 lands on the vertically-centered text row (see kBarRowStep's
+    // own comment for why this only works cleanly because every bar is
+    // exactly 3 rows tall).
+    bgfx::dbgTextPrintf(kCol, row + 1, attr(fg, kBlack), "%s", text);
+}
+
+// G24: a simple checkered accent band -- no general checkerboard primitive
+// exists in ui_draw.h (atlas_texture.cpp's checker logic is a private,
+// texture-bake-time-only path, not callable here), so this is a one-off
+// helper local to the menu, written with the same "pure pixel-space vector
+// math" contract ui_draw.h's own functions follow. Axis-aligned cells only
+// (pushQuad() has no rotation), not the reference's diagonal stripe -- a
+// reasonable first pass, not attempted here as a true diagonal tessellation.
+void pushCheckerBand(std::vector<PosColorVertex>& out, float x, float y, float w, float h, int cols,
+                     uint32_t colorA, uint32_t colorB) {
+    if (cols <= 0) return;
+    const float cellW = w / (float)cols;
+    for (int i = 0; i < cols; ++i) {
+        pushQuad(out, x + (float)i * cellW, y, cellW, h, (i % 2 == 0) ? colorA : colorB);
+    }
 }
 
 } // namespace
@@ -76,24 +133,55 @@ int volumeFromClickX(const SDL_Rect& bar, int clickX) {
     return (int)std::lround(t * 100.0);
 }
 
-void drawMenu(const MenuSelection& sel, int laps, bool tilt, const std::string& trackName) {
+void drawMenu(const MenuSelection& sel, int laps, bool tilt, const std::string& trackName,
+              std::vector<PosColorVertex>& uiOut) {
+    // Backdrop: a dark panel behind the whole bar stack, separating it from
+    // the showcase car/track rendering behind it -- the reference's menu
+    // sits over a glamour shot the same way. Sized to the bar column plus a
+    // margin, not the full screen, since this module has no viewport size
+    // to reason about (matches this file's existing "fixed pixel layout,
+    // not viewport-adaptive" precedent).
+    const float backdropW = (kRowColsWide + 2) * kCellW;
+    const float backdropH = (float)(kRowStart + kBarRowsTall + 1) * kCellH;
+    pushQuad(uiOut, 0.0f, 0.0f, backdropW, backdropH, packColor(Theme::kBlack, 0.55f));
+
     bgfx::dbgTextPrintf(kCol, kRowTitle, attr(kYellow, kBlack), "LAKE HILL THUNDER");
 
-    bgfx::dbgTextPrintf(kCol, kRowTrack, attr(kWhite, kBlack), "TRACK:      %-20s", trackName.c_str());
-    bgfx::dbgTextPrintf(kCol, kRowLaps, attr(kWhite, kBlack), "LAPS:       %-3d", laps);
+    // Checkered accent band between the title and the first bar -- a
+    // generic racing motif, not a reproduction of any real logo/lockup.
+    const float checkerY = (kRowTitle + 1) * kCellH;
+    pushCheckerBand(uiOut, 0.0f, checkerY, backdropW, kCellH, 20, packColor(Theme::kWhite, 0.85f),
+                    packColor(Theme::kSteel, 0.85f));
+
+    drawBar(kRowTrack, kRowColsWide, kWhite, Theme::kSteel, Theme::kGraycool, Theme::kBlack,
+            (std::string("TRACK:      ") + trackName).c_str(), uiOut);
+
+    char lapsText[32];
+    std::snprintf(lapsText, sizeof(lapsText), "LAPS:       %-3d", laps);
+    drawBar(kRowLaps, kRowColsWide, kWhite, Theme::kSteel, Theme::kGraycool, Theme::kBlack, lapsText, uiOut);
+
     // index.html's #qualTog exists, but this port doesn't have a real
     // qualifying flow yet (see MenuSelection::qual's own comment) -- grey
     // rather than white, a small honest visual cue that this row currently
     // has no gameplay effect.
-    bgfx::dbgTextPrintf(kCol, kRowQual, attr(kGrey, kBlack), "QUALIFYING: %-3s", sel.qual ? "ON" : "OFF");
-    bgfx::dbgTextPrintf(kCol, kRowSound, attr(kGrey, kBlack), "SOUND:      %-3s", sel.sound ? "ON" : "OFF");
-    bgfx::dbgTextPrintf(kCol, kRowTilt, attr(kWhite, kBlack), "TILT STEER: %-3s", tilt ? "ON" : "OFF");
+    drawBar(kRowQual, kRowColsWide, kGrey, Theme::kSteel, Theme::kGraycool, Theme::kBlack,
+            sel.qual ? "QUALIFYING: ON" : "QUALIFYING: OFF", uiOut);
+    drawBar(kRowSound, kRowColsWide, kGrey, Theme::kSteel, Theme::kGraycool, Theme::kBlack,
+            sel.sound ? "SOUND:      ON" : "SOUND:      OFF", uiOut);
+    drawBar(kRowTilt, kRowColsWide, kWhite, Theme::kSteel, Theme::kGraycool, Theme::kBlack,
+            tilt ? "TILT STEER: ON" : "TILT STEER: OFF", uiOut);
 
-    char bar[21];
+    char volBar[21];
     const int filled = std::max(0, std::min(20, (sel.volume * 20) / 100));
-    for (int i = 0; i < 20; ++i) bar[i] = i < filled ? '#' : '-';
-    bar[20] = '\0';
-    bgfx::dbgTextPrintf(kCol, kRowVolume, attr(kGrey, kBlack), "VOLUME: [%s] %3d%%", bar, sel.volume);
+    for (int i = 0; i < 20; ++i) volBar[i] = i < filled ? '#' : '-';
+    volBar[20] = '\0';
+    char volText[40];
+    std::snprintf(volText, sizeof(volText), "VOLUME: [%s] %3d%%", volBar, sel.volume);
+    drawBar(kRowVolume, kRowColsWide, kGrey, Theme::kSteel, Theme::kGraycool, Theme::kBlack, volText, uiOut);
 
-    bgfx::dbgTextPrintf(kCol, kRowStart, attr(kBlack, kGreen), " >>> START RACE <<< ");
+    // Start stays the bottommost bar (see kRowStart's own comment) but gets
+    // the reference's highlighted treatment: a bold red fill with a bright
+    // accent edge instead of the other rows' plain steel plate.
+    drawBar(kRowStart, kStartColsWide, kWhite, Theme::kRed, Theme::kOrange, Theme::kBlack,
+            " >>> START RACE <<< ", uiOut);
 }

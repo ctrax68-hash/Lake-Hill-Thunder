@@ -54,7 +54,13 @@ public:
 
     void resize(int width, int height);
 
-    enum class CameraMode { TopDown, Chase };
+    // G24: Showcase is the menu's static hero-shot camera -- a front-3/4
+    // angle on the single decorative car in `cars`. It cannot be expressed
+    // as a Chase variant: Chase's eye is always placed behind the car along
+    // its own heading looking through it in its direction of travel, so no
+    // amount of tuning the car's pose produces a front-3/4 shot -- see
+    // renderFrame()'s Showcase branch for the actual eye/look math.
+    enum class CameraMode { TopDown, Chase, Showcase };
     // Re-entering Chase always hard-snaps on the next renderFrame() rather
     // than smoothing in from wherever the camera last was (same "hard cut,
     // not glide" idiom the JS uses for mode-transition cuts, e.g.

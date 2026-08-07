@@ -66,6 +66,14 @@ struct LoopState {
     // Car::slipFx/hitFx to decay them each real frame -- see particles.h's
     // own header comment for the full rationale.
     ParticleSystem particles;
+    // G24 (NT2003 presentation plan): the menu screen's single decorative
+    // "hero shot" car -- built with its own fresh, throwaway RNG (never
+    // S.rng/S.rngR, whose exact draw sequence gridStart()'s determinism
+    // tests depend on) via rebuildMenuShowcaseCar() below. Kept as a vector,
+    // not a bare Car, so it can be passed directly wherever renderFrame()
+    // expects `const std::vector<Car>&` without constructing a temporary
+    // every frame.
+    std::vector<Car> menuShowcaseCars;
     PlayerInput input;
     std::vector<Car*> finishOrder;
     TiltInput tiltInput;
@@ -134,9 +142,32 @@ void togglePlayerPit(LoopState& S) {
 // (bC, added alongside the default-camera fix) -- both need the exact same
 // two-line toggle, so this is factored out rather than duplicated.
 void toggleChaseCam(LoopState& S) {
+    // G24: nothing meaningful to toggle on the menu's static hero shot (the
+    // reference UI has no camera control there either), and without this
+    // guard the `c` key/CAM button would stomp CameraMode::Showcase with
+    // Chase/TopDown and nothing would ever restore it.
+    if (S.state.mode == "menu") return;
     S.chaseCam = !S.chaseCam;
     S.renderer.setCameraMode(S.chaseCam ? Renderer::CameraMode::Chase
                                          : Renderer::CameraMode::TopDown);
+}
+
+// G24: idx 1-19 are AI slots with a real roster livery (car.cpp indexes
+// ROSTER[idx-1] whenever isPlayer==false); idx 0 is reserved for the
+// player and has no livery (scheme=nullptr) -- makeCar(false, 0, ...) is an
+// out-of-bounds ROSTER read, not just a convention violation. Picked for a
+// livery/pose that reads well in the showcase angle.
+constexpr int kShowcaseCarIdx = 3;
+constexpr uint32_t kShowcaseRngSeed = 0xC0FFEEu;
+
+// (Re)builds the menu's single decorative showcase car against S.track,
+// via its own fresh, local Mulberry32 -- never S.rng/S.rngR, which
+// gridStart()'s determinism tests depend on drawing an exact sequence
+// from. Must run whenever S.track changes (menu's trackBtn cycle) as well
+// as at startup, since makeCar()'s spawn pose is derived from the track.
+void rebuildMenuShowcaseCar(LoopState& S) {
+    Mulberry32 showcaseRng(kShowcaseRngSeed);
+    S.menuShowcaseCars = {makeCar(false, kShowcaseCarIdx, S.track, showcaseRng)};
 }
 
 // Mirrors JS's startRace() (index.html:4604-4614): gridStart() placement,
@@ -149,6 +180,11 @@ void toggleChaseCam(LoopState& S) {
 // written explicitly here, matching JS, rather than relying on both
 // defaulting to 5.
 void startRaceFromMenu(LoopState& S) {
+    // G24: the menu leaves the renderer in CameraMode::Showcase (the static
+    // hero-shot camera) -- restore whichever real camera mode was last
+    // active before it, or Showcase would still be in effect for the race
+    // that's about to start.
+    S.renderer.setCameraMode(S.chaseCam ? Renderer::CameraMode::Chase : Renderer::CameraMode::TopDown);
     gridStart(S.track, S.rng, S.state, S.pace, S.cars, S.finishOrder, nullptr);
     S.state.oneToGo = false;
     S.state.pitsOpen = true;
@@ -218,6 +254,10 @@ void handleMenuClick(LoopState& S, int x, int y) {
         S.menu.trackIdx = (S.menu.trackIdx + 1) % (int)TRACKS.size();
         S.track = Track(TRACKS[S.menu.trackIdx]);
         S.renderer.setTrack(S.track);
+        // G24: the showcase car's spawn pose is derived from the track
+        // (makeCar() reads track.pointAt(0)), so it must be rebuilt against
+        // the new track on every cycle, not just once at startup.
+        rebuildMenuShowcaseCar(S);
     } else if (pointInRect(x, y, r.lapsBtn)) {
         S.state.laps = cycleLaps(S.state.laps);
     } else if (pointInRect(x, y, r.qualBtn)) {
@@ -251,6 +291,10 @@ void handleResultsClick(LoopState& S, int x, int y) {
     const ResultsRegions r = computeResultsRegions((int)resultsOrder.size());
     if (pointInRect(x, y, r.backBtn)) {
         S.state.mode = "menu";
+        // G24: re-enter the menu's static hero-shot camera -- without this,
+        // the menu would reappear still under whatever race camera mode
+        // (Chase/TopDown) was last active.
+        S.renderer.setCameraMode(Renderer::CameraMode::Showcase);
     }
 }
 
@@ -469,7 +513,11 @@ void mainLoopTick(void* argPtr) {
         if (S.portrait) {
             S.renderer.renderBlockedFrame();
         } else if (S.state.mode == "menu") {
-            S.renderer.renderFrame(S.state, S.cars, renderAlpha, nullptr, &S.menu, &S.track.name());
+            // G24: menuShowcaseCars, not S.cars -- after a finished race,
+            // S.cars still holds the full post-race field (the back-to-menu
+            // path doesn't clear it), so passing it through here would
+            // render the whole finished field instead of one hero car.
+            S.renderer.renderFrame(S.state, S.menuShowcaseCars, renderAlpha, nullptr, &S.menu, &S.track.name());
         } else if (S.state.mode == "done") {
             S.renderer.renderFrame(S.state, S.cars, renderAlpha, nullptr, nullptr, nullptr, &S.finishOrder);
         } else {
@@ -634,6 +682,12 @@ int main(int argc, char** argv)
 
     S.renderer.setTrack(S.track);
     S.renderer.setChaseTarget(0); // idx 0 is always the player, see car.h
+    // G24: the menu screen (the real entry point, see below) shows a static
+    // hero shot of one decorative car rather than the blurry, carless
+    // vignette the old menu rendered (mode=="menu" always had an empty
+    // `cars` vector and a never-initialized Chase camera before this).
+    rebuildMenuShowcaseCar(S);
+    S.renderer.setCameraMode(Renderer::CameraMode::Showcase);
     // Debug-only: force chase mode on at startup instead of waiting for a
     // live C keypress -- for scripted headless screenshot verification,
     // same rationale as LHT_FORCE_RACE below.

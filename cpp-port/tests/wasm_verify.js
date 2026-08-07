@@ -176,12 +176,14 @@ async function main() {
 
   // Click the Start button. Fixed pixel coordinates matching
   // computeMenuRegions()'s startBtn row exactly (src/ui/menu.cpp: kCol=1,
-  // kCellW=8, kCellH=16, kRowStart=11, kStartColsWide=24 -> x in
-  // [8, 8+24*8)=[8,200), y in [11*16, 11*16+16)=[176,192)); this is a real
-  // click through Playwright's own input pipeline, not simulated X11/XTEST
-  // input (see this function's header comment for why that distinction
-  // matters in this container).
-  await page.mouse.click(104, 184);
+  // kCellW=8, kCellH=16, kFirstBarRow=3, kBarRowStep=4, kBarRowsTall=3,
+  // kStartColsWide=24 -- G24 made each bar 3 text-rows tall with a
+  // trailing gap row, so kRowStart = 3 + 6*4 = 27 -> x in
+  // [8, 8+24*8)=[8,200), y in [27*16, 27*16+3*16)=[432,480)); this is a
+  // real click through Playwright's own input pipeline, not simulated
+  // X11/XTEST input (see this function's header comment for why that
+  // distinction matters in this container).
+  await page.mouse.click(104, 456);
 
   // Give gridStart()'s new car field time to actually appear and the pace
   // phase to advance a few real seconds before the first post-click shot.
@@ -207,7 +209,7 @@ async function main() {
   const menuAgainShot = await page.screenshot();
 
   // Same Start button coordinates as the first click above.
-  await page.mouse.click(104, 184);
+  await page.mouse.click(104, 456);
   await page.waitForTimeout(4000);
   const secondRaceShot = await page.screenshot();
 

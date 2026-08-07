@@ -1,7 +1,10 @@
 #pragma once
 
+#include "../render/vertex.h"
+
 #include <SDL_rect.h>
 #include <string>
+#include <vector>
 
 // Phase 4b (PORT_PROGRESS.md): the menu screen (index.html:167-184's
 // `#menu` DOM overlay), adapted to this port's bgfx-debug-text-only
@@ -58,8 +61,13 @@ int cycleLaps(int laps);
 int volumeFromClickX(const SDL_Rect& bar, int clickX);
 
 // Draws the menu (title, track/laps/qualifying/sound/tilt rows, volume
-// bar, start prompt) via bgfx::dbgTextPrintf(), matching hud.cpp's
-// approach and text-mode palette. Caller must have already called
+// bar, start prompt) via bgfx::dbgTextPrintf() for labels plus beveled
+// quad panels behind each row (G24, NT2003 presentation plan) -- matching
+// hud.cpp's dbgText approach and status_bars.cpp's "quads underneath,
+// dbgText labels on top" idiom. Caller must have already called
 // bgfx::dbgTextClear() this frame (Renderer::renderFrame() already does,
-// same contract as drawHud()).
-void drawMenu(const MenuSelection& sel, int laps, bool tilt, const std::string& trackName);
+// same contract as drawHud()). `uiOut` is the frame's UI-quad vertex list
+// (Renderer::renderFrame()'s `uiVerts`, same one drawHud()/drawResults()
+// already append into).
+void drawMenu(const MenuSelection& sel, int laps, bool tilt, const std::string& trackName,
+              std::vector<PosColorVertex>& uiOut);
