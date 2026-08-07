@@ -118,6 +118,21 @@ struct CarConstants {
     // the actual probe numbers across four steer-feedback targets).
     double fuelMass = 120.0;        // kg, mass added by a completely full tank
     double fuelWeightShiftF = 0.02; // weightDistF shift (toward front) at a completely full tank
+
+    // P4 (NT2003 engine-feel plan, pit adjustments): how far the player's
+    // pit-adjustment panel (src/ui/pit_setup.h) can move each of
+    // Car::setupWedge/setupTrackBar (each in [-1, 1]) at full deflection.
+    // wedgeWeightDistRange reuses the exact same weightDistF lever P2's
+    // fuelWeightShiftF already verified the sign of; trackBarStiffnessRange
+    // moves ONLY the rear axle's cornering stiffness (`cr`), not `cf` -- a
+    // real track bar is a rear-suspension component -- verified via the
+    // same closed-loop probe technique as P2's fuel-shift discovery:
+    // increasing cr monotonically reduces rear friction-limit hits across
+    // four steer-feedback targets (see PORT_PROGRESS.md's P4 entry for the
+    // actual numbers), i.e. genuinely tightens the car, matching real
+    // "more track bar = tighter" setup convention.
+    double wedgeWeightDistRange = 0.03;
+    double trackBarStiffnessRange = 0.15;
 };
 inline const CarConstants CAR{};
 
@@ -370,6 +385,28 @@ struct Car {
     // Nudged back toward zero (not reset) on a pit repair, matching dmg's
     // own partial-repair semantics.
     double dmgPull = 0;
+
+    // P4 (NT2003 engine-feel plan, pit adjustments): persistent, PLAYER-ONLY
+    // chassis-tuning knobs, in [-1, 1], set via the interactive pit-
+    // adjustment panel (src/ui/pit_setup.h) during a stop. Unlike wear/
+    // fuel/dmg, these do NOT reset at pit service -- a real wedge/track-bar
+    // change stays until the player dials it back, not until the next tank
+    // of fuel. AI cars never touch these (stay at the neutral default 0 for
+    // their whole race -- they have no interactive panel to set them with).
+    // step_car.cpp's per-tick carEff copy (P2's own mechanism) applies
+    // setupWedge to weightDistF (same lever P2 already verified -- positive
+    // = toward front = tighter, per CarConstants::fuelWeightShiftF's own
+    // comment on why "toward front" is the verified-correct sign in this
+    // bicycle model) and setupTrackBar to the rear axle's own cornering
+    // stiffness (CarConstants::cr) -- a genuinely different lever from
+    // weightDistF (a track bar is a rear-suspension component in a real
+    // stock car, so only cr moves, not cf), verified via the same
+    // closed-loop probe technique as P2/P3: increasing cr measurably
+    // tightens the car (fewer rear friction-limit hits at a fixed
+    // aggressive steer-feedback target, monotonic across four rTarget
+    // values), matching real "more track bar = tighter" setup convention.
+    double setupWedge = 0, setupTrackBar = 0;
+
     bool out = false;
 
     int cautionSlot = -1;

@@ -20,6 +20,7 @@
 #include "vertex_textured.h"
 #include "vertex_uv.h"
 #include "../ui/menu.h"
+#include "../ui/pit_setup.h"
 #include "../ui/results.h"
 
 #include "../sim/car.h"
@@ -1997,6 +1998,16 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         // without stepping on each other's dbgText rows.
         if (raceState.mode == "menu" && menu && menuTrackName) {
             drawMenu(*menu, raceState.laps, raceState.tilt, *menuTrackName);
+        }
+        // P4 (NT2003 engine-feel plan, pit adjustments): drawn on top of
+        // the ordinary HUD (not mode-exclusive, unlike menu/results above)
+        // whenever the player is actually mid-service -- see pit_setup.h's
+        // own comment on why this isn't a top-level RaceState::mode.
+        for (const Car& c : cars) {
+            if (c.isPlayer && c.pit == 2) {
+                drawPitSetup(c, uiVerts);
+                break;
+            }
         }
     }
 

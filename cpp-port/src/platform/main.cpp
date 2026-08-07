@@ -29,6 +29,7 @@
 #include "../sim/tracks_data.h"
 #include "../ui/menu.h"
 #include "../ui/orientation.h"
+#include "../ui/pit_setup.h"
 #include "../ui/results.h"
 #include "../ui/touch_controls.h"
 #include "tilt_input.h"
@@ -107,16 +108,23 @@ struct LoopState {
     }
 };
 
+// Shared by togglePlayerPit() and P4's pit-adjustment click dispatch below
+// -- both need to find the one player Car among S.cars, and neither wants
+// to duplicate the loop.
+Car* findPlayer(std::vector<Car>& cars) {
+    for (auto& c : cars) {
+        if (c.isPlayer) return &c;
+    }
+    return nullptr;
+}
+
 // Mirrors bP's JS click handler (index.html:4665-4669) exactly: an
 // independent toggle on the player's own pitReq, guarded the same way, not
 // threaded through PlayerInput/stepCar() at all -- the player has no other
 // way to request a pit stop (tick()'s AI pit-strategy block deliberately
 // skips the player, matching JS).
 void togglePlayerPit(LoopState& S) {
-    Car* player = nullptr;
-    for (auto& c : S.cars) {
-        if (c.isPlayer) { player = &c; break; }
-    }
+    Car* player = findPlayer(S.cars);
     if (player && S.state.mode == "race" && !player->done && player->pit == 0) {
         player->pitReq = !player->pitReq;
     }
@@ -246,6 +254,25 @@ void handleResultsClick(LoopState& S, int x, int y) {
     }
 }
 
+// P4 (NT2003 engine-feel plan, pit adjustments) click handling. Unlike
+// handleMenuClick()/handleResultsClick(), this isn't gated on
+// `S.state.mode` -- mode stays "race" through a whole pit stop -- so the
+// caller (the generic drive-control branch below) gates the call itself on
+// the player actually being mid-service (`c.pit == 2`), matching
+// pit_setup.h's own doc comment on why this panel isn't a top-level mode.
+void handlePitSetupClick(Car& player, int x, int y) {
+    const PitSetupRegions r = computePitSetupRegions();
+    if (pointInRect(x, y, r.wedgeMinus)) {
+        player.setupWedge = clampPitSetup(player.setupWedge - kPitSetupStep);
+    } else if (pointInRect(x, y, r.wedgePlus)) {
+        player.setupWedge = clampPitSetup(player.setupWedge + kPitSetupStep);
+    } else if (pointInRect(x, y, r.trackBarMinus)) {
+        player.setupTrackBar = clampPitSetup(player.setupTrackBar - kPitSetupStep);
+    } else if (pointInRect(x, y, r.trackBarPlus)) {
+        player.setupTrackBar = clampPitSetup(player.setupTrackBar + kPitSetupStep);
+    }
+}
+
 void mainLoopTick(void* argPtr) {
     LoopState& S = *static_cast<LoopState*>(argPtr);
 
@@ -325,6 +352,14 @@ void mainLoopTick(void* argPtr) {
                 // key (added alongside the default-camera fix) -- a single
                 // toggle on press, same "click, not hold" precedent as bP.
                 if (pointInRect(x, y, S.touchRegions.bC)) toggleChaseCam(S);
+                // P4 (NT2003 engine-feel plan): the pit-adjustment panel
+                // overlays the drive controls (not a separate mode -- see
+                // pit_setup.h's own comment), so it's checked here rather
+                // than in the mode-branch above, gated on the player
+                // actually being mid-service.
+                if (Car* player = findPlayer(S.cars); player && player->pit == 2) {
+                    handlePitSetupClick(*player, x, y);
+                }
             }
         }
         if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_LEFT) {
@@ -346,6 +381,11 @@ void mainLoopTick(void* argPtr) {
                 // key (added alongside the default-camera fix) -- a single
                 // toggle on press, same "click, not hold" precedent as bP.
                 if (pointInRect(x, y, S.touchRegions.bC)) toggleChaseCam(S);
+                // P4: same pit-adjustment overlay dispatch as the mouse
+                // branch above.
+                if (Car* player = findPlayer(S.cars); player && player->pit == 2) {
+                    handlePitSetupClick(*player, x, y);
+                }
             }
         }
         if (ev.type == SDL_FINGERUP) {
@@ -644,6 +684,19 @@ int main(int argc, char** argv)
     if (std::getenv("LHT_FORCE_SPOTTER")) {
         S.state.spotTxt = "INSIDE!";
         S.state.spotT = 2.2;
+    }
+
+    // Debug-only: P4's pit-adjustment panel is otherwise only reachable by
+    // a real player pressing `p`/bP and then physically driving into the
+    // pit stall -- this seeds the player straight into mid-service
+    // (c.pit=2), the same "seeded state, not a physics bypass" philosophy
+    // as LHT_FORCE_SPOTTER just above, so headless screenshot verification
+    // can reliably show the panel without a real driven pit stop.
+    if (std::getenv("LHT_FORCE_PIT_SETUP")) {
+        if (Car* player = findPlayer(S.cars)) {
+            player->pit = 2;
+            player->pitT = 60.0; // generous dwell so a screenshot always lands mid-service
+        }
     }
 
     // Phase 3b (PORT_PROGRESS.md): tilt-steer via SDL_Sensor, feeding

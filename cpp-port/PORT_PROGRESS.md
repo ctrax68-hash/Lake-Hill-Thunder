@@ -7357,3 +7357,98 @@ documented finding that this stress harness has substantial run-to-run
 and track-to-track variance -- no systemic shift attributable to P3
 either way, and no reason to suspect the improvement is anything but that
 same noise landing favorably this run.
+
+### P4: Pit adjustments -- wedge and track bar (NT2003 engine-feel plan)
+
+The tenth and final phase of this plan, and the one that turns P1's per-
+axle wear mechanic from something that just happens to the car into
+something the player actively manages -- the reason NT2003 has a pit
+screen at all. Adds `Car::setupWedge`/`setupTrackBar` (persistent, signed,
+`[-1, 1]`, defaulting to 0 -- AI cars never touch them, only the player's
+own interactive panel does) and a new `src/ui/pit_setup.h/.cpp` module,
+following menu.cpp/results.cpp's exact "pure region-math + separate draw
+function" pattern: `computePitSetupRegions()` returns four `SDL_Rect`s
+(wedge -/+, track-bar -/+), `clampPitSetup()` keeps repeated clicks from
+drifting past +-1, and `drawPitSetup()` reuses status_bars.cpp's
+center-zero balance-track widget shape (steel background, center notch,
+signed colored marker) for both readouts, since that's exactly what a
+signed `[-1,1]` value needs and there was no reason to invent a second
+shape for it.
+
+**Wiring**: `step_car.cpp`'s existing P2 `carEff` per-tick copy grows two
+more lines -- `carEff.weightDistF += c.setupWedge * CAR.wedgeWeightDistRange`
+(the SAME lever P2's own fuel shift already uses, same verified-correct
+"toward front = tighter" sign) and `carEff.cr = CAR.cr * (1 +
+c.setupTrackBar * CAR.trackBarStiffnessRange)` (a genuinely different
+lever -- only the REAR axle's cornering stiffness moves, not the front,
+since a real track bar is a rear-suspension component). The click handler
+(`handlePitSetupClick()`, main.cpp) isn't gated on `RaceState::mode` the
+way menu/results are -- mode stays `"race"` through an entire pit stop --
+so it's checked in the generic drive-control input branch instead,
+conditioned on `player.pit == 2` (mid-service), and the render side mirrors
+it in `Renderer::renderFrame()`'s own `else` (non-menu/non-results) path.
+
+**A real, verified sign check, not an assumption**: the plan's real-world
+intuition ("more track bar = tighter") needed the same closed-loop probe
+technique P2's fuel-shift discovery and P3's impact-sign check both used,
+since this codebase's simplified bicycle model doesn't always agree with
+naive real-world reasoning (P2's own rearward-fuel-shift surprise is the
+cautionary example). A scratch probe compared `cr` scaled by +-15% against
+neutral at four increasingly aggressive `rTarget` values (the same
+closed-loop steer-feedback driver as every prior phase's own probe):
+increasing `cr` monotonically reduced rear friction-limit hits at every
+single point (35/31 vs. neutral's 47/44 vs. -15%'s 68/58 at the two most
+aggressive targets) -- a clean, unambiguous "more track bar tightens the
+car" result, so no sign correction was needed here the way P2's was.
+
+**Deliberately NOT gating pit exit on the player touching this panel**:
+`step_car.cpp`'s existing `c.pitT` countdown is completely untouched, so a
+headless run (no real player input -- see GAME-A's own documented
+limitation) still completes every pit stop exactly as before. The panel is
+a pure bonus the player can use or ignore during the dwell, never a new way
+to get stuck in the pits.
+
+**Scope cut, logged rather than silently dropped**: the plan text also
+says "plus tire/fuel choices" alongside wedge/track bar. This pass
+implements wedge/track-bar only -- turning the existing always-full-
+service pit stop (shared with the JS original) into a real player CHOICE
+between partial and full service would need new pit-duration/partial-
+repair mechanics disproportionate to this phase, and wedge/track-bar is
+the mechanically load-bearing half that actually ties into P1's loose/
+tight axis. Left for a future pass.
+
+A new debug-only `LHT_FORCE_PIT_SETUP` env var (main.cpp), matching
+`LHT_FORCE_SPOTTER`'s exact "seeded state, not a physics bypass"
+precedent, seeds the player straight into mid-service so headless
+screenshot verification doesn't need a real driven pit stop.
+
+**Verified**: new `pit_setup_test.cpp` (region layout -- correct button
+ordering, column alignment between the two rows, no overlap -- and
+`clampPitSetup()`'s clamping, including the actual click-handler pattern
+of repeated `clampPitSetup(current +- step)` calls staying pinned at the
+limit) -- `ctest` 31/31 -> 32/32. Native `xvfb-run` screenshot with
+`LHT_FORCE_PIT_SETUP=1` confirms the panel renders correctly: title,
+WEDGE/TRACK BAR rows with their center-zero tracks and -/+ labels, and the
+auto-exit hint, all legible over the live race view. WASM/Playwright: zero
+console/page errors (the service-worker-ready timeout is the same pre-
+existing environment quirk logged in every prior phase's entry). Because
+`setupWedge`/`setupTrackBar` default to 0 for every car and nothing in a
+headless run (no real player clicks) can change them, both new `carEff`
+lines are exact no-ops (`+= 0 * range`, `* (1 + 0 * range) == 1`) for every
+existing scenario -- a stronger claim than P2/P3's "within this harness's
+noise" and directly checkable: a 4-track `LHT_FORCE_RACE`+
+`LHT_NATURAL_START`+`LHT_HEADLESS_FAST` comparison against a pre-P4
+git-worktree baseline (`00b1145`, the P3 commit) confirms it -- every
+car's `num`/`lap`/`bestLapT`/`lastLapT`/`finishT`/`out`/`done`/`dmg` field
+matches EXACTLY across all 4 tracks. (One line's text PREFIX differed
+between runs on 3 of the 4 tracks -- e.g. `RACE_SUMMARY car=18...` arriving
+as `Y car=18...` or `...num=82bgfx trace (...): BGFX Shutdown...` -- a
+pre-existing, unrelated artifact of this process's own shutdown-time bgfx
+diagnostic `fprintf`s racing the harness's `std::printf` RACE_SUMMARY
+calls on the same fd during process exit, confirmed by diffing the
+UNDERLYING field values themselves, which were identical byte-for-byte
+regardless of which run's prefix got garbled -- not a P4 regression, and
+not something a bit-for-bit no-op change could have caused either way.)
+
+With P4 done, all ten phases of the NT2003 engine-feel plan (H1-H6, P1-P4)
+are complete.

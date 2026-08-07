@@ -416,6 +416,7 @@ add_executable(lht_port
   src/render/ui_draw.cpp
   src/render/wheel_animation.cpp
   src/ui/menu.cpp
+  src/ui/pit_setup.cpp
   src/ui/results.cpp
   src/ui/touch_controls.cpp
   ${SIM_SOURCES}
@@ -703,6 +704,20 @@ target_include_directories(results_test PRIVATE
   third_party/bgfx.cmake/bx/include
 )
 add_test(NAME results_test COMMAND results_test)
+
+# P4 (NT2003 engine-feel plan): pit_setup_test exercises
+# computePitSetupRegions()'s button-position math and clampPitSetup()'s
+# clamping. Needs SDL2 (SDL_Rect) + bgfx linked (like results_test) because
+# pit_setup.cpp's drawPitSetup() calls bgfx::dbgTextPrintf(), even though
+# this test never calls that function.
+add_executable(pit_setup_test tests/pit_setup_test.cpp src/ui/pit_setup.cpp
+  src/render/ui_draw.cpp)
+target_link_libraries(pit_setup_test PRIVATE SDL2::SDL2 bgfx)
+target_include_directories(pit_setup_test PRIVATE
+  third_party/bgfx.cmake/bgfx/include
+  third_party/bgfx.cmake/bx/include
+)
+add_test(NAME pit_setup_test COMMAND pit_setup_test)
 
 # G22 (PORT_PROGRESS.md): proximity_test exercises buildProximityList()'s
 # selection, start/finish wrapping, nearest-first capping and left-to-right

@@ -464,6 +464,16 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
     carEff.mass = CAR.mass + c.fuel * CAR.fuelMass;
     carEff.weightDistF = CAR.weightDistF + c.fuel * CAR.fuelWeightShiftF;
 
+    // P4 (NT2003 engine-feel plan, pit adjustments): the player's persistent
+    // setupWedge/setupTrackBar knobs (0 for every AI car, always) layer onto
+    // the SAME carEff copy fuel already adjusts -- setupWedge adds to
+    // weightDistF exactly like fuel's own shift (same verified-correct
+    // "toward front = tighter" sign), setupTrackBar scales ONLY the rear
+    // axle's cornering stiffness (see CarConstants::trackBarStiffnessRange's
+    // comment for why cr alone, and the verified sign).
+    carEff.weightDistF += c.setupWedge * CAR.wedgeWeightDistRange;
+    carEff.cr = CAR.cr * (1.0 + c.setupTrackBar * CAR.trackBarStiffnessRange);
+
     const double dragMod = (1 - 0.25 * c.draftF) * (c.dirty ? 1.10 : 1) * (1 + 0.5 * c.dmg);
     const double drag = 0.5 * RHO * CAR.cdA * c.v * c.v * dragMod;
     const double roll = CAR.roll + (onGrass ? 900 : 0);
