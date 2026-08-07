@@ -140,6 +140,17 @@ int main() {
         expectTrue("metallic rim is brighter than the tread rubber", luminance(rim) > luminance(tread) + 0.3);
     }
 
+    // I2 (car visual fidelity plan): the mirror housing swatch decodes to
+    // its own fixed dark trim color, distinct from the wheel swatches --
+    // coordinates must match gen_car_rig.py's SW_MIRROR.
+    {
+        LiveryScheme scheme{0, 0, 0, CarPalette::White};
+        const auto pixels = buildLiveryPixels(red, 7, 1, &scheme);
+        const auto mirror = pixelAt(pixels, (int)(0.835 * kLiveryTextureSize), (int)(0.5 * kLiveryTextureSize));
+        const auto rim = pixelAt(pixels, (int)(0.815 * kLiveryTextureSize), (int)(0.75 * kLiveryTextureSize));
+        expectTrue("mirror housing differs from the metallic rim", mirror != rim);
+    }
+
     if (g_failures == 0) {
         std::printf("livery_test: shading bands, stripe styles, and number decals all match expectations.\n");
         return 0;

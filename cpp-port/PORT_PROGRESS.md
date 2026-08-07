@@ -7613,3 +7613,37 @@ this situation:
 
 `tools/check_car_rig.py` still passes unchanged (it validates body
 geometry, untouched by this phase). Native `ctest` 32/32.
+
+## I2 -- Side mirror geometry (car visual fidelity plan)
+
+No mirror geometry existed anywhere in this rig -- every reference NASCAR
+Thunder image shows a clearly visible, chunky door mirror. Added a small
+axis-aligned box per side, mounted at station 6 ("cowl / windshield base")
+ring points k=4 (+z/right) and k=9 (-z/left) -- `SHOULDER`'s own split
+point (hf=0.80), i.e. exactly where the side-glass band starts, matching
+where a real mirror sits relative to the A-pillar. Offset outward along
+that ring point's own smooth normal so it clears the body surface without
+needing to match the surface's local orientation, same "cheap flat prop
+attached via a handful of swatch quads" idiom the spoiler already uses.
+Painted with a new fixed `SW_MIRROR` swatch (dark plastic/trim) rather than
+sampling the door's own livery UV, so the mirror can't accidentally inherit
+whatever number/stripe graphic happens to land at that exact body
+coordinate on a given car's scheme.
+
+**A real fit issue caught by screenshot, not just geometry math**: the
+first offset (0.08) left a visible gap between the housing and the body --
+it read as a small dark blob floating detached against the sky rather than
+mounted on the door. Reduced to 0.025 (smaller than the housing's own
+~0.035 half-extent along that same axis, so the inner face already
+overlaps the body surface) to sit flush. The remaining "floating" look in
+a showcase-camera screenshot is a perspective artifact of that specific
+low, near-edge-on viewing angle -- the mirror mounts well below the roof
+peak (`beltY≈0.89` vs. `roofY≈1.1-1.26` at that station) but projects near
+the roofline silhouette from a shallow angle looking down the car's length,
+confirmed by the actual mount math rather than assumed away.
+
+Verified the same two ways as I1: `livery_test.cpp` confirms the mirror
+swatch decodes to a color distinct from the wheel swatches, and the direct
+glTF-blob decode confirms exactly 48 vertices at `SW_MIRROR`'s UV (2
+mirrors x 6 box faces x 4 vertices). `check_car_rig.py` and native `ctest`
+(32/32) both still pass.

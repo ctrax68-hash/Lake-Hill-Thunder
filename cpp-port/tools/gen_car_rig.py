@@ -78,6 +78,13 @@ SW_SIDEWALL = (0.90, 0.75)  # near-black rubber, the outer end-cap annulus
 SW_TIRE_LETTER = (0.815, 0.25)  # lighter "lettering" annulus, inside the rubber
 SW_RIM = (0.815, 0.75)          # bright metallic hub disc, innermost
 
+# I2 (car visual fidelity plan): a fixed dark plastic/trim swatch for the
+# new door mirror -- a separate column (u=0.835) from I1's tire swatches
+# (u=0.815) in the same reserved margin, still clear of the tail lamp
+# decal's real extent (u<=0.792, see I1's own comment for why the naive
+# "free" boundary was wrong) and the wheel/spoiler columns (u>=0.85).
+SW_MIRROR = (0.835, 0.5)
+
 # G8 (Gen-4 car overhaul): two more fixed-color swatches for the new
 # spoiler, in the same reserved-UV-margin column as the G1c wheel swatches
 # above but a separate row so they don't overlap.
@@ -625,6 +632,42 @@ for _rz in (_spz, -_spz):
     emit_swatch_quad(_p(_sp_x0 - 0.05, _sp_deckY, _rz + 0.05), _p(_sp_x0 - 0.05, _sp_deckY, _rz - 0.05),
                       _p(_sp_x0 - 0.05, _sp_y0, _rz - 0.05), _p(_sp_x0 - 0.05, _sp_y0, _rz + 0.05),
                       (-1, 0, 0), SW_SPOILER_DARK)
+
+# I2 (car visual fidelity plan): door mirrors. No mirror geometry existed
+# anywhere in this rig before -- every reference NASCAR Thunder image shows
+# a clearly visible, chunky housing on each door. Mounted at station 6
+# ("cowl / windshield base") ring points k=4 (+z/right) and k=9 (-z/left) --
+# exactly SHOULDER's own split point (hf=0.80), i.e. right where the
+# side-glass band starts, matching where a real mirror sits relative to the
+# A-pillar. A small axis-aligned box offset outward along that ring point's
+# own smooth normal (RING_NRM), so it clears the body surface without
+# needing to match the surface's local orientation -- same "cheap flat prop
+# is enough at chase-cam distance" idiom the spoiler above already uses.
+_MIRROR_STATION = 6
+for _mk in (4, 9):
+    _mp = RINGS[_MIRROR_STATION][_mk]
+    _mn = RING_NRM[_MIRROR_STATION][_mk]
+    # I2 fix: 0.08 left a visible gap between the body surface and the
+    # housing (it read as a small dark blob floating detached against the
+    # sky rather than mounted on the door, confirmed by screenshot). The
+    # housing's own half-extent along the normal is only ~0.035, so a
+    # smaller offset that overlaps the body slightly (housing extends back
+    # past the surface, into the door) keeps it visually flush -- the
+    # overlap itself is invisible since it's inside the opaque body.
+    _MIRROR_OUT = 0.025  # distance from the body surface to the housing's centre
+    _mcx = _mp[0] + _mn[0] * _MIRROR_OUT
+    _mcy = _mp[1] + _mn[1] * _MIRROR_OUT
+    _mcz = _mp[2] + _mn[2] * _MIRROR_OUT
+    for (_fn, _corners) in FACES:
+        _face_base = len(positions)
+        for (_sx, _sy, _sz) in _corners:
+            positions.append((_mcx + _sx * 0.045, _mcy + _sy * 0.028, _mcz + _sz * 0.035))
+            normals.append(_fn)
+            uvs.append(SW_MIRROR)
+            joints0.append((0, 0, 0, 0))
+            weights0.append((1.0, 0.0, 0.0, 0.0))
+        indices.extend([_face_base, _face_base + 1, _face_base + 2,
+                         _face_base, _face_base + 2, _face_base + 3])
 
 # Wheels (joints 1-4): FL, FR, RL, RR. Local X = nose(+)/tail(-) offset from
 # chassis origin; local Z = left(+)/right(-); local Y = wheel-radius (so the

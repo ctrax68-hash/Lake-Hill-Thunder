@@ -590,6 +590,13 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     c.fillRect(0.80, 0.0, 0.03, 0.5, std::array<double, 3>{130 / 255.0, 130 / 255.0, 132 / 255.0});  // tire lettering band
     c.fillRect(0.80, 0.5, 0.03, 0.5, std::array<double, 3>{198 / 255.0, 200 / 255.0, 206 / 255.0});  // metallic rim/hub
 
+    // I2 (car visual fidelity plan): the new door-mirror housing's swatch --
+    // dark plastic/trim, a fixed color rather than sampling the door's own
+    // livery UV so the mirror can't accidentally inherit whatever number/
+    // stripe graphic happens to land at that exact body coordinate on a
+    // given car's scheme. Coordinates must match gen_car_rig.py's SW_MIRROR.
+    c.fillRect(0.825, 0.0, 0.02, 1.0, std::array<double, 3>{26 / 255.0, 26 / 255.0, 29 / 255.0});  // mirror housing
+
     // G8 (Gen-4 car overhaul): two more swatches for gen_car_rig.py's new
     // spoiler geometry, in the same reserved-margin column, a separate
     // band from the wheel swatches above (u in [0.95,1.0] vs [0.85,0.95])
