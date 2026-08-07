@@ -11,6 +11,8 @@ double wrapMod(double s, double total) {
     return std::fmod(std::fmod(s, total) + total, total);
 }
 
+double sign(double x) { return x > 0 ? 1.0 : (x < 0 ? -1.0 : 0.0); }
+
 // spotterSay() (index.html:1385-1388). JS sets the HUD caption fields AND
 // fires an audio blip synchronously in one call; this port only sets the
 // fields (S.spotTxt/S.spotT are the only physics-adjacent state a
@@ -158,10 +160,27 @@ void collide(std::vector<Car>& cars, RaceState& state, const Track& track, Mulbe
                     Car& hitter = a.v > b.v ? a : b;
                     Car& victim2 = a.v > b.v ? b : a;
                     if (hitter.dmgCd <= 0) {
-                        hitter.dmg = std::min(1.0, hitter.dmg + std::min(0.08, cv2 * 0.003));
-                        victim2.dmg = std::min(1.0, victim2.dmg + std::min(0.05, cv2 * 0.002));
+                        const double hitterDelta = std::min(0.08, cv2 * 0.003);
+                        const double victimDelta = std::min(0.05, cv2 * 0.002);
+                        hitter.dmg = std::min(1.0, hitter.dmg + hitterDelta);
+                        victim2.dmg = std::min(1.0, victim2.dmg + victimDelta);
                         hitter.dmgCd = 0.6;
                         victim2.dmgCd = 0.6;
+
+                        // P3 (NT2003 engine-feel plan, damage that pulls):
+                        // each car's OWN local (heading-relative) lateral
+                        // component of the push direction it just received
+                        // -- a's push is (-nx,-ny), b's is (nx,ny) (see
+                        // above) -- so the persistent bias is anchored to the
+                        // car's own chassis, not world axes, and survives a
+                        // heading change the same way a real bent fender
+                        // would (car.h's own comment on dmgPull).
+                        const double pullA = std::sin(a.hdg) * nx - std::cos(a.hdg) * ny;
+                        const double pullB = -std::sin(b.hdg) * nx + std::cos(b.hdg) * ny;
+                        const double aDelta = (&hitter == &a) ? hitterDelta : victimDelta;
+                        const double bDelta = (&hitter == &b) ? hitterDelta : victimDelta;
+                        a.dmgPull = std::max(-1.0, std::min(1.0, a.dmgPull + sign(pullA) * aDelta));
+                        b.dmgPull = std::max(-1.0, std::min(1.0, b.dmgPull + sign(pullB) * bDelta));
                         if (cv2 > 18 && state.mode == "race" && state.flag == "green" &&
                             state.greenLockT <= 0 && victim2.spinT <= 0 && victim2.spinCd <= 0 &&
                             victim2.spinRollCd <= 0) {

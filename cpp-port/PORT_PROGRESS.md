@@ -7287,3 +7287,73 @@ block correctly. WASM build succeeds; Playwright reports zero console/page
 errors (the service-worker-ready timeout is the same pre-existing
 environment quirk logged in every prior phase's entry, unrelated to this
 phase's sim-only changes).
+
+### P3: Damage that pulls (NT2003 engine-feel plan)
+
+`c.dmg` only ever added drag and cut power -- a wrecked car got slower and
+mushier everywhere, uniformly, with no directionality at all. JS ports one
+crude nudge toward this (`steerIn += c.dmg*0.02`, index.html:986, "bent
+bodywork pulls gently toward the wall") but it's fixed-direction and
+player-only: it doesn't know or care which side actually got hit, so a car
+damaged on its LEFT pulls exactly the same way as one damaged on its RIGHT.
+This phase replaces it with a real, signed, per-car `Car::dmgPull`
+accumulator (roughly `[-1, 1]`), set AT the moment of each impact rather
+than inferred after the fact.
+
+**The mechanism**: both of this sim's impact sites now feed `dmgPull`,
+each signed by the LOCAL (car-heading-relative) lateral component of the
+push/impact direction the car just received, not raw world-frame
+coordinates -- a bent fender is a property of the chassis, not of which way
+the car happened to be pointed on the track when it got bent, and using the
+world frame would make the bias flip arbitrarily as the car's heading
+changes lap to lap.
+- `step_car.cpp`'s wall-clamp site (the same block that already grows
+  `c.dmg` from `vLost`) signs the SAME delta by `sign(p2.lat)` -- which
+  wall was hit.
+- `race.cpp`'s `collide()` computes each car's own push-direction lateral
+  component from the shared collision normal (`a`'s push is `(-nx,-ny)`,
+  `b`'s is `(nx,ny)`; local-left component = `-sin(hdg)*vx + cos(hdg)*vy`),
+  signing the SAME hitter/victim severity deltas it already computes for
+  `dmg`.
+
+`step_car.cpp`'s shared physics tail then adds `c.dmgPull * 0.06` into
+`steerIn` for EVERY branch (not just the player, unlike JS's own nudge) --
+placed AFTER each branch's own `yawCorrGain` feedback has already computed
+its steerIn, so it's a genuine fresh disturbance the yaw-rate-error
+feedback only starts correcting on SUBSEQUENT ticks, matching "you can
+still drive it, but you're fighting it" rather than a bias that gets
+silently absorbed before it ever shows up. Front-axle grip also takes a
+`(1 - 0.15*|dmgPull|)` penalty (magnitude only, either direction costs
+front grip) alongside `wearFront`'s own P1 penalty -- the "unbalances front
+grip" half of the plan, layered on the SAME muBaseFront term P1 built
+rather than a parallel mechanism. `dmgPull` is nudged (not snapped) back
+toward zero by up to 0.5 on a pit repair, mirroring `c.dmg`'s own partial-
+repair magnitude in a sign-safe way.
+
+**Verified**: a new `race_sim_test.cpp` case (the plan's own suggested
+verification) places two cars with a lateral offset (the existing collide()
+fixture has them directly nose-to-tail, which is degenerate for this --
+zero lateral push component either way) and confirms the two cars come out
+of the SAME impact with OPPOSITE-signed `dmgPull` (`-0.0252` for the hitter,
+pushed toward its own right; `+0.0168` for the victim, pushed toward its
+own left) -- the core "a one-sided impact produces a signed pull" property.
+A scratch probe (not committed -- this project's usual verify-before-assert
+step) drove a car into each side of the wall separately and confirmed the
+same opposite-sign behavior there (`+0.056` hitting the positive-lat wall,
+`-0.056` hitting the negative-lat wall, from the same `sign(p2.lat) *
+dmgDelta` formula).
+
+`ctest` 31/31 (no new file; race_sim_test.cpp gained a case and its own
+local `expect()` helper). Native `xvfb-run` screenshot confirms
+no visual regression to the HUD or a live 20-car pack. WASM/Playwright:
+zero console/page errors; the service-worker-ready timeout is the same
+pre-existing environment quirk logged in every prior phase's entry. A
+4-track `LHT_FORCE_RACE`+`LHT_NATURAL_START`+`LHT_HEADLESS_FAST` headless
+comparison against a pre-P3 git-worktree baseline (`0f108a7`, the P2
+commit) actually looked slightly BETTER, not worse: total wreckCount
+1->0 and total DNFs 4->2 across the 4 tracks, with more cars completing
+laps on tracks 2 and 3 in the modified tree. Consistent with P1/P2's own
+documented finding that this stress harness has substantial run-to-run
+and track-to-track variance -- no systemic shift attributable to P3
+either way, and no reason to suspect the improvement is anything but that
+same noise landing favorably this run.

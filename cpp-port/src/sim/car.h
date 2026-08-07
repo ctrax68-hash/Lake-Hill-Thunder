@@ -352,6 +352,24 @@ struct Car {
     bool dtPending = false;
 
     double fuel = 1, dmg = 0;
+
+    // P3 (NT2003 engine-feel plan, damage that pulls): a persistent, SIGNED
+    // handling bias from bent bodywork, in roughly [-1, 1] -- replaces JS's
+    // fixed-direction "bent bodywork pulls gently toward the wall" nudge
+    // (index.html:986, `steerIn += c.dmg*0.02`, applied only to the player
+    // and always the same sign regardless of which side actually got hit)
+    // with a real accumulated value set AT the moment of each impact
+    // (step_car.cpp's wall-clamp site, race.cpp's collide()), signed by
+    // which side of the CAR (not the world) the hit came from, so it
+    // survives a heading change the same way a real bent fender would.
+    // step_car.cpp's shared physics tail adds this into every branch's
+    // steerIn (not just the player's) -- an AI car visibly fighting a
+    // one-sided pull is exactly the "you can still drive it, but you're
+    // fighting it" state the plan describes -- and also shaves front-axle
+    // grip proportional to |dmgPull|, alongside wearFront's own P1 penalty.
+    // Nudged back toward zero (not reset) on a pit repair, matching dmg's
+    // own partial-repair semantics.
+    double dmgPull = 0;
     bool out = false;
 
     int cautionSlot = -1;

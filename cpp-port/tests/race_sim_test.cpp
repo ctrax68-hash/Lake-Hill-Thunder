@@ -29,6 +29,12 @@ void expectEq(const char* label, int got, int expected) {
         ++g_failures;
     }
 }
+void expect(bool cond, const char* what) {
+    if (!cond) {
+        std::fprintf(stderr, "FAIL: %s\n", what);
+        ++g_failures;
+    }
+}
 void expectEqStr(const char* label, const std::string& got, const std::string& expected) {
     if (got != expected) {
         std::fprintf(stderr, "%s: got '%s' expected '%s'\n", label, got.c_str(), expected.c_str());
@@ -156,6 +162,42 @@ int main() {
         // cars[1] (the victim) gets no hitFx from this site.
         expectNear("collide[0].hitFx", cars[0].hitFx, 0.336);
         expectNear("collide[1].hitFx", cars[1].hitFx, 0.0);
+    }
+
+    // ---- collide(): P3 (NT2003 engine-feel plan, damage that pulls) --
+    // dmgPull must come out SIGNED and OPPOSITE for the two cars in a
+    // one-sided (laterally offset) impact -- the previous block's fixture
+    // has cars[1] directly ahead of cars[0] (dy=0), which is degenerate for
+    // this: both cars' local-left component of the push direction is
+    // exactly zero there, so this needs its own laterally-offset fixture.
+    // cars[1] sits up-and-to-the-right of cars[0] (both hdg=0, facing +x,
+    // so +y is each car's own "left"): the repulsion push shoves cars[0]
+    // down-and-left (toward its own RIGHT, i.e. negative pull) and cars[1]
+    // up-and-right (toward its own LEFT, i.e. positive pull) -- opposite
+    // signs, matching two cars pushed apart from each other. ----
+    {
+        std::vector<Car> cars(2);
+        cars[0].x = 0;
+        cars[0].y = 0;
+        cars[0].v = 40;
+        cars[0].hdg = 0;
+        cars[1].x = 2.0;
+        cars[1].y = 1.0;
+        cars[1].v = 30;
+        cars[1].hdg = 0;
+        RaceState state;
+        state.mode = "race";
+        state.flag = "green";
+        Mulberry32 rngR(999);
+        collide(cars, state, track, rngR);
+        // cv2 = |38.1-29.7| = 8.4 (same closing speed as the previous
+        // fixture -- unaffected by the lateral offset), so cars[0] (hitter,
+        // a.v>b.v) gets hitterDelta = min(0.08, 8.4*0.003) = 0.0252, and
+        // cars[1] (victim) gets victimDelta = min(0.05, 8.4*0.002) = 0.0168.
+        expectNear("collide P3 [0].dmgPull (hitter, pulled right)", cars[0].dmgPull, -0.0252, 1e-4);
+        expectNear("collide P3 [1].dmgPull (victim, pulled left)", cars[1].dmgPull, 0.0168, 1e-4);
+        expect(cars[0].dmgPull < 0.0 && cars[1].dmgPull > 0.0,
+               "collide() gives the two cars in a one-sided impact OPPOSITE-signed pulls");
     }
 
     // ---- gridStart() clears finishOrder (Phase 4h bugfix, PORT_PROGRESS.md)

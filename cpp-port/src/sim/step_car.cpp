@@ -139,6 +139,9 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
                 c.wearRear = 0;
                 c.fuel = 1;
                 c.dmg = std::max(0.0, c.dmg - 0.5);
+                // P3: same partial-repair magnitude as c.dmg's own, nudged
+                // toward (not snapped to) zero since dmgPull is signed.
+                c.dmgPull -= sign(c.dmgPull) * std::min(std::abs(c.dmgPull), 0.5);
                 c.blown = false;
                 c.pit = 3;
             }
@@ -282,7 +285,10 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         steerIn = (input.left ? -1 : 0) + (input.right ? 1 : 0);
         if (state.tilt) steerIn = std::max(-1.0, std::min(1.0, state.tiltG / 22));
         steerIn *= 1 - 0.10 * std::min(1.0, c.v / 85);
-        steerIn += c.dmg * 0.02;
+        // P3 (NT2003 engine-feel plan): JS's fixed-direction, player-only
+        // `steerIn += c.dmg*0.02` (index.html:986) is replaced by the
+        // general, signed `c.dmgPull` bias applied to every branch in the
+        // shared physics tail below -- see car.h's own comment.
     } else {
         // index.html:865-975 (AI race branch)
         const double vT = targetSpeed(track, c);
@@ -380,6 +386,14 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
     }
 
     // ---- shared physics tail (index.html:977-1109), applies to every branch ----
+    // P3 (NT2003 engine-feel plan, damage that pulls): added AFTER every
+    // branch above has already computed its own steerIn (including the AI's
+    // yawCorrGain feedback baked into yawCorrected()'s calls) -- so this is a
+    // fresh disturbance the yaw-rate-error feedback only starts correcting
+    // for on SUBSEQUENT ticks, not something silently cancelled before it
+    // ever shows up. Applies to every car, not just the player.
+    constexpr double kDmgPullSteerGain = 0.06;
+    steerIn += c.dmgPull * kDmgPullSteerGain;
     c.thr += (thr - c.thr) * 0.28;
     c.brk += (brk - c.brk) * 0.4;
     c.steer += (steerIn - c.steer) * (c.isPlayer ? 0.22 : 0.5);
@@ -422,7 +436,16 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
     // differently once they've worn unevenly -- the mechanism the whole
     // loose/tight axis runs on.
     const double bankTan = std::tan(bank);
-    const double muBaseFront = CAR.mu * (onGrass ? 0.72 : 1.0) * (1 - 0.12 * c.wearFront) * (c.blown ? 0.7 : 1);
+    // P3 (NT2003 engine-feel plan, damage that pulls): "unbalances front
+    // grip" -- one-sided damage shaves front-axle grip proportional to
+    // |dmgPull| (magnitude only; a bent nose costs front grip whichever way
+    // it's actually bent), alongside wearFront's own P1 penalty. The rear
+    // axle is untouched -- dmgPull's steering bias (the shared physics tail
+    // above) is the mechanism that makes the car pull; this is the
+    // "fighting it" half, not a second copy of the same effect.
+    constexpr double kDmgPullFrontGrip = 0.15;
+    const double muBaseFront = CAR.mu * (onGrass ? 0.72 : 1.0) * (1 - 0.12 * c.wearFront) * (c.blown ? 0.7 : 1) *
+                                (1 - kDmgPullFrontGrip * std::abs(c.dmgPull));
     const double muBaseRear = CAR.mu * (onGrass ? 0.72 : 1.0) * (1 - 0.12 * c.wearRear) * (c.blown ? 0.7 : 1);
     const double muEffLateralFront = (muBaseFront + bankTan) / std::max(0.25, 1.0 - muBaseFront * bankTan);
     const double muEffLateralRear = (muBaseRear + bankTan) / std::max(0.25, 1.0 - muBaseRear * bankTan);
@@ -648,7 +671,12 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
             c.vy = 0;
             c.r = 0;
             if (c.dmgCd <= 0 && state.flag != "yellow") {
-                c.dmg = std::min(1.0, c.dmg + std::min(0.12, vLost * 0.005));
+                const double dmgDelta = std::min(0.12, vLost * 0.005);
+                c.dmg = std::min(1.0, c.dmg + dmgDelta);
+                // P3: signed by which wall (p2.lat's sign) was actually hit,
+                // set at this exact impact moment -- see car.h's own comment
+                // on why this replaces JS's fixed-direction nudge.
+                c.dmgPull = std::max(-1.0, std::min(1.0, c.dmgPull + sign(p2.lat) * dmgDelta));
                 c.dmgCd = 0.6;
             }
             c.hitFx = std::min(1.0, c.hitFx + vLost * 0.06); // particle/audio hook (index.html:1067)
