@@ -7206,3 +7206,84 @@ WASM/Playwright: zero console/page errors; the service-worker-ready check
 still times out in this container, the same pre-existing environment/
 timing quirk logged in prior phases' entries, unrelated to this phase's
 sim/HUD changes.
+
+### P2: Fuel as real mass (NT2003 engine-feel plan)
+
+`CarConstants::mass`/`weightDistF` were fixed constants; a full tank and a
+near-empty one drove identically. `Car::fuel` (already a real `[0,1]`
+accumulator, burned every tick and reset to 1 on pit exit) never fed into
+anything but the throttle-cutout-at-empty check. This phase makes fuel a
+real mass: `step_car.cpp` builds a per-tick `CarConstants carEff = CAR`
+copy each tick with `carEff.mass = CAR.mass + c.fuel * CAR.fuelMass` and
+`carEff.weightDistF = CAR.weightDistF + c.fuel * CAR.fuelWeightShiftF`
+(new constants, `120.0` kg and a small weightDistF shift respectively),
+then uses `carEff` everywhere `CAR` previously fed `axleLoads()`,
+`integrateYawDynamics()`, and the longitudinal-acceleration divisor --
+no new machinery, exactly the plan's own framing.
+
+**A real, verified mid-implementation correction, not a first-try success**:
+the plan (and the physically obvious reasoning -- NASCAR fuel cells are
+rear-mounted) says `weightDistF` should shift REARWARD as the tank fills.
+Implemented exactly that way first, then verified it the same way P1
+verified its own mechanism -- a scratch closed-loop steer-feedback probe
+(`integrateYawDynamics()` in isolation, same technique as P1's
+`tire_model_test.cpp` driver) comparing a full-tank `CarConstants` against
+an empty one at four increasingly aggressive `rTarget` values. The result
+was the OPPOSITE of the intended "tight full tank, frees up as it burns":
+at `rTarget=0.50`, the rearward-shifted full-tank car's REAR axle hit the
+friction limit 82 times per run vs. the empty tank's 44, with less front
+slip accumulated (50.80 vs 55.99) -- a measurably LOOSER car, not tighter.
+
+Root cause, confirmed by deriving it from this file's own closed-form
+understeer-gradient formula (the same one `tire_model_test.cpp`'s
+steady-state test already verifies against): `Kus = (mass/wheelBase) *
+(aR/cf - aF/cr)`, where `aR`/`aF` are the CG-to-axle lever arms derived
+from `weightDistF`. Each axle's lever arm pairs with the OTHER axle's
+FIXED cornering stiffness (`cf`/`cr` don't scale with load in this linear-
+tire model) -- so adding weight onto an axle (growing that axle's own
+lever arm) raises THAT axle's own understeer contribution, not the
+opposite axle's, the reverse of what a load-dependent real tire would do.
+This geometric effect dominates the Fz-based friction-ellipse asymmetry
+(confirmed separately: the full tank's front axle DOES pick up
+proportionally more static load than the rear, 12.32% vs 3.68% growth in
+the corrected direction) across the whole practical steer range probed.
+Shifting `weightDistF` toward the FRONT instead reproduces the intended
+direction cleanly and monotonically across all four `rTarget` values
+tested -- confirmed via the same probe, then locked into a new permanent
+`tire_model_test.cpp` block (static-Fz asymmetry, longitudinal-accel
+slowdown, and the closed-loop front/rear-slip and friction-limit-count
+assertions, all passing against the shipped code, not just the scratch
+probe). `car.h`'s own comment on `fuelWeightShiftF` documents this
+finding in full so a future reader doesn't rediscover it the hard way.
+
+The wheel/suspension animation's rest-load baseline (`renderer.cpp`,
+computing the springs' zero-offset reference) deliberately stays on
+`CAR`'s fixed dry-mass values rather than `carEff` -- `c.fzFront`/
+`c.fzRear` already carry the fuel weight by the time they reach the
+renderer, so keeping the reference at the empty-tank baseline means a
+full car visibly squats on its springs and rises back up as it burns off,
+which is the intended visual, not a bug to fix.
+
+**Verified**: `tire_model_test.cpp`'s new block (31/31 -> still 31 files,
+more assertions) confirms, against the real shipped `carEff` formula: a
+full tank has more mass and a higher (more-forward) `weightDistF`; its
+front axle's static load grows proportionally more than its rear; a fixed
+net force produces measurably lower acceleration (the "sluggish" half of
+the plan's goal); and the closed-loop rTarget-tracking driver shows a full
+tank loading its front axle more and its rear less than an empty one,
+hitting the rear friction limit less often (the "tight" half). A 4-track
+`LHT_FORCE_RACE`+`LHT_NATURAL_START`+`LHT_HEADLESS_FAST` headless
+comparison against a pre-P2 git-worktree baseline (`a50cf33`, the P1
+commit) shows totals well within this harness's already-documented
+per-track variance (see P1's own entry above): wreckCount 0->1 across the
+4 tracks combined, DNFs 4->4 (redistributed differently per track, same
+total), with `lastLapT` outliers and per-track completion counts moving in
+both directions track-by-track -- no systemic shift attributable to P2.
+
+`ctest` 31/31. Native `xvfb-run` screenshot confirms the HUD (unchanged by
+this phase -- P2 touches only `car.h`/`step_car.cpp`/a `renderer.cpp`
+comment, no new readout) still renders the P1 TIR-F/TIR-R/BAL/FUEL/CAR
+block correctly. WASM build succeeds; Playwright reports zero console/page
+errors (the service-worker-ready timeout is the same pre-existing
+environment quirk logged in every prior phase's entry, unrelated to this
+phase's sim-only changes).

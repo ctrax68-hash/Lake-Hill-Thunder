@@ -91,6 +91,33 @@ struct CarConstants {
     // deliberately NOT folded into axleLoads() itself (preserves its
     // existing passing unit tests, which assert on its instantaneous value).
     double suspRate = 10.0;
+
+    // P2 (NT2003 engine-feel plan, fuel as real mass): c.fuel is a [0,1]
+    // fraction of tank remaining (car.h's own Car::fuel comment). step_car.cpp
+    // builds a per-tick CarConstants copy each tick with mass/weightDistF
+    // adjusted by these two constants, then uses THAT copy everywhere axle
+    // loads, longitudinal acceleration and yaw dynamics read CAR -- no new
+    // machinery, mass just stops being a constant.
+    //
+    // weightDistF shifts toward the FRONT (added, not subtracted) as the
+    // tank fills -- verified empirically (a scratch closed-loop probe, same
+    // technique as P1's own driver-feedback test) against the naive
+    // "fuel cell is rear-mounted, so shift weight rearward" assumption
+    // first, which turned out to produce the opposite of the intended feel.
+    // integrateYawDynamics()'s Kus (understeer-gradient) formula pairs aR
+    // (CG-to-rear distance, grows with weightDistF) with the FIXED front
+    // stiffness cf, and aF with the fixed rear stiffness cr -- since cf/cr
+    // don't scale with load in this linear-tire model, adding weight onto an
+    // axle raises that SAME axle's own understeer contribution (it has more
+    // weight to turn but no more stiffness to do it with), not the other
+    // axle's. A rearward shift therefore measurably LOOSENED the car at
+    // full tank in the probe (more rear friction-ellipse saturation, less
+    // front) -- the reverse of "tight full tank, frees up as it burns" that
+    // real stock-car fuel loads are known for. Shifting toward the front
+    // instead reproduces the intended direction (see PORT_PROGRESS.md for
+    // the actual probe numbers across four steer-feedback targets).
+    double fuelMass = 120.0;        // kg, mass added by a completely full tank
+    double fuelWeightShiftF = 0.02; // weightDistF shift (toward front) at a completely full tank
 };
 inline const CarConstants CAR{};
 

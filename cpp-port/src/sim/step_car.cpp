@@ -428,6 +428,19 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
     const double muEffLateralRear = (muBaseRear + bankTan) / std::max(0.25, 1.0 - muBaseRear * bankTan);
 
     c.fuel = std::max(0.0, c.fuel - c.thr * c.v * DT * 5e-5);
+
+    // P2 (NT2003 engine-feel plan, fuel as real mass): every mass/weightDistF
+    // read below (axle loads, longitudinal acceleration, yaw dynamics) goes
+    // through this per-tick copy instead of CAR directly, so a full tank
+    // measurably adds mass and shifts static balance toward the front (see
+    // CarConstants::fuelWeightShiftF's comment for why front, not the
+    // rear-mounted-cell-implies-rearward assumption tried and rejected
+    // first), and both fall away smoothly as the tank burns off. mu/aero/
+    // drivetrain constants are untouched -- only these two fields change.
+    CarConstants carEff = CAR;
+    carEff.mass = CAR.mass + c.fuel * CAR.fuelMass;
+    carEff.weightDistF = CAR.weightDistF + c.fuel * CAR.fuelWeightShiftF;
+
     const double dragMod = (1 - 0.25 * c.draftF) * (c.dirty ? 1.10 : 1) * (1 + 0.5 * c.dmg);
     const double drag = 0.5 * RHO * CAR.cdA * c.v * c.v * dragMod;
     const double roll = CAR.roll + (onGrass ? 900 : 0);
@@ -478,13 +491,13 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
     // Every downstream use of `fz` below (traction budget, fxFrac, the yaw
     // integration, and the final c.fzFront/c.fzRear assignment) reads this
     // lagged value, not axleLoads()'s raw instantaneous one.
-    const AxleLoads fzRaw = axleLoads(CAR, c.v, c.aPrev, aeroEfficiency);
+    const AxleLoads fzRaw = axleLoads(carEff, c.v, c.aPrev, aeroEfficiency);
     c.fzFrontLag = suspensionLag(c.fzFrontLag, fzRaw.front, CAR.suspRate, DT);
     c.fzRearLag = suspensionLag(c.fzRearLag, fzRaw.rear, CAR.suspRate, DT);
     const AxleLoads fz{c.fzFrontLag, c.fzRearLag};
     const double engF = std::min(engFRaw, muEff * fz.rear);
 
-    double a = (engF - drag - roll * sign(c.v != 0 ? c.v : 1) - brkF * (c.v > 0 ? 1 : 0)) / CAR.mass;
+    double a = (engF - drag - roll * sign(c.v != 0 ? c.v : 1) - brkF * (c.v > 0 ? 1 : 0)) / carEff.mass;
     c.v = std::max(0.0, c.v + a * DT);
     c.aPrev = a;
     c.pitch += ((-a * 0.006) - c.pitch) * 0.12;
@@ -519,8 +532,8 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         // control resumes.
         c.vy *= std::max(0.0, 1.0 - 6.0 * DT);
         c.r *= std::max(0.0, 1.0 - 6.0 * DT);
-        c.fzFront = CAR.mass * G * CAR.weightDistF;
-        c.fzRear = CAR.mass * G * (1 - CAR.weightDistF);
+        c.fzFront = carEff.mass * G * carEff.weightDistF;
+        c.fzRear = carEff.mass * G * (1 - carEff.weightDistF);
         c.slipRatio = 0;
     } else {
         c.fzFront = fz.front;
@@ -543,7 +556,7 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         // divergence in this coupled oscillator at highway speed under
         // sustained full-lock steering (see CarConstants::yawSubsteps).
         const YawIntegrationResult yawInt =
-            integrateYawDynamics(CAR, c.vy, c.r, vDyn, vSafe, steerAngle, fz, muEffLateralFront, muEffLateralRear,
+            integrateYawDynamics(carEff, c.vy, c.r, vDyn, vSafe, steerAngle, fz, muEffLateralFront, muEffLateralRear,
                                  fxFracFront, fxFracRear, DT, CAR.yawSubsteps);
         c.vy = yawInt.vy;
         c.r = yawInt.r;

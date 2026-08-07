@@ -1708,6 +1708,13 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         // baseline computeWheelTransforms() measures live fzFront/fzRear
         // against to get a suspension offset -- 0 at rest, displaced under
         // real weight transfer/aero load.
+        //
+        // P2 (NT2003 engine-feel plan, fuel as real mass): deliberately still
+        // CAR's fixed dry-mass baseline, not step_car.cpp's per-tick fuel-
+        // adjusted copy -- c.fzFront/c.fzRear below already carry the fuel
+        // weight, so keeping this reference at the dry (empty-tank) values
+        // means a full car visibly squats on its springs and rises back up
+        // as it burns off, instead of the offset being normalized away.
         const double restLoadFront = CAR.mass * G * CAR.weightDistF * 0.5;
         const double restLoadRear = CAR.mass * G * (1.0 - CAR.weightDistF) * 0.5;
         constexpr double kWheelRadius = 0.35; // must match tools/gen_car_rig.py's WHEEL_RADIUS

@@ -280,6 +280,105 @@ int main() {
         expect(rwPr > symPr, "a rear-worn car's rear axle hits the friction limit more often than the symmetric baseline");
     }
 
+    // ---- P2 (NT2003 engine-feel plan, fuel as real mass): a full tank
+    // should measurably TIGHTEN the car (more understeer-prone) and slow its
+    // straight-line acceleration -- "tight and sluggish on a full tank,
+    // frees up as it burns off" is the plan's own stated goal, matching real
+    // stock-car fuel-run folklore.
+    //
+    // The obvious-looking implementation -- shift weightDistF REARWARD as
+    // fuel fills, since the fuel cell is physically rear-mounted -- was
+    // tried first and empirically produces the OPPOSITE of the intended
+    // feel in this bicycle model. integrateYawDynamics()'s closed-form
+    // understeer gradient (see the steady-state test above) is
+    // Kus=(mass/wheelBase)*(aR/cf - aF/cr): aR (CG-to-rear distance) pairs
+    // with the FIXED front stiffness cf, aF pairs with the fixed rear
+    // stiffness cr. Since cf/cr don't scale with load in this linear-tire
+    // model, adding weight onto an axle raises THAT axle's own contribution
+    // to Kus (more weight, no more stiffness to turn it with) rather than
+    // starving the other axle the way a load-dependent tire model would. A
+    // scratch closed-loop probe (same driver-feedback technique as the P1
+    // test above) confirmed this concretely: shifting weightDistF rearward
+    // made the REAR saturate MORE often at full tank, not the front -- a
+    // real, verified LOOSE-at-full-tank result, backwards from the goal.
+    // Shifting toward the FRONT instead (CarConstants::fuelWeightShiftF's
+    // own comment) reproduces the intended tight-at-full-tank direction,
+    // confirmed below.
+    {
+        // Mirrors step_car.cpp's own carEff derivation exactly (fuel=1 vs
+        // fuel=0), so this test tracks the real formula rather than a
+        // reimplementation of it.
+        CarConstants full = c;
+        full.mass = c.mass + 1.0 * c.fuelMass;
+        full.weightDistF = c.weightDistF + 1.0 * c.fuelWeightShiftF;
+        CarConstants empty = c; // fuel=0: unchanged
+
+        expect(full.mass > empty.mass, "a full tank adds real mass");
+        expect(full.weightDistF > empty.weightDistF, "a full tank shifts static balance toward the front");
+
+        // ---- static Fz: the front axle should pick up proportionally MORE
+        // of the added weight than the rear (the mechanism's actual load
+        // asymmetry, ahead of any friction-ellipse saturation). ----
+        {
+            const AxleLoads fzFull = axleLoads(full, 0.0, 0.0);
+            const AxleLoads fzEmpty = axleLoads(empty, 0.0, 0.0);
+            const double frontGrowth = (fzFull.front - fzEmpty.front) / fzEmpty.front;
+            const double rearGrowth = (fzFull.rear - fzEmpty.rear) / fzEmpty.rear;
+            expect(frontGrowth > rearGrowth,
+                   "a full tank's static load grows the front axle proportionally more than the rear");
+        }
+
+        // ---- longitudinal acceleration: mirrors step_car.cpp's `a =
+        // (engF-drag-roll-brkF)/carEff.mass` -- identical net force, purely
+        // heavier car, must accelerate more slowly ("sluggish"). ----
+        {
+            const double netForce = 6000.0 - 800.0 - 380.0; // representative engF-drag-roll, no braking
+            const double aFull = netForce / full.mass;
+            const double aEmpty = netForce / empty.mass;
+            expect(aFull < aEmpty, "a full tank measurably slows straight-line acceleration for the same net force");
+        }
+
+        // ---- closed-loop cornering (same rTarget-tracking driver as the P1
+        // test above, symmetric mu -- isolating the fuel/mass mechanism from
+        // wear): a full tank should push more slip onto the front and less
+        // onto the rear than an empty one, and saturate the rear axle less
+        // often (the front becomes the relatively tighter constraint). ----
+        {
+            const double v = 30.0;
+            const double rTarget = 0.50; // aggressive enough to approach the friction ellipse
+            const double kP = 3.0;
+
+            auto drive = [&](const CarConstants& cc) {
+                const AxleLoads fz = axleLoads(cc, v, 0.0);
+                double vy = 0.0, r = 0.0, frontSum = 0.0, rearSum = 0.0;
+                int prCount = 0;
+                constexpr int kTicks = 150, kWarmup = 30;
+                for (int t = 0; t < kTicks; ++t) {
+                    const double steerAngle =
+                        std::max(-cc.maxSteerAngle, std::min(cc.maxSteerAngle, kP * (rTarget - r)));
+                    YawIntegrationResult res = integrateYawDynamics(cc, vy, r, v, v, steerAngle, fz, cc.mu, cc.mu,
+                                                                     0.0, 0.0, 0.02, cc.yawSubsteps);
+                    vy = res.vy;
+                    r = res.r;
+                    if (t >= kWarmup) {
+                        frontSum += res.slipFrontAvg;
+                        rearSum += res.slipRearAvg;
+                        if (res.pastLimitRear) ++prCount;
+                    }
+                }
+                return std::tuple<double, double, int>{frontSum, rearSum, prCount};
+            };
+
+            const auto [fullF, fullR, fullPr] = drive(full);
+            const auto [emptyF, emptyR, emptyPr] = drive(empty);
+
+            expect(fullF > emptyF, "a full tank loads the front axle more than an empty one, holding the same line");
+            expect(fullR < emptyR, "a full tank loads the rear axle less than an empty one, holding the same line");
+            expect(fullPr < emptyPr,
+                   "a full tank's rear axle hits the friction limit less often (the front is the tighter constraint)");
+        }
+    }
+
     // ---- integrateYawDynamics(): a sustained, non-saturating steer input
     // must settle to the CORRECT sign and magnitude of yaw rate, not just
     // converge across substep counts. This is the property a stray sign flip
