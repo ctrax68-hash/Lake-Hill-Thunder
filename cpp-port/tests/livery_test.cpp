@@ -151,6 +151,98 @@ int main() {
         expectTrue("mirror housing differs from the metallic rim", mirror != rim);
     }
 
+    // I5 (car visual fidelity plan): the livery-density patch pass. The
+    // blocks are painted AFTER all five stripe styles precisely so density
+    // rises regardless of scheme, which is exactly the property a decode
+    // check can pin down and a screenshot cannot: sample one patch centre
+    // per target region (hood, lower quarter panel and its mirrored twin,
+    // rear-window surround) for every style and require the car's own acc2
+    // tone there. With idx=0 the tone rotation is kPatchTones[i % 4], so
+    // patches 1, 5 and 9 are all acc2 -- pinned to a body/acc2 pair (red
+    // body, yellow acc2) no stripe style paints in these regions, so a
+    // pass means the patch really landed rather than coincidentally
+    // matching whatever was underneath.
+    {
+        struct Sample {
+            const char* what;
+            double u, v;
+        };
+        // Centres of patches 1 (hood), 5 (lower quarter, both flanks) and
+        // 9 (rear-window surround), computed from livery.cpp's own kPatches
+        // table -- the same loose cross-file coordinate sync this file's
+        // swatch checks already use.
+        const Sample kPatchSamples[] = {
+            {"hood patch", 0.095, 0.553},
+            {"lower quarter patch (-z flank)", 0.315, 0.107},
+            {"lower quarter patch (+z flank)", 0.315, 0.893},
+            {"rear-window surround patch", 0.580, 0.276},
+        };
+        for (int style = 0; style < 5; ++style) {
+            LiveryScheme scheme{style, 0, 0, CarPalette::Yellow};
+            const auto pixels = buildLiveryPixels(red, 7, 0, &scheme);
+            for (const auto& s : kPatchSamples) {
+                const auto px = pixelAt(pixels, (int)(s.u * kLiveryTextureSize), (int)(s.v * kLiveryTextureSize));
+                char label[96];
+                std::snprintf(label, sizeof(label), "%s is painted in acc2 (stripe style %d)", s.what, style);
+                expectTrue(label, std::fabs(px[0] - CarPalette::Yellow[0]) < 0.01 &&
+                                       std::fabs(px[1] - CarPalette::Yellow[1]) < 0.01 &&
+                                       std::fabs(px[2] - CarPalette::Yellow[2]) < 0.01);
+            }
+            // ...and they are blocks, not another full-width band: the gap
+            // between the two forward hood patches keeps whatever the
+            // shading/stripe pass left there.
+            const auto gap = pixelAt(pixels, (int)(0.137 * kLiveryTextureSize), (int)(0.553 * kLiveryTextureSize));
+            char label[64];
+            std::snprintf(label, sizeof(label), "hood patches leave gaps (stripe style %d)", style);
+            expectTrue(label, std::fabs(gap[1] - CarPalette::Yellow[1]) > 0.05);
+        }
+    }
+
+    // I5: grille slats. The centre slat must decode to SW_RIM's *exact*
+    // color, because that is the entire mechanism by which it picks up
+    // fs_car.sc's I3 chrome specular lobe (a color-match against that same
+    // constant) -- a nearby-but-not-equal color would silently lose the
+    // glint with nothing else visibly wrong, which is precisely the class
+    // of regression a decode check exists to catch. The gaps between slats
+    // must still read as the dark grille opening, or the slats have merged
+    // into one bright block.
+    {
+        LiveryScheme scheme{0, 0, 0, CarPalette::White};
+        const auto pixels = buildLiveryPixels(red, 7, 1, &scheme);
+        const int noseX = (int)(0.023 * kLiveryTextureSize);
+        const auto chrome = pixelAt(pixels, noseX, (int)(0.500 * kLiveryTextureSize));
+        const auto between = pixelAt(pixels, noseX, (int)(0.480 * kLiveryTextureSize));
+        expectTrue("grille centre slat is exactly SW_RIM's chrome color",
+                   chrome[0] == 198 / 255.0 && chrome[1] == 200 / 255.0 && chrome[2] == 206 / 255.0);
+        expectTrue("grille stays dark between slats", luminance(between) < 0.06);
+    }
+
+    // I5: bolder number outlines. drawNumber()'s outline-to-fill ratio went
+    // 1.18/1.14 -> 1.28/1.22, so the dark ring drawn under every digit
+    // grows. Measured as the dark-pixel count over the door-number
+    // ellipse's own bounding box (u 0.343-0.487, v 0.153-0.317, centred on
+    // carU(-0.10)): 12413 pixels at the old ratio, 13976 at the new one, so
+    // the 13000 floor below sits between the two measurements rather than
+    // being a round number picked blind -- it fails if the ratio is ever
+    // reverted or quietly reduced.
+    //
+    // Note what this region actually measures. On a dark-bodied car the
+    // door number is dark-on-white (panelNum == the outline tone), so the
+    // "outline" reads as a bolder glyph rather than a contrasting ring; the
+    // ring only reads as a ring on the deck-lid number, which is drawn
+    // white-on-body-paint. Both are driven by this one ratio, so counting
+    // it here -- where the dark/white contrast is unambiguous and no stripe
+    // style paints anything dark -- is the cleanest place to pin it.
+    {
+        LiveryScheme scheme{0, 0, 0, CarPalette::White};
+        const auto pixels = buildLiveryPixels(red, 28, 1, &scheme);
+        int darkPixels = 0;
+        for (int y = (int)(0.153 * kLiveryTextureSize); y < (int)(0.317 * kLiveryTextureSize); ++y)
+            for (int x = (int)(0.343 * kLiveryTextureSize); x < (int)(0.487 * kLiveryTextureSize); ++x)
+                if (luminance(pixelAt(pixels, x, y)) < 0.10) ++darkPixels;
+        expectTrue("door number carries a bold dark outline", darkPixels >= 13000);
+    }
+
     if (g_failures == 0) {
         std::printf("livery_test: shading bands, stripe styles, and number decals all match expectations.\n");
         return 0;

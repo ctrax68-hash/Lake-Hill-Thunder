@@ -161,8 +161,16 @@ void drawNumber(Canvas& c, int num, double fcx, double fcy, double fh, const std
     double x = fcx - totalW / 2 + fw / 2;
     for (char ch : s) {
         const int d = ch - '0';
-        // outline: a slightly larger dark digit painted first
-        drawDigit(c, d, x, fcy, fw * 1.18, fh * 1.14, outline);
+        // outline: a slightly larger dark digit painted first.
+        // I5 (car visual fidelity plan): ratio raised 1.18/1.14 ->
+        // 1.28/1.22. At 1.18/1.14 the outline was ~2px wide on a 256px
+        // texture once the 7-segment thickness (fw*0.22) is accounted for,
+        // which the mip chain and the chase camera's distance together
+        // erase almost entirely -- the numbers read as flat fill with no
+        // edge. The reference NASCAR Thunder cars carry a heavy contrasting
+        // number outline that survives at any distance, so this widens the
+        // dark ring rather than restyling the digits themselves.
+        drawDigit(c, d, x, fcy, fw * 1.28, fh * 1.22, outline);
         drawDigit(c, d, x, fcy, fw, fh, fill);
         x += fw + gap;
     }
@@ -258,6 +266,101 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         for (auto [vSide, dir] : {std::pair{0.145, -1.0}, std::pair{0.855, 1.0}}) {
             drawFlameLick(c, flU0, vSide, 0.26, 0.075, dir, accent);
             drawFlameLick(c, flU0, vSide + dir * 0.01, 0.18, 0.045, dir, acc2);
+        }
+    }
+
+    // ---- I5 (car visual fidelity plan): livery density patches ----
+    //
+    // Each of the five stripe styles above is a handful of long bands --
+    // faithful to the JS original, but measured against the NASCAR-Thunder
+    // reference images this I-series targets, a car of that era is covered
+    // in *blocks*: sponsor panels, contrasting hood and lower-quarter
+    // slabs, a colored band wrapping the rear glass. That block density,
+    // more than the stripes themselves, is what separates the reference
+    // look from this port's flat one at chase-cam distance.
+    //
+    // G16's contingency chips are the direct precedent (a fixed layout of
+    // small rects whose colors rotate by the car's own `idx`); this is the
+    // same idea scaled up -- fewer, much larger blocks, painted in the
+    // car's OWN body/accent/acc2 tones rather than the chips' fixed
+    // sticker palette, so a patch reads as part of the paint scheme rather
+    // than a decal stuck on top of it.
+    //
+    // Placed here, between the stripe styles and everything below,
+    // deliberately on both counts:
+    //   - AFTER the stripes, so density rises for all 5 styles rather than
+    //     only the sparse ones. A per-style patch set would mean five more
+    //     layouts to tune and the same flat read on whichever style got
+    //     skipped.
+    //   - BEFORE the rocker band, wheel-arch rings, shutlines, glass,
+    //     contingency chips, number panels and lamp clusters, so no block
+    //     can bury any of those however its coordinates drift later. The
+    //     blocks are ALSO placed clear of all of them by coordinate (see
+    //     each region's bounds below) -- belt and braces, since "it happens
+    //     to get overpainted" is not the same as "it was placed correctly".
+    {
+        // Tones taken from the car's own scheme, so patches are in-scheme
+        // by construction: its accent, its secondary accent, a half-mix of
+        // body and accent (a shade that exists nowhere else on the car,
+        // which is what keeps a large block from reading as a misplaced
+        // stripe), and a deep shadow tone of the body itself.
+        const std::array<std::array<double, 3>, 4> kPatchTones{{
+            accent,
+            acc2,
+            mixC(body, accent, 0.55),
+            tone(0.55),
+        }};
+
+        // Region bounds, in the same UV space as everything else here:
+        //   hood      u 0.060-0.264: clear of the nose lamp column (which
+        //             ends at 0.038) and the cowl shutline (0.285).
+        //             v 0.412-0.588, inside the roof/hood highlight band.
+        //   quarters  u 0.286-0.524: the door/lower-quarter run between the
+        //             front wheel-arch ring (reaches u=0.260) and the rear
+        //             one (starts at 0.540). v 0.076-0.138, above the
+        //             near-black rocker (ends 0.052) and below the door-
+        //             number ellipse (starts 0.153).
+        //   rear win  u 0.556-0.658: inside the rear glass's own u span
+        //             (0.551-0.665). v 0.244-0.308, the sail panel below
+        //             the glass rect (starts 0.335), stopping short of the
+        //             beltline seam (0.320).
+        // The hood straddles v=0.5 on one continuous surface, so its blocks
+        // are authored symmetric already; the side-panel blocks are single
+        // entries mirrored onto the far flank.
+        struct Patch {
+            double u, v, w, h;
+            bool mirror;
+        };
+        static const std::array<Patch, 11> kPatches{{
+            {0.060, 0.412, 0.070, 0.070, false}, // hood, forward pair
+            {0.060, 0.518, 0.070, 0.070, false},
+            {0.142, 0.428, 0.048, 0.144, false}, // hood, centre slab
+            {0.202, 0.440, 0.062, 0.050, false}, // hood, cowl pair
+            {0.202, 0.510, 0.062, 0.050, false},
+            {0.286, 0.076, 0.058, 0.062, true},  // lower door/quarter run
+            {0.352, 0.076, 0.048, 0.062, true},
+            {0.408, 0.084, 0.042, 0.046, true},
+            {0.458, 0.076, 0.066, 0.062, true},
+            {0.556, 0.244, 0.048, 0.064, true},  // rear-window surround
+            {0.612, 0.244, 0.046, 0.064, true},
+        }};
+
+        int i = 0;
+        for (const auto& p : kPatches) {
+            const auto& fillTone = kPatchTones[(size_t)((idx + i) % (int)kPatchTones.size())];
+            const auto& pinTone = kPatchTones[(size_t)((idx + i + 2) % (int)kPatchTones.size())];
+            // The livery wraps the body, so a -z-flank band and its +z twin
+            // are v-mirrors of each other -- the same pairing every band
+            // above already uses (rockers 0.055/0.945, doors 0.235/0.765).
+            for (double vy : {p.v, 1.0 - p.v - p.h}) {
+                c.fillRect(p.u, vy, p.w, p.h, fillTone);
+                // Every third block carries a thin contrasting stripe along
+                // its lower edge: a sponsor-panel cue, and it stops a run of
+                // similar blocks from merging into one long band.
+                if (i % 3 == 0) c.fillRect(p.u, vy + p.h - 0.007, p.w, 0.007, pinTone);
+                if (!p.mirror) break;
+            }
+            ++i;
         }
     }
 
@@ -519,6 +622,21 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // Nose: grille block flanked by headlight lenses.
     c.fillRect(kNoseU0, 0.15, kNoseUW, 0.70, tone(0.94));
     c.fillRect(kNoseU0, 0.430, kNoseUW, 0.140, dark);                // grille
+    // I5 (car visual fidelity plan): grille slats, replacing what was a
+    // single flat dark rectangle. The nose cap's UV is degenerate in U
+    // (every corner shares u=0.02, see the V-band note above), so V is the
+    // only axis that varies across the car's width -- a thin V band here
+    // paints as a narrow vertical slat down the nose, and three of them
+    // give the opening internal structure at the distance the grille is
+    // actually seen from. The centre slat reuses SW_RIM's exact RGB, so
+    // fs_car.sc's I3 rim color-match fires on it and it gets the tight
+    // chrome specular lobe for free -- no new shader constant and no new
+    // threshold to re-check for collisions. The outer two are a duller gray
+    // ~0.36 squared-distance from that reference, far outside I3's 0.01
+    // match radius, so only the centre bar glints.
+    for (double bv : {0.4575, 0.5315})
+        c.fillRect(kNoseU0, bv, kNoseUW, 0.011, std::array<double, 3>{112 / 255.0, 114 / 255.0, 120 / 255.0});
+    c.fillRect(kNoseU0, 0.4945, kNoseUW, 0.011, std::array<double, 3>{198 / 255.0, 200 / 255.0, 206 / 255.0});
     c.fillRect(kNoseU0, 0.412, kNoseUW, 0.012, accent);              // grille surround
     c.fillRect(kNoseU0, 0.576, kNoseUW, 0.012, accent);
     if (maskStyle == 0) {

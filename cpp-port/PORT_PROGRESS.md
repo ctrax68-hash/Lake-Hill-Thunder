@@ -7715,3 +7715,83 @@ applied to a blowout-regression question a screenshot alone can't answer
 precisely. A race chase-cam screenshot shows a visibly more defined
 highlight streak along the roofline compared to the pre-I3/I4 baseline.
 Native `ctest` 32/32.
+
+## I5 -- Livery density + number/grille polish (car visual fidelity plan)
+
+The last of the I-series, and the one aimed at the original complaint most
+directly: even after I1-I4 gave the cars real wheels, mirrors, distinct
+materials and a harder gloss streak, the *paint* was still five long
+stripes on a large empty body. Reference NASCAR Thunder cars are covered in
+blocks -- sponsor panels, contrasting hood and lower-quarter slabs, a
+colored band wrapping the rear glass -- and that block density, more than
+the stripes, is what reads at chase-cam distance.
+
+**A new patch pass in `buildLiveryPixels()`**, modeled on G16's
+contingency chips (a fixed layout whose colors rotate by the car's own
+`idx`) but scaled up: 11 authored blocks -- 5 on the hood, 4 on the lower
+door/quarter run, 2 around the rear-window surround, the latter two groups
+mirrored onto both flanks for 17 rects per car. Painted in the car's OWN
+accent / acc2 / body-accent half-mix / body shadow tones rather than the
+chips' fixed sticker palette, so a block reads as part of the paint scheme
+instead of a decal stuck on top of it, and every third block carries a thin
+contrasting stripe along its lower edge so a run of similar blocks doesn't
+merge into one long band.
+
+Placement is deliberate on both axes. The pass sits **after** all five
+stripe styles, so density rises for every scheme rather than only the
+sparse ones -- a per-style patch set would have meant five more layouts to
+tune and the same flat read on whichever style got skipped. It sits
+**before** the rocker band, wheel-arch rings, shutlines, glass, contingency
+chips, number panels and lamp clusters, so no block can bury any of those
+however its coordinates drift later. The blocks are *also* placed clear of
+all of them by coordinate (hood u 0.060-0.264 between the nose lamp column
+and the cowl shutline; quarters u 0.286-0.524 between the two wheel-arch
+rings, v 0.076-0.138 between the rocker and the door-number ellipse; rear
+window u 0.556-0.658 inside the backlight's own u span, v 0.244-0.308 below
+it) -- belt and braces, since "it happens to get overpainted" is not the
+same as "it was placed correctly".
+
+**Grille slats.** The nose grille was one flat dark rectangle. The nose
+cap's UV is degenerate in U (every corner shares u=0.02), so V is the only
+axis that varies across the car's width and a thin V band paints as a
+narrow vertical slat down the nose -- three of them give the opening
+internal structure. The centre slat reuses `SW_RIM`'s **exact** RGB, so
+I3's rim color-match in `fs_car.sc` fires on it and it picks up the tight
+chrome specular lobe for free: no new shader constant, no new threshold,
+and nothing to re-check for collisions. The outer two sit ~0.36 squared-
+distance from that reference, far outside I3's 0.01 match radius, so only
+the centre bar glints.
+
+**Bolder number outlines.** `drawNumber()`'s outline-to-fill ratio
+1.18/1.14 -> 1.28/1.22. At the old ratio the ring was ~2px on a 1024px
+texture once the 7-segment thickness is accounted for, which the mip chain
+and chase-cam distance erased almost entirely.
+
+Verified the usual way -- decode first, screenshot second.
+`livery_test.cpp` gains three checks, each pinning something a screenshot
+cannot: one patch centre per target region decoded for **all five stripe
+styles** (the "density regardless of scheme" property is the whole point of
+the ordering above, and it is exactly what silently breaks if the pass ever
+moves), plus a gap sample proving the blocks are blocks and not another
+full-width band; an exact-equality check on the grille's centre slat,
+because exact equality with `SW_RIM` *is* the mechanism by which it gets
+the chrome lobe and a nearby-but-unequal color would lose the glint with
+nothing else visibly wrong; and a dark-pixel count over the door-number
+region, thresholded at 13000 from **measured** endpoints (12413 at the old
+ratio, 13976 at the new one) rather than a round number picked blind.
+`check_car_rig.py` still passes (no rig change this phase) and native
+`ctest` is 32/32. A WASM rebuild plus a before/after capture of the same
+fixed G24 showcase frame shows the difference plainly: an empty green hood
+becomes a hood carrying sponsor blocks, and the nose reads as a slatted
+grille instead of a dark hole.
+
+**Left deliberately unfixed, and worth recording.** For 2-digit numbers the
+digits already overflow their own backing panel -- `drawNumber()` lays out
+`2*fw + gap = 0.142` of U for a `fh=0.105` number, against a roof panel
+0.112 wide and a door ellipse 0.144 across -- so the number spills onto the
+paint at both ends. That predates this phase (the fill overflows on its own,
+independent of any outline ratio) and the bolder outline widens the total
+painted span from 0.154 to 0.160 of U. Fixing it properly means resizing the panels, and
+the door ellipse cannot simply grow: at rx 0.086 it would start eating the
+rear door shutline at u=0.491. Out of scope for a polish pass, noted here
+rather than silently absorbed.
