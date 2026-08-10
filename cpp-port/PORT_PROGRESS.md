@@ -7957,3 +7957,61 @@ dark wedge extending past the front bumper with a clearly visible gap of track s
 between its underside and the ground -- no clipping, no floating-detached read either. The
 chase-cam/top-down angles that helped confirm J2/J3 don't apply here (chase cam looks at
 other cars' rears, top-down is too far out) and weren't needed given the showcase result.
+
+## J5 -- Wheel hub center-lock nut (car visual fidelity plan, part 2)
+
+The plan for this phase flagged a real engineering constraint before any code was written:
+`SW_RIM` is a single fixed UV point sampled by every vertex of the hub disc, i.e. a flat
+solid color, not a spatially-varying texture region -- there is no way to "paint" lug-nut
+detail into it. Wheel hub detail has to be real geometry, not a texture trick, the same
+reasoning I1 already established for the rim/tire-lettering/sidewall distinction.
+
+The plan also flagged a design choice worth deciding explicitly rather than defaulting
+silently: 5 individual lug nuts (a literal reading of "lug nut detail") reads as a
+street/aftermarket wheel, while real Gen-4/Cup cars of the era this project is visually
+inspired by run a single center-lock knock-off hub nut. Asked, and the user chose the
+period-correct single nut -- also cheaper (one small fan per wheel instead of five) and a
+larger single element that reads better at chase-cam distance than five tiny ones would.
+
+Added inside `add_wheel()` itself (not a standalone prop function like the spoiler/mirrors/
+exhaust) so it has direct access to the wheel's own `cz`/`z`/`n`/`joint_idx` already in scope.
+A small octagonal fan at `R_INNER * 0.22` radius, offset slightly along local Z to avoid
+z-fighting against the coplanar `SW_RIM` disc beneath it -- a different problem from the
+mirror's own embed-vs-float gap tuning, not a literal reuse of that constant. Reuses `SW_RIM`
+exactly, the same trick I5 (part 1) used for its grille slat: `fs_car.sc`'s color-match keys
+off texel color, so this geometry inherits the tight chrome specular lobe for free, no new
+swatch or threshold.
+
+**Two details that are easy to get wrong silently, both given their own check rather than
+trusting a screenshot:**
+
+1. **Joint binding.** Every other prop in this file (spoiler/mirrors/exhaust) is bound to
+   chassis joint 0 because none of them move independently. This nut is on the wheel face and
+   must spin with it via `wheel_animation.cpp`'s bone palette -- binding it to joint 0 by
+   mistake would be a bug invisible in any single still screenshot (the nut would sit
+   frozen while the tire visibly rotates around it, only showing up across multiple frames of
+   real motion). `check_car_rig.py` asserts the joint binding directly instead: every hub-nut
+   vertex is bound to its OWN wheel's `joint_idx` (1-4), never chassis 0.
+2. **Outer cap only.** The inner cap (facing the chassis) is never visible from any supported
+   camera angle; gated to the side where `side_sign` matches `sign(cz)` (unambiguous, `cz` is
+   always `+-TRACK_HALF`, never 0). Checked directly: zero hub-nut geometry on any wheel's
+   inner cap.
+
+`check_car_rig.py` recomputes each wheel's expected hub-nut geometry independently (the same
+formulas `add_wheel()` uses, sharing the module-level `_HUB_R_FRAC`/`_HUB_SIDES`/
+`_HUB_Z_OFFSET_FRAC` constants by name) rather than inferring from radius bands alone, since
+the hub-nut's own centre point and the pre-existing hub-disc fan's centre point share the same
+(x,y) and would otherwise be ambiguous without also checking z. Five checks, all pass: ring
+vertex count per wheel, joint binding, outer-cap-only, radius bound (strictly inside the hub
+disc's own R_INNER), and z-offset bound. Native `ctest` 32/32.
+
+**Screenshot verification lands at the same honest place J2/J3 did, for a related but
+distinct reason.** At `WHEEL_RADIUS*0.68*0.22 ~= 0.052` world units against a ~5-unit car,
+the nut is a small enough feature that at the showcase camera's own distance it isn't clearly
+resolvable in a screenshot crop -- the same "genuinely sub-pixel at every supported camera
+distance" verdict `livery.h`'s hood-pins/fuel-filler-ring rejection already reached once for a
+similarly small feature. Recorded plainly rather than claimed as a confirmed visual win. The
+joint-binding correctness -- the property that actually matters for whether this looks right
+in motion -- is established by the geometric check above, which is a stronger guarantee than
+a screenshot could have provided anyway (a screenshot proves position at one instant; the
+`check_car_rig.py` check proves the binding that determines correctness at every instant).

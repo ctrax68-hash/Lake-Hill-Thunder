@@ -91,6 +91,20 @@ SW_MIRROR = (0.835, 0.5)
 SW_SPOILER_BODY = (0.97, 0.25)  # top blade face -- painted per-car (body color)
 SW_SPOILER_DARK = (0.97, 0.75)  # underside/edges/risers -- fixed near-black
 
+# J5 (car visual fidelity plan, part 2): a single center-lock wheel hub nut,
+# module-level (not a local inside add_wheel()) so check_car_rig.py can
+# reference the exact same geometry constants by name -- the same loose
+# cross-file convention the SW_* swatches above already use, just within
+# this one file instead of across gen_car_rig.py/livery.cpp. Fraction of
+# R_INNER (add_wheel()'s own inner-disc radius), not an absolute size, so
+# it scales automatically if WHEEL_RADIUS ever changes.
+_HUB_R_FRAC = 0.22
+_HUB_SIDES = 8
+_HUB_Z_OFFSET_FRAC = 0.06  # fraction of half_width; avoids z-fighting
+                           # against the coplanar SW_RIM disc beneath it,
+                           # not a visible-gap risk like the mirror's own
+                           # embed-vs-float tuning -- a different problem.
+
 def emit_swatch_quad(p0, p1, p2, p3, outward_hint, swatch, joint_idx=0):
     """Like emit_quad(), but every vertex samples one fixed swatch texel
     instead of the carU()/carV() wraparound livery UV -- for small
@@ -197,6 +211,43 @@ def add_wheel(cx, cy, cz, radius, half_width, joint_idx, sides=10):
                 indices.extend([center_idx, i0, i1])
             else:
                 indices.extend([center_idx, i1, i0])
+
+        # J5 (car visual fidelity plan, part 2): a single center-lock hub
+        # nut, not 5 street-car lug nuts -- period-correct for the Gen-4/Cup
+        # cars this project is visually inspired by (a single knock-off hub
+        # nut, not a 5-lug pattern), cheaper, and a larger single element
+        # reads better at chase-cam distance than five tiny ones would.
+        #
+        # Outer cap only: `cz` is always +-TRACK_HALF (never 0), so the
+        # outer face -- the only one ever seen from a supported camera
+        # angle -- is unambiguously the side where side_sign matches
+        # sign(cz). The inner cap (facing the chassis) never gets this
+        # geometry, so no triangles are spent on it.
+        #
+        # Bound to THIS wheel's own joint_idx (inherited from the enclosing
+        # scope), NOT chassis joint 0 like every other prop in this file
+        # (spoiler/mirrors/exhaust are chassis-bound because they don't move
+        # independently) -- this nut is on the wheel face and must spin
+        # with it via wheel_animation.cpp's bone palette. Getting this wrong
+        # would be a bug invisible in any single still screenshot (the nut
+        # would sit still while the tire visibly rotates around it), which
+        # is exactly why check_car_rig.py asserts the joint binding directly
+        # rather than trusting a screenshot to catch it.
+        if side_sign == (1 if cz > 0 else -1):
+            _hub_r = R_INNER * _HUB_R_FRAC
+            _hub_z = z + side_sign * (half_width * _HUB_Z_OFFSET_FRAC)
+            _hub_ring_base = len(positions)
+            for _hi in range(_HUB_SIDES):
+                _ha = 2 * math.pi * _hi / _HUB_SIDES
+                add_vertex((cx + math.cos(_ha) * _hub_r, cy + math.sin(_ha) * _hub_r, _hub_z), n, SW_RIM)
+            _hub_center = len(positions)
+            add_vertex((cx, cy, _hub_z), n, SW_RIM)
+            for _hi in range(_HUB_SIDES):
+                _hi0, _hi1 = _hub_ring_base + _hi, _hub_ring_base + (_hi + 1) % _HUB_SIDES
+                if side_sign > 0:
+                    indices.extend([_hub_center, _hi0, _hi1])
+                else:
+                    indices.extend([_hub_center, _hi1, _hi0])
 
     # Cylindrical tread band connecting the two rings.
     z0, z1 = cz - half_width, cz + half_width

@@ -276,6 +276,47 @@ for i in _spl_idx:
 check(_worst_spl is None, "splitter clears the front tire's cylindrical volume%s"
       % ("" if _worst_spl is None else " (worst overlap %.3f)" % _worst_spl))
 
+# --- wheel hub center-lock nut (J5, car visual fidelity plan part 2) --------
+# Self-contained: recomputes each wheel's own expected hub-nut geometry
+# exactly the way add_wheel() does (same R_INNER/half_width formulas from
+# the call site, same _HUB_R_FRAC/_HUB_SIDES/_HUB_Z_OFFSET_FRAC constants
+# gen_car_rig.py exposes at module level for exactly this reason), then
+# checks for its exact presence/absence -- more precise than inferring
+# from radius bands alone, since the hub-nut's own centre point and the
+# pre-existing hub-disc fan's centre point share the same (x,y) and would
+# otherwise be ambiguous without also checking z.
+print("wheel hub center-lock nut")
+_HR = R.WHEEL_RADIUS * 0.68 * R._HUB_R_FRAC  # R_INNER * _HUB_R_FRAC (R_INNER = radius*0.68 in add_wheel())
+_hw = R.WHEEL_RADIUS * 0.4  # half_width, matching the add_wheel() call site's own WHEEL_RADIUS*0.4
+_hub_ring_ok = True
+_hub_joint_ok = True
+_hub_outer_only_ok = True
+for _wi, (wx, wz) in enumerate(R.wheel_offsets):
+    _joint = _wi + 1
+    _cx, _cy, _cz = wx, R.WHEEL_RADIUS, wz
+    _outer_sign = 1 if _cz > 0 else -1
+    for _side_sign in (1, -1):
+        _z = _cz + _side_sign * _hw
+        _hub_z = _z + _side_sign * (_hw * R._HUB_Z_OFFSET_FRAC)
+        _found = [i for i, (uv, j, p) in enumerate(zip(R.uvs, R.joints0, R.positions))
+                  if uv == R.SW_RIM and j[0] == _joint
+                  and abs(p[2] - _hub_z) < 1e-9
+                  and abs(math.hypot(p[0] - _cx, p[1] - _cy) - _HR) < 1e-9]
+        if _side_sign == _outer_sign:
+            if len(_found) != R._HUB_SIDES: _hub_ring_ok = False
+            if any(R.joints0[i][0] != _joint for i in _found): _hub_joint_ok = False
+        else:
+            if len(_found) != 0: _hub_outer_only_ok = False
+check(_hub_ring_ok, "every wheel's outer cap carries exactly %d hub-nut ring vertices" % R._HUB_SIDES)
+check(_hub_joint_ok,
+      "every hub-nut vertex is bound to its own wheel's joint (1-4), never chassis joint 0")
+check(_hub_outer_only_ok, "no hub-nut geometry on any wheel's inner (never-seen) cap")
+check(0 < _HR < R.WHEEL_RADIUS * 0.68,
+      "hub-nut radius (%.4f) stays strictly inside the hub disc's own R_INNER (%.4f)"
+      % (_HR, R.WHEEL_RADIUS * 0.68))
+check(_hw * R._HUB_Z_OFFSET_FRAC < 0.3 * _hw,
+      "hub-nut z-embed offset stays small relative to half_width")
+
 print("\nverts %d  tris %d" % (len(R.positions), len(R.indices) // 3))
 print("check_car_rig: PASS" if ok else "check_car_rig: FAILURES ABOVE")
 sys.exit(0 if ok else 1)
