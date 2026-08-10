@@ -177,6 +177,39 @@ check(worst_ring_other < 70.0,
 print("  note  wheel-arch crease at the axle stations: %.1f deg (expected -- a car has an arch lip)"
       % worst_ring_axle)
 
+# --- exhaust pipes (J2, car visual fidelity plan part 2) --------------------
+# Identified by swatch + joint rather than a hand-picked x/z box: SW_SIDEWALL
+# is also used by every wheel's own tire end-cap annulus, but those are
+# jointed 1-4 (wheel_animation.cpp's per-wheel bones) while the exhaust is
+# chassis-bound (joint 0, same as the spoiler/mirrors) -- so this filter
+# can't accidentally pick up wheel geometry no matter where either sits.
+print("exhaust pipes")
+exh_idx = [i for i, (uv, j) in enumerate(zip(R.uvs, R.joints0))
+           if uv == R.SW_SIDEWALL and j[0] == 0]
+check(len(exh_idx) == 2 * R._EXH_SEGS * 6,
+      "exhaust vertex count == 2 pipes * %d segs * 6 verts (got %d)" % (R._EXH_SEGS, len(exh_idx)))
+check(all(R.positions[i][2] < 0 for i in exh_idx),
+      "every exhaust vertex is on the right side (z < 0, this port's mirrored-vs-JS convention)")
+check(all(R.positions[i][1] > 0 for i in exh_idx),
+      "every exhaust vertex clears the ground plane (y > 0)")
+
+# Clearance from the rear tire's cylindrical volume -- same radial-shadow
+# test the wheel-clearance section above uses, recomputed locally (not
+# reused from that loop's own inner/outer, which are left holding whichever
+# axle/side its loop last iterated, not necessarily the rear-right pair
+# needed here).
+_rear_axle_x = R._WHEEL_AXLE_X[1]  # -WHEELBASE/2, matches wheel_offsets' RL/RR row
+_inner_r, _outer_r = R.TRACK_HALF - HW, R.TRACK_HALF + HW
+_worst_exh = None
+for i in exh_idx:
+    x, y, z = R.positions[i]
+    if math.hypot(x - _rear_axle_x, y - WR) < WR and _inner_r + EPS < abs(z) < _outer_r - EPS:
+        depth = min(abs(z) - _inner_r, _outer_r - abs(z))
+        if _worst_exh is None or depth > _worst_exh:
+            _worst_exh = depth
+check(_worst_exh is None, "exhaust geometry clears the rear tire's cylindrical volume%s"
+      % ("" if _worst_exh is None else " (worst overlap %.3f)" % _worst_exh))
+
 print("\nverts %d  tris %d" % (len(R.positions), len(R.indices) // 3))
 print("check_car_rig: PASS" if ok else "check_car_rig: FAILURES ABOVE")
 sys.exit(0 if ok else 1)

@@ -669,6 +669,82 @@ for _mk in (4, 9):
         indices.extend([_face_base, _face_base + 1, _face_base + 2,
                          _face_base, _face_base + 2, _face_base + 3])
 
+# J2 (car visual fidelity plan, part 2): dual exhaust pipes. No exhaust
+# geometry existed anywhere in this rig -- real Gen-4/Cup cars run a
+# visible side-exit exhaust along the rocker ahead of the rear wheel, and
+# every reference NASCAR Thunder image shows one. This is a direct port of
+# JS's own exhaustPipe() (index.html:2591-2606): an open half-cylinder
+# segment strip, structurally the same idea as add_wheel()'s tread band
+# above, just an open arc (not a closed ring) and short. x-span scaled by
+# the same HALF_LEN/2.51 factor _station() already applies to every
+# station x; y0/r kept at JS's own values (0.26/0.055) -- close enough to
+# this x-range's real yLow (stations 9-11: 0.195-0.205) that no rescale is
+# warranted, the same call the plan for this phase made for every other
+# hand-placed prop's height (spoiler, mirrors).
+#
+# z convention: JS's z>0 is the car's right side, but THIS port's z axis is
+# mirrored relative to JS's (car_v()'s own comment above says so plainly,
+# and it's independently visible in two already-shipped facts: livery.cpp's
+# door-number labels put "right door" at the p[2]<0 UV family, and its
+# existing "exhaust soot smudge, right side only" texture cue already sits
+# in that same z<0 band). A global z-mirror flips both the z0 anchor's sign
+# and the local radial term's sign (the arc's own y/sin term is untouched --
+# only z/cos flips), so this is not a literal transcription of JS's
+# per-vertex formula, and the two pipes are called with negative z0.
+#
+# z0 magnitudes: NOT JS's literal 0.74/0.90. Those were tuned against JS's
+# own wz=0.80 wheel-z constant; this rig's analogous constant is
+# TRACK_HALF=0.76, so JS's values are scaled by 0.76/0.80=0.95 instead of
+# copied -- 0.74*0.95~=0.70 (the inner pipe, landing right at this x-range's
+# own rocker width of ~0.63-0.72, computed from CHASSIS_STATIONS'
+# halfWidth*RINGF[0]'s wf=0.76 across stations 9-11) and 0.90*0.95~=0.86
+# (the outer pipe, visibly proud of the rocker for a real dual-pipe read).
+# Still a hand-placed prop, not a ring-interpolated one -- same idiom the
+# spoiler/mirror sections already use -- so this is a reasoned starting
+# point for the screenshot pass, not assumed final.
+#
+# check_car_rig.py's own rear-tire-clearance check caught a real intrusion
+# at JS's literal x1=-1.15 scaled (~-1.164): the rear wheel's radial shadow
+# in X starts at axle_x+WHEEL_RADIUS = -1.395+0.35 = -1.045 (any point
+# within WHEEL_RADIUS of the axle in the X-Y side-view plane is "in front
+# of" the tire, not just points sharing its exact X), so a pipe reaching
+# past that in X can land between the tire's inner and outer face -- poking
+# through the sidewall -- regardless of how carefully z is chosen. -1.02
+# clears that boundary with a small margin instead of tuning z to dodge it,
+# since JS's own x1 wasn't derived against this rig's WHEELBASE/WHEEL_RADIUS
+# in the first place.
+_EXH_X0, _EXH_X1 = -0.55 * (HALF_LEN / 2.51), -1.02
+_EXH_Y0, _EXH_R, _EXH_SEGS = 0.26, 0.055, 6
+
+def add_exhaust_pipe(z0):
+    for k in range(_EXH_SEGS):
+        a0 = -math.pi / 2 + k / _EXH_SEGS * math.pi
+        a1 = -math.pi / 2 + (k + 1) / _EXH_SEGS * math.pi
+        s0, c0 = math.sin(a0), math.cos(a0)
+        s1, c1 = math.sin(a1), math.cos(a1)
+        p0a = (_EXH_X0, _EXH_Y0 + s0 * _EXH_R, z0 - c0 * _EXH_R)
+        p1a = (_EXH_X0, _EXH_Y0 + s1 * _EXH_R, z0 - c1 * _EXH_R)
+        p0b = (_EXH_X1, _EXH_Y0 + s0 * _EXH_R, z0 - c0 * _EXH_R)
+        p1b = (_EXH_X1, _EXH_Y0 + s1 * _EXH_R, z0 - c1 * _EXH_R)
+        mid = (a0 + a1) / 2.0
+        # Outward radial normal, hand-set like add_wheel()'s own end-cap
+        # normals -- this renderer applies no backface culling anywhere, so
+        # triangle winding only needs to describe valid triangles, not a
+        # specific facing (add_wheel()'s own comment on this point applies
+        # unchanged here).
+        nm = (0.0, math.sin(mid), -math.cos(mid))
+        base = len(positions)
+        for p in (p0a, p0b, p1b, p0a, p1b, p1a):
+            positions.append(p)
+            normals.append(nm)
+            uvs.append(SW_SIDEWALL)
+            joints0.append((0, 0, 0, 0))
+            weights0.append((1.0, 0.0, 0.0, 0.0))
+        indices.extend([base, base + 1, base + 2, base + 3, base + 4, base + 5])
+
+for _ez0 in (-0.74 * (TRACK_HALF / 0.80), -0.90 * (TRACK_HALF / 0.80)):
+    add_exhaust_pipe(_ez0)
+
 # Wheels (joints 1-4): FL, FR, RL, RR. Local X = nose(+)/tail(-) offset from
 # chassis origin; local Z = left(+)/right(-); local Y = wheel-radius (so the
 # wheel's own box, spanning +-radius around its joint origin, touches down

@@ -7842,3 +7842,57 @@ per-car CPU paint work scales ~4x along with the buffer size, so the cost is rea
 watching on an actual device if this ships; this environment just isn't able to isolate it
 from its own software-rendering overhead. Left as a known follow-up rather than a closed
 question.
+
+## J2 -- Exhaust pipes (car visual fidelity plan, part 2)
+
+No exhaust geometry existed anywhere in this rig -- real Gen-4/Cup cars run a visible
+side-exit exhaust along the rocker ahead of the rear wheel, and every reference photo the
+user compared against shows one. A direct port of JS's own `exhaustPipe()`
+(`index.html:2591-2606`, dual pipes, open half-cylinder segment strips), never carried over
+when the C++ rig was built -- not a new design, a gap. Structurally the same idea as
+`add_wheel()`'s tread band, just an open arc instead of a closed ring. Reuses `SW_SIDEWALL`
+exactly (near-black rubber tone, reads as gunmetal, matches JS's own "gunmetal, not polished
+chrome" intent) -- zero new swatch, since the reserved UV margin is already fully allocated,
+and zero new `fs_car.sc` risk since no new color-match threshold is introduced.
+
+**Two real bugs, both caught before screenshotting, not after.**
+
+1. **z-sign.** JS's own convention is z>0="right side" -- but this port's z axis is mirrored
+   relative to JS's, a fact `car_v()`'s own comment already states and that's independently
+   confirmed by two already-shipped pieces of this codebase: `livery.cpp`'s door-number
+   labels put "right door" at the `p[2]<0` UV family, and its existing "exhaust soot smudge,
+   right side only" texture cue already sits in that same z<0 band. A literal transcription
+   of JS's positive z0 values would have put the pipes on the wrong side. Both the anchor
+   z0 and the local per-vertex radial term were flipped (not just the anchor -- a global
+   z-mirror flips the cross-section's own cos() term too, so this isn't a straight sign swap
+   on one constant).
+2. **Tire intrusion, caught by `check_car_rig.py`, not by eye.** JS's own x1=-1.15 (scaled to
+   this rig, ~-1.164) was tuned against JS's own wheelbase/wheel-radius, not this rig's. The
+   rear wheel's radial shadow in X starts at `axle_x + WHEEL_RADIUS = -1.045`; the pipe's
+   rearmost point reached 0.119 past that, landing between the tire's inner and outer face
+   (the same "poking through bodywork" class of bug the CAR-F/CAR-M wheel-clearance history
+   already fought once, just for a new prop instead of the body loft). Pulled x1 back to
+   -1.02, comfortably inside the boundary, computed directly rather than nudged blind.
+
+New `check_car_rig.py` checks (identified by swatch+joint, `SW_SIDEWALL` + joint 0 -- the
+wheels' own tire-cap geometry also samples `SW_SIDEWALL` but is jointed 1-4, so this filter
+can't cross-contaminate regardless of where either sits): vertex count (72 = 2 pipes x 6 segs
+x 6 verts), right-side-only (z<0), ground clearance (y>0), and rear-tire cylindrical-volume
+clearance (the exact check that caught bug #2 above). All four pass. `livery_test.cpp`:
+unchanged -- `SW_SIDEWALL` is already covered by I1's swatch-distinctness checks, and this
+phase touches no texture code. Native `ctest` 32/32.
+
+**Screenshot verification found a real limitation of this game's own fixed camera set, worth
+recording rather than glossing over.** None of the three available camera modes isolate the
+right-rear rocker at usable resolution: the menu's `CameraMode::Showcase` places its
+`kLateral` offset on the car's world-left side (confirmed directly in `renderer.cpp` --
+`sx = -sin(th)` is the "left-perpendicular" direction the eye offsets along), i.e. the
+opposite flank from where the exhaust sits, by construction, not by bad luck; `CameraMode::
+Chase` follows dead-behind at a distance where a car ahead reads as a few dozen pixels, and
+even the closest moment captured across several race samples showed a near-straight-on rear
+view that doesn't expose either side; `CameraMode::TopDown` is far enough overhead that cars
+are single-digit-pixel dots. Geometric correctness is fully established by the four
+`check_car_rig.py` checks above (position, side, clearance, count); this phase's screenshots
+confirm no rendering regression/crash but can't independently confirm the pipes read as an
+exhaust silhouette from any angle this game's camera set actually offers a player. Left
+honest rather than claimed as visually verified.
