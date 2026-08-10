@@ -7896,3 +7896,31 @@ are single-digit-pixel dots. Geometric correctness is fully established by the f
 confirm no rendering regression/crash but can't independently confirm the pipes read as an
 exhaust silhouette from any angle this game's camera set actually offers a player. Left
 honest rather than claimed as visually verified.
+
+## J3 -- Spoiler endplates (car visual fidelity plan, part 2)
+
+The lowest-risk phase of the J-series -- pure extension of already-tuned code, no new anchor
+derivation. G8's spoiler had a "flat angled blade plus two small corner risers," but between
+them was an open gap nothing filled: the blade's own "edge faces" only trace its 0.03
+thickness (not a fin), and the corner risers only run from the deck up to the blade's own
+FRONT corner -- nothing connects from there back to the blade's REAR corner down to the deck.
+Real Gen-4 spoilers read as having a filled corner/endplate there, not a floating blade over
+open space. One quad per side, reusing the existing block's own already-computed constants
+(`_sp_x0/_sp_x1/_sp_y0/_sp_y1/_spz/_sp_deckY`), `SW_SPOILER_DARK` to match every other
+non-top-blade surface.
+
+**Verified by exact position, not by count.** A vertex-count delta could pass even if the
+endplate landed in the wrong place; `check_car_rig.py` instead asserts all 8 corner positions
+exist in the mesh and that the endplate's own top-front/top-back corners are *exactly*
+coincident with the blade's own front/rear corners (not just close) -- the actual guarantee
+against a visible seam where the two surfaces meet. All checks pass. Native `ctest` 32/32.
+
+**Screenshot verification hit the same camera-angle wall J2 did, for the same structural
+reason.** The spoiler sits at the tail, invisible from the front-3/4 showcase camera. The
+chase-cam view does show the spoiler's own silhouette (a thin dark line across the trunk lip
+of the car ahead is visible in the captured frame), confirming the blade itself reads
+correctly at that distance -- but the endplates specifically are thin fins at the blade's
+outer z-extent, and at this camera's distance and this sandbox's software-rendered pixel
+density, they're below what's distinguishable from the blade's own edge faces in a screenshot.
+Geometric correctness (the actual deliverable) is fully established by the exact-position
+checks above; this is the same honest limitation already recorded for J2, not a new one.

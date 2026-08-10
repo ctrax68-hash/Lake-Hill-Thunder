@@ -210,6 +210,30 @@ for i in exh_idx:
 check(_worst_exh is None, "exhaust geometry clears the rear tire's cylindrical volume%s"
       % ("" if _worst_exh is None else " (worst overlap %.3f)" % _worst_exh))
 
+# --- spoiler endplates (J3, car visual fidelity plan part 2) ----------------
+# Position-checked rather than count-checked: a vertex-count delta could
+# pass even if the endplate landed in the wrong place, but exact corner
+# coincidence with the blade's own front/rear corners is the actual point
+# (no visible seam where the new surface meets the existing blade/riser).
+print("spoiler endplates")
+_EP_TOL = 1e-9
+def _has_point(p):
+    return any(all(abs(a - b) < _EP_TOL for a, b in zip(p, q)) for q in R.positions)
+_ep_expected = []
+for _epz in (R._spz, -R._spz):
+    _ep_expected.extend([
+        (R._sp_x0 - 0.05, R._sp_deckY, _epz),
+        (R._sp_x1, R._sp_deckY, _epz),
+        (R._sp_x1, R._sp_y1, _epz),
+        (R._sp_x0, R._sp_y0, _epz),
+    ])
+_ep_missing = [p for p in _ep_expected if not _has_point(p)]
+check(not _ep_missing, "all 8 endplate corner positions are present in the mesh")
+check(all(_has_point((R._sp_x0, R._sp_y0, z)) for z in (R._spz, -R._spz)),
+      "endplate's top-front corner is coincident with the blade's own front corner")
+check(all(_has_point((R._sp_x1, R._sp_y1, z)) for z in (R._spz, -R._spz)),
+      "endplate's top-back corner is coincident with the blade's own rear corner")
+
 print("\nverts %d  tris %d" % (len(R.positions), len(R.indices) // 3))
 print("check_car_rig: PASS" if ok else "check_car_rig: FAILURES ABOVE")
 sys.exit(0 if ok else 1)

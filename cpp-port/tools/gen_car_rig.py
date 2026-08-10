@@ -633,6 +633,22 @@ for _rz in (_spz, -_spz):
                       _p(_sp_x0 - 0.05, _sp_y0, _rz - 0.05), _p(_sp_x0 - 0.05, _sp_y0, _rz + 0.05),
                       (-1, 0, 0), SW_SPOILER_DARK)
 
+# J3 (car visual fidelity plan, part 2): spoiler endplates. The blade's own
+# "edge faces" above (the two emit_swatch_quad calls right after the top
+# blade face) only trace the blade's 0.03 thickness -- not a fin -- and the
+# corner risers just above only run from the deck up to the blade's own
+# FRONT corner (x0,y0). Nothing fills the profile from there back to the
+# blade's REAR corner (x1,y1) down to the deck -- an open triangular gap a
+# real Gen-4 spoiler doesn't have (it reads as a filled endplate at each
+# corner, not a floating blade). One quad per side, reusing this block's
+# own already-computed constants (no new anchor derivation), SW_SPOILER_DARK
+# to match every other non-top-blade surface -- SW_SPOILER_BODY stays
+# reserved for the single most prominent top face.
+for _epz in (_spz, -_spz):
+    emit_swatch_quad(_p(_sp_x0 - 0.05, _sp_deckY, _epz), _p(_sp_x1, _sp_deckY, _epz),
+                      _p(_sp_x1, _sp_y1, _epz), _p(_sp_x0, _sp_y0, _epz),
+                      (0, 0, 1 if _epz > 0 else -1), SW_SPOILER_DARK)
+
 # I2 (car visual fidelity plan): door mirrors. No mirror geometry existed
 # anywhere in this rig before -- every reference NASCAR Thunder image shows
 # a clearly visible, chunky housing on each door. Mounted at station 6
