@@ -7795,3 +7795,50 @@ painted span from 0.154 to 0.160 of U. Fixing it properly means resizing the pan
 the door ellipse cannot simply grow: at rx 0.086 it would start eating the
 rear door shutline at u=0.491. Out of scope for a polish pass, noted here
 rather than silently absorbed.
+
+## J1 -- Livery texture 1024 -> 2048 (car visual fidelity plan, part 2)
+
+The first phase of a second car visual fidelity pass, opened after the user compared this
+port's renders against real NASCAR Thunder 2003/2004 reference screenshots and judged the
+cars still "way off" even after the I-series. Scope confirmed cars-only again (track/pit-road
+stays deprioritized) across six phases, J1-J6; this entry covers J1.
+
+Bumped `kLiveryTextureSize` 1024 -> 2048 (`livery.h`), continuing the same bump-with-a-stated-
+reason history the constant's own comment already tracks (256->512 at G1b, 512->1024 at H2).
+Unlike those two, no single feature in this file strictly needs the extra texel density --
+every `fillRect`/`fillEllipse`/`fillShearedRect` call is fraction-based and auto-scales. The
+actual driver is J6 (next phase): its two-layer contingency chips add a 1-2 texel white
+border per chip, and that border isn't crisply resolvable at 1024 the way it is at 2048. J1
+is sequenced first so J6's border constant can be tuned against the final resolution once,
+not twice.
+
+**A deliberate, user-accepted cost, not a free bump.** Each cached car livery is built into a
+`kSupersample=2` canvas before `downsampleBox()` reduces it, so the CPU-side scratch buffer
+per car goes from 2048x2048x4B (16MB) to 4096x4096x4B (64MB), and the GPU-resident, mip-
+chained texture roughly quadruples too -- across the 21 simultaneously-cached car liveries
+(19 roster + player + pace), that's an estimated ~112MB -> ~448MB of livery VRAM. No device-
+memory budget exists anywhere in this project to check that number against (confirmed by
+grep across `renderer.cpp`/`main.cpp` for budget/perf/WASM/mobile comments -- none give a
+number); the user was told this explicitly and chose to proceed anyway.
+
+**Verified the actual claim, not just the constant.** The existing "ROSTER builds a full-size
+buffer" test compares `pixels.size()` against `kLiveryTextureSize` symbolically on both sides,
+so it can never catch a reverted bump -- added a literal `kLiveryTextureSize == 2048` guard to
+`livery_test.cpp` instead. Native `ctest` 32/32. WASM rebuild + a showcase-frame screenshot
+confirms no content regression (crisper shutlines/panel detail, as expected, nothing broken).
+
+**Attempted to measure the first-frame grid-formation cost directly, and it's worth recording
+what that attempt actually found rather than a clean number.** Up to ~21 cars can cache-miss
+their livery build in the same frame at grid formation, so a `requestAnimationFrame` gap
+detector was run across that moment in the WASM build. It reported gaps up to several seconds
+-- but a separate diagnostic run in the same sandboxed headless-Chromium environment showed a
+**single `page.screenshot()` call alone** taking 30-60s here (this environment falls back to
+software WebGL/SwiftShader, confirmed by its own console warning, and screenshot readback
+against a software-rendered frame is expensive independent of anything this phase changed).
+That confound makes the gap-detector's raw numbers unusable as a measurement of the game's
+own frame cost specifically -- reporting them as a real hitch would overstate what was
+actually shown. What IS established directly, by the same arithmetic already given above: the
+per-car CPU paint work scales ~4x along with the buffer size, so the cost is real and worth
+watching on an actual device if this ships; this environment just isn't able to isolate it
+from its own software-rendering overhead. Left as a known follow-up rather than a closed
+question.

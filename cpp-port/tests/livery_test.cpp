@@ -103,6 +103,12 @@ int main() {
         }
     }
 
+    // J1 (car visual fidelity plan, part 2): a literal resolution guard.
+    // The "ROSTER builds a full-size buffer" check above compares
+    // pixels.size() against kLiveryTextureSize symbolically on both sides,
+    // so it can never catch a reverted bump -- pin the actual number.
+    expectTrue("livery texture bumped to 2048 (J1)", kLiveryTextureSize == 2048);
+
     // Player car (num=21, scheme=nullptr) falls back to idx-based picks
     // without crashing.
     {

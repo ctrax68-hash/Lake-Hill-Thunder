@@ -75,7 +75,18 @@
 // shutlines, window rubber, the wheel-arch lip -- needs more than one
 // texel per line to read as a line rather than a soft smear once
 // downsampleBox()'s box filter gets to it.
-inline constexpr int kLiveryTextureSize = 1024;
+//
+// J1 (car visual fidelity plan, part 2): bumped again, 1024->2048. Not
+// forced by any single feature in this file -- every fill* call is
+// fraction-based and auto-scales -- but J6's two-layer contingency chips
+// add a 1-2 texel white border per chip, which isn't crisply resolvable at
+// 1024 the way it is at 2048. A deliberate, user-accepted cost: this
+// roughly quadruples each cached car livery's CPU-side paint buffer and
+// GPU-resident mip-chained texture (kSupersample=2 means the scratch
+// canvas goes from 2048x2048 to 4096x4096 per car), with no measured
+// device-memory budget anywhere in this project to check it against --
+// see this phase's PORT_PROGRESS.md entry for the full accounting.
+inline constexpr int kLiveryTextureSize = 2048;
 
 // body: car.col (or CarPalette::White for a pace car -- not built here,
 // see this file's own note below). accent: auto-derived from body's
