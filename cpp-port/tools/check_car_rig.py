@@ -234,6 +234,48 @@ check(all(_has_point((R._sp_x0, R._sp_y0, z)) for z in (R._spz, -R._spz)),
 check(all(_has_point((R._sp_x1, R._sp_y1, z)) for z in (R._spz, -R._spz)),
       "endplate's top-back corner is coincident with the blade's own rear corner")
 
+# --- front splitter (J4, car visual fidelity plan part 2) -------------------
+# Identified by swatch + position: SW_SPOILER_DARK is shared with the
+# spoiler's own underside/risers/endplates, but those all sit near the tail
+# (x < 0); the splitter sits near the nose (x > 0), so a simple x-sign split
+# can't cross-contaminate the two.
+print("front splitter")
+_spl_idx = [i for i, (uv, j, p) in enumerate(zip(R.uvs, R.joints0, R.positions))
+            if uv == R.SW_SPOILER_DARK and j[0] == 0 and p[0] > 0]
+check(len(_spl_idx) == 12, "splitter vertex count == 3 quads * 4 verts (got %d)" % len(_spl_idx))
+
+# Ground clearance -- the single biggest risk flagged for this phase before
+# any code was written. ">0.02", not just ">0": the plan's own reasoning is
+# that this rig has no dynamic ride-height/pitch at the chassis level (only
+# per-wheel suspension travel), so a static margin here is a real buffer,
+# not a nominal one that a future feature could silently eat into.
+_spl_min_y = min(R.positions[i][1] for i in _spl_idx) if _spl_idx else None
+check(_spl_min_y is not None and _spl_min_y > 0.02,
+      "splitter clears the ground plane with a real margin (min y=%.3f > 0.02)"
+      % (-1 if _spl_min_y is None else _spl_min_y))
+
+# Regression guard that the geometry actually protrudes past the nose
+# rather than being accidentally recessed under the nose cap.
+check(any(R.positions[i][0] > R.HALF_LEN for i in _spl_idx),
+      "splitter actually protrudes past the nose tip (some x > HALF_LEN=%.3f)" % R.HALF_LEN)
+
+# Clearance from the front tire's cylindrical volume -- the splitter's wide
+# z-span (0.90 of the nose's own halfWidth) makes this worth checking
+# explicitly, same reasoning J2's exhaust check above already applied to
+# the rear tire (_inner_r/_outer_r are that same check's own values --
+# TRACK_HALF/HW are identical for the front and rear axles, so they're
+# valid here unchanged, not recomputed).
+_front_axle_x = R._WHEEL_AXLE_X[0]  # WHEELBASE/2, matches wheel_offsets' FL/FR row
+_worst_spl = None
+for i in _spl_idx:
+    x, y, z = R.positions[i]
+    if math.hypot(x - _front_axle_x, y - WR) < WR and _inner_r + EPS < abs(z) < _outer_r - EPS:
+        depth = min(abs(z) - _inner_r, _outer_r - abs(z))
+        if _worst_spl is None or depth > _worst_spl:
+            _worst_spl = depth
+check(_worst_spl is None, "splitter clears the front tire's cylindrical volume%s"
+      % ("" if _worst_spl is None else " (worst overlap %.3f)" % _worst_spl))
+
 print("\nverts %d  tris %d" % (len(R.positions), len(R.indices) // 3))
 print("check_car_rig: PASS" if ok else "check_car_rig: FAILURES ABOVE")
 sys.exit(0 if ok else 1)

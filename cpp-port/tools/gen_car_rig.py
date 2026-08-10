@@ -761,6 +761,46 @@ def add_exhaust_pipe(z0):
 for _ez0 in (-0.74 * (TRACK_HALF / 0.80), -0.90 * (TRACK_HALF / 0.80)):
     add_exhaust_pipe(_ez0)
 
+# J4 (car visual fidelity plan, part 2): front splitter. New design -- no JS
+# precedent (grep confirms zero "splitter" hits in index.html) -- but every
+# reference photo the user compared against shows a pronounced one, and the
+# car has none. Same idiom as the spoiler above: a flat swatch-quad blade
+# anchored to a station's own geometry rather than a free-floating prop.
+#
+# Anchored to CHASSIS_STATIONS[0] (the bumper cap / nose tip): x=HALF_LEN
+# exactly, halfWidth=0.50, yLow=0.13 -- the car's own lowest, frontmost
+# chassis point, which is the correct real-world splitter attachment line.
+_SPL_ST0 = CHASSIS_STATIONS[0]
+_spl_zhalf = _SPL_ST0[1] * 0.90  # narrower than the full nose width, clear of the fender corners
+# Ground-clipping is the single biggest risk in this phase (flagged in the
+# plan before any code was written): yLow=0.13 is already the car's lowest
+# point, so the splitter is dropped a further 0.03 below it (a visible
+# protruding dip, the actual point of a splitter) while keeping a real
+# 0.10 clearance above y=0 -- not just nominal, since this rig has no
+# dynamic ride-height/pitch at the chassis level, only per-wheel suspension
+# travel, so that clearance is a real, static number, not a worst-case one.
+_spl_y = _SPL_ST0[3] - 0.03
+_spl_th = 0.02
+# x_rear sits slightly BEHIND the nose tip (embeds into the opaque body, the
+# same "overlap rather than gap" idiom I2's mirror history established) so
+# the attachment seam is hidden; x_front is the real forward protrusion.
+_spl_x_rear, _spl_x_front = HALF_LEN - 0.05, HALF_LEN + 0.18
+
+# Top face.
+emit_swatch_quad(_p(_spl_x_rear, _spl_y, -_spl_zhalf), _p(_spl_x_rear, _spl_y, _spl_zhalf),
+                  _p(_spl_x_front, _spl_y, _spl_zhalf), _p(_spl_x_front, _spl_y, -_spl_zhalf),
+                  (0, 1, 0), SW_SPOILER_DARK)
+# Underside.
+emit_swatch_quad(_p(_spl_x_rear, _spl_y - _spl_th, _spl_zhalf), _p(_spl_x_rear, _spl_y - _spl_th, -_spl_zhalf),
+                  _p(_spl_x_front, _spl_y - _spl_th, -_spl_zhalf), _p(_spl_x_front, _spl_y - _spl_th, _spl_zhalf),
+                  (0, -1, 0), SW_SPOILER_DARK)
+# Front edge cap -- without it the leading edge would read as an
+# infinitely thin plane when seen head-on, the angle the chase/showcase
+# cameras actually view an oncoming car's nose from.
+emit_swatch_quad(_p(_spl_x_front, _spl_y - _spl_th, -_spl_zhalf), _p(_spl_x_front, _spl_y, -_spl_zhalf),
+                  _p(_spl_x_front, _spl_y, _spl_zhalf), _p(_spl_x_front, _spl_y - _spl_th, _spl_zhalf),
+                  (1, 0, 0), SW_SPOILER_DARK)
+
 # Wheels (joints 1-4): FL, FR, RL, RR. Local X = nose(+)/tail(-) offset from
 # chassis origin; local Z = left(+)/right(-); local Y = wheel-radius (so the
 # wheel's own box, spanning +-radius around its joint origin, touches down

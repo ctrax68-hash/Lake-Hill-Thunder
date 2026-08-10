@@ -7924,3 +7924,36 @@ outer z-extent, and at this camera's distance and this sandbox's software-render
 density, they're below what's distinguishable from the blade's own edge faces in a screenshot.
 Geometric correctness (the actual deliverable) is fully established by the exact-position
 checks above; this is the same honest limitation already recorded for J2, not a new one.
+
+## J4 -- Front splitter (car visual fidelity plan, part 2)
+
+New design work, not a port -- grep confirms zero "splitter" hits anywhere in the original
+JS prototype -- but every reference photo the user compared against shows a pronounced one,
+and this car had none. Same idiom as the spoiler: a flat swatch-quad blade anchored to a
+station's own geometry (`CHASSIS_STATIONS[0]`, the bumper cap / nose tip, the car's own
+lowest, frontmost chassis point -- the correct real-world attachment line) rather than a
+free-floating prop. Three quads (top, underside, front edge cap -- the edge cap so the
+leading edge doesn't read as an infinitely thin plane head-on, the exact angle the showcase
+camera actually views an oncoming nose from), reusing `SW_SPOILER_DARK`. The attachment edge
+sits slightly behind the nose tip, embedded into the opaque body (the same "overlap rather
+than gap" idiom I2's mirror history established), so the seam is hidden.
+
+**Ground clearance -- flagged in the plan as the single biggest risk in this entire phase,
+before any code was written, and treated accordingly.** `yLow=0.13` is already the car's
+lowest point; the splitter drops a further 0.03 below it for a visible protruding dip, while
+keeping a real 0.10 clearance above `y=0`. "Real," not nominal: this rig has no dynamic
+ride-height or pitch at the chassis level, only per-wheel suspension travel, so a static
+clearance number actually holds at every simulated moment, not just at rest.
+`check_car_rig.py` asserts this directly -- `min(splitter vertex y) > 0.02`, not just `> 0` --
+plus vertex-count, "actually protrudes past the nose" (guards against a silent recess-under-
+the-cap regression), and front-tire cylindrical-volume clearance (reusing the exact
+`_inner_r`/`_outer_r` values J2's own rear-tire check already computed, since `TRACK_HALF`/
+`HW` are identical front and rear). All four pass. Native `ctest` 32/32.
+
+**Verified from the one camera angle that actually matters for a front-mounted part.** Unlike
+J2/J3's rear-mounted props, the showcase camera's own front-3/4 framing is exactly the right
+angle to check this one, and it delivers cleanly: a screenshot crop shows the splitter as a
+dark wedge extending past the front bumper with a clearly visible gap of track surface
+between its underside and the ground -- no clipping, no floating-detached read either. The
+chase-cam/top-down angles that helped confirm J2/J3 don't apply here (chase cam looks at
+other cars' rears, top-down is too far out) and weren't needed given the showcase result.
