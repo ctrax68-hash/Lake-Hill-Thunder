@@ -249,6 +249,85 @@ int main() {
         expectTrue("door number carries a bold dark outline", darkPixels >= 13000);
     }
 
+    // J6 (car visual fidelity plan, part 2): contingency chips now carry a
+    // white/light backing behind each colored chip (livery.cpp's own
+    // kChipU0/chipW/kChipBorder -- loose cross-file sync, matching this
+    // file's other swatch-coordinate checks). Coordinates and expected
+    // colors below were measured against a scratch build of the real
+    // function, not guessed -- (240,240,240) decoded exactly at the
+    // backing sample, (219,41,36) exactly at the chip-0 (red) interior.
+    {
+        LiveryScheme scheme{0, 0, 0, CarPalette::White};
+        const auto pixels = buildLiveryPixels(red, 7, 0, &scheme);
+        constexpr double kChipU0 = 0.688, kChipU1 = 0.750;
+        constexpr int kChips = 6;
+        const double chipW = (kChipU1 - kChipU0) / kChips;
+        const double kChipBorder = 2.0 / kLiveryTextureSize;
+        const double cx = kChipU0, cw = chipW * 0.78, ch = 0.034, vy = 0.118;
+        const auto backing = pixelAt(pixels, (int)((cx - kChipBorder * 0.5) * kLiveryTextureSize),
+                                      (int)((vy + ch * 0.5) * kLiveryTextureSize));
+        const auto chipColor =
+            pixelAt(pixels, (int)((cx + cw * 0.5) * kLiveryTextureSize), (int)((vy + ch * 0.5) * kLiveryTextureSize));
+        expectTrue("chip backing decodes to the light backing tone",
+                   std::fabs(backing[0] - 240 / 255.0) < 0.01 && std::fabs(backing[1] - 240 / 255.0) < 0.01 &&
+                       std::fabs(backing[2] - 240 / 255.0) < 0.01);
+        expectTrue("chip backing differs from the chip's own color", backing != chipColor);
+    }
+
+    // J6: manufacturer badge upgrade (fill + outline + bar, replacing a
+    // single flat ellipse). All three sample points and expected colors
+    // measured against a scratch build first -- notably, the badge's own
+    // dead centre lands on the BAR (drawn last, spanning the ellipse's
+    // middle by design, same as JS's own drawBadge()), not the plain fill,
+    // so the fill sample below is deliberately offset above the bar band
+    // rather than at (badgeCx,badgeCy).
+    {
+        LiveryScheme scheme{0, 0, 0, CarPalette::White};
+        const auto pixels = buildLiveryPixels(red, 7, 1, &scheme);
+        constexpr double kTailU0 = 0.764, kTailUW = 0.028;
+        const double badgeCx = kTailU0 + kTailUW * 0.5, badgeCy = 0.50;
+        const double badgeRx = 0.008, badgeRy = 0.018;
+        const auto fillPx = pixelAt(pixels, (int)(badgeCx * kLiveryTextureSize),
+                                     (int)((badgeCy - badgeRy * 0.9) * kLiveryTextureSize));
+        const auto outlinePx = pixelAt(pixels, (int)(badgeCx * kLiveryTextureSize),
+                                        (int)((badgeCy - badgeRy * 1.1) * kLiveryTextureSize));
+        const auto barPx = pixelAt(pixels, (int)(badgeCx * kLiveryTextureSize), (int)(badgeCy * kLiveryTextureSize));
+        expectTrue("badge fill decodes to the accent tone (white, this car)",
+                   std::fabs(fillPx[0] - 242 / 255.0) < 0.02 && std::fabs(fillPx[1] - 242 / 255.0) < 0.02);
+        expectTrue("badge outline decodes to the dark outline tone",
+                   std::fabs(outlinePx[0] - 10 / 255.0) < 0.02 && std::fabs(outlinePx[1] - 10 / 255.0) < 0.02);
+        expectTrue("badge bar differs from both the fill and the outline", barPx != fillPx && barPx != outlinePx);
+    }
+
+    // J6: roll-cage glimpse bars inside the windshield/rear-glass rects.
+    // Verified safe against fs_car.sc's I3/H6 color-match thresholds by
+    // direct calculation (see livery.cpp's own comment at the paint site);
+    // this check instead confirms the bars are actually painted where
+    // expected, and that they don't spread past their own thin band --
+    // a nearby sample in the same glass rect must still decode to plain
+    // glassDark/glassHi, not the bar tone.
+    {
+        LiveryScheme scheme{0, 0, 0, CarPalette::White};
+        const auto pixels = buildLiveryPixels(red, 7, 1, &scheme);
+        // carU() (livery.cpp's own nose-to-tail UV formula) is private to
+        // that file -- inlined here, matching the loose cross-file sync
+        // convention this test already uses for every other swatch/region
+        // coordinate.
+        auto carU = [](double x) { return 0.02 + (2.51 - x) / 5.02 * 0.76; };
+        const double uWS0 = carU(0.68), uWS1 = carU(0.02);
+        constexpr double GV0 = 0.335, GVH = 0.330;
+        const double wsClearU1 = uWS1 - 0.036;
+        const double bar1u = uWS0 + (wsClearU1 - uWS0) * 0.35;
+        const auto barPx =
+            pixelAt(pixels, (int)(bar1u * kLiveryTextureSize), (int)((GV0 + GVH * 0.5) * kLiveryTextureSize));
+        const auto glassHiPx = pixelAt(pixels, (int)((uWS0 + (wsClearU1 - uWS0) * 0.15) * kLiveryTextureSize),
+                                        (int)(0.50 * kLiveryTextureSize));
+        expectTrue("windshield cage bar reads as a distinct steel tone, not plain glass",
+                   luminance(barPx) > luminance(glassHiPx) + 0.02);
+        expectTrue("glass away from the bar is still plain glassHi",
+                   std::fabs(glassHiPx[0] - 26 / 255.0) < 0.02 && std::fabs(glassHiPx[1] - 33 / 255.0) < 0.02);
+    }
+
     if (g_failures == 0) {
         std::printf("livery_test: shading bands, stripe styles, and number decals all match expectations.\n");
         return 0;

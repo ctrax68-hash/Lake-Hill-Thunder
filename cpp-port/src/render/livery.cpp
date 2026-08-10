@@ -512,6 +512,37 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     c.fillRect(carU(-0.45), 0.435, 0.045, 0.052, tone(0.72));
     c.fillRect(carU(-0.45), 0.513, 0.045, 0.052, tone(0.72));
 
+    // ---- J6 (car visual fidelity plan, part 2): roll-cage glimpse bars ----
+    // No JS precedent (grep confirms zero "roll cage"/"rollbar" hits anywhere
+    // in index.html) -- a windshield/backlight painted as a flat dark
+    // rectangle reads as an empty hole rather than glass with something
+    // behind it. Same "cheap, plausible look over a physical model"
+    // philosophy this file already uses for the window-net weave and
+    // glassFrame()'s rubber trim above: a couple of thin, partially
+    // transparent bars inside each glass rect, positioned clear of the
+    // windshield's own sun-strip (u in [uWS1-0.032, uWS1]) and every
+    // glassFrame() trim edge, so they read as a glimpsed structural member
+    // rather than a texture artifact painted ON the glass.
+    //
+    // Color chosen and verified, not assumed safe -- squared-distance to
+    // fs_car.sc's own reference colors, computed the same way I3's own
+    // comment already worked out for glassDark vs. the near-black wheel
+    // swatches: (70,72,78)/255 sits ~0.122 from glassDarkRef (>>0.0015
+    // threshold), ~0.069 from glassHiRef, and >0.2 from tailRef/amberRef/
+    // rimRef (>>0.01 threshold) -- comfortably outside every I3/H6
+    // color-match radius, so these bars correctly render as plain diffuse-
+    // lit surface rather than picking up glass's damped/reflective
+    // treatment or any emissive/chrome response never intended for them.
+    {
+        const std::array<double, 3> cageBar{70 / 255.0, 72 / 255.0, 78 / 255.0};
+        constexpr double kCageW = 6.0 / kLiveryTextureSize;
+        const double t = kTrim / kLiveryTextureSize;
+        const double wsClearU1 = uWS1 - 0.036; // clear of the sun-strip + its divider line
+        c.fillRect(uWS0 + (wsClearU1 - uWS0) * 0.35 - kCageW * 0.5, GV0 + t, kCageW, GVH - 2 * t, cageBar, 0.55);
+        c.fillRect(uWS0 + (wsClearU1 - uWS0) * 0.65 - kCageW * 0.5, GV0 + t, kCageW, GVH - 2 * t, cageBar, 0.55);
+        c.fillRect((uRG0 + uRG1) * 0.5 - kCageW * 0.5, GV0 + t, kCageW, GVH - 2 * t, cageBar, 0.55);
+    }
+
     // ---- G16 (NT2003 presentation plan): contingency decal chips ----
     // livery.h's note #6 previously listed these as "skipped for scope
     // control (low visual value relative to implementation cost)". That call
@@ -539,10 +570,26 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
             {0.16, 0.58, 0.25}, // green
             {0.93, 0.48, 0.10}, // orange
         }};
+        // J6 (car visual fidelity plan, part 2): a white/light backing
+        // behind each chip, sized slightly larger and painted first, direct
+        // port of JS's own two-layer sticker look (index.html:2942-2956: a
+        // 12x12 light backing square with a 10x10 colored square inset 1px
+        // on top) -- these chips were the one piece of that JS precedent
+        // that shipped without it. Border sized in the same texel-fraction
+        // idiom the A/B pillar edges above already use (2.0/
+        // kLiveryTextureSize), so it auto-scales with J1's resolution bump
+        // instead of being a fixed UV fraction picked once at 1024 and
+        // going either too thin or too thick if the texture size changes
+        // again.
+        constexpr double kChipBorder = 2.0 / kLiveryTextureSize;
+        const std::array<double, 3> chipBacking{240 / 255.0, 240 / 255.0, 240 / 255.0};
         for (double vy : {0.118, 0.846}) {
             for (int i = 0; i < kChips; ++i) {
                 const auto& chip = kChipColors[(size_t)((idx + i) % (int)kChipColors.size())];
-                c.fillRect(kChipU0 + i * chipW, vy, chipW * 0.78, 0.034, chip);
+                const double cx = kChipU0 + i * chipW, cw = chipW * 0.78, ch = 0.034;
+                c.fillRect(cx - kChipBorder, vy - kChipBorder, cw + 2 * kChipBorder, ch + 2 * kChipBorder,
+                           chipBacking);
+                c.fillRect(cx, vy, cw, ch, chip);
             }
         }
     }
@@ -667,7 +714,24 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
             c.fillRect(kTailU0, vy, kTailUW, 0.062, taillight);      // stacked lenses
     }
     c.fillRect(kTailU0, 0.462, kTailUW, 0.076, dark);                // centre panel
-    c.fillEllipse(kTailU0 + kTailUW * 0.5, 0.50, 0.008, 0.018, accent); // manufacturer badge
+    // J6 (car visual fidelity plan, part 2): manufacturer badge upgrade --
+    // outline + bar, a direct port of JS's own drawBadge()
+    // (index.html:2724-2732: fill ellipse + a stroked outline + a bar rect
+    // in a third color) rather than a single flat ellipse. Canvas has no
+    // stroke primitive, so the outline uses the same "paint a bigger shape
+    // in the outline color first, then the existing smaller shape on top"
+    // trick drawNumber()'s own outline-then-fill digits already establish
+    // in this file. Bar dimensions/position are JS's own 0.80/0.34-of-size
+    // fractions (call site: index.html:3028-3029) applied to this ellipse's
+    // full width/height (2x its radii) rather than the radii themselves.
+    {
+        const double badgeCx = kTailU0 + kTailUW * 0.5, badgeCy = 0.50;
+        const double badgeRx = 0.008, badgeRy = 0.018;
+        c.fillEllipse(badgeCx, badgeCy, badgeRx * 1.25, badgeRy * 1.25, dark);   // outline
+        c.fillEllipse(badgeCx, badgeCy, badgeRx, badgeRy, accent);              // fill
+        const double bw = badgeRx * 2, bh = badgeRy * 2;
+        c.fillRect(badgeCx - 0.40 * bw, badgeCy - 0.17 * bh, 0.80 * bw, 0.34 * bh, body, 0.9);  // bar
+    }
     c.fillRect(kTailU0, 0.212, kTailUW, 0.018, accent);              // quarter-panel trim
     c.fillRect(kTailU0, 0.770, kTailUW, 0.018, accent);
 

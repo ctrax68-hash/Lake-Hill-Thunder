@@ -8015,3 +8015,71 @@ joint-binding correctness -- the property that actually matters for whether this
 in motion -- is established by the geometric check above, which is a stronger guarantee than
 a screenshot could have provided anyway (a screenshot proves position at one instant; the
 `check_car_rig.py` check proves the binding that determines correctness at every instant).
+
+## J6 -- Texture-only polish bundle (car visual fidelity plan, part 2)
+
+The last phase of the J-series, and the cheapest tier -- three independent `livery.cpp`-only
+edits, no `gen_car_rig.py` touch. Two of the three are direct ports of code that already
+existed, fully worked out, in the original JS prototype but shipped without it; the third is
+new.
+
+**Two-layer contingency chips.** G16's chips (brought back from an earlier "low visual value"
+call, then widened again by I5 part 1) were always single flat-color rects. JS's own version
+(`index.html:2942-2956`) paints a white/light backing square behind each colored one, a ~1px
+border that reads as a proper sponsor sticker rather than a flat color block -- that border
+was the one piece of the JS precedent that never made it into this port. Border width uses the
+same texel-fraction idiom the A/B pillar edges already use (`2.0/kLiveryTextureSize`), so it
+auto-scales with J1's resolution bump instead of picking a fixed UV fraction that would read
+differently at 1024 vs. 2048.
+
+**Manufacturer badge.** Was a single flat `fillEllipse`. JS's own `drawBadge()`
+(`index.html:2724-2732`) is fill + stroked outline + a bar rect in a third color; `Canvas` has
+no stroke primitive, so the outline reuses the same "paint a bigger shape in the outline color
+first, then the existing smaller shape on top" trick `drawNumber()`'s own outline-then-fill
+digits already established in this file. The bar is JS's own 0.80/0.34-of-size fractions,
+painted as the car's own body color at 0.9 alpha over the fill -- matching JS's `rgb(body,0.9)`
+technique directly rather than picking an arbitrary third tone.
+
+**Roll-cage glimpse bars -- new, no JS precedent** (grep confirms zero "roll cage"/"rollbar"
+hits anywhere in `index.html`). A windshield/backlight painted as one flat dark rectangle reads
+as an empty hole rather than glass with structure behind it. Same "cheap, plausible look over a
+physical model" philosophy this file already uses for the window-net weave: a couple of thin,
+~55%-alpha bars inside each glass rect, clear of the sun-strip and every `glassFrame()` trim
+edge. Color (70,72,78)/255 verified safe against every `fs_car.sc` color-match threshold by
+direct calculation before shipping (not assumed): squared-distance ~=0.122 to `glassDarkRef`
+and ~=0.069 to `glassHiRef` (both far above the 0.0015 threshold), >0.2 to `tailRef`/
+`amberRef`/`rimRef` (above 0.01) -- these bars correctly render as plain diffuse surface, not
+tinted glass or chrome.
+
+**Every sample point and expected color in the new `livery_test.cpp` checks was measured
+against a scratch build first, not guessed** -- this project's own established discipline,
+applied here to catch one real surprise before it became a wrong assertion: the badge's own
+DEAD CENTER lands on the bar (drawn last, deliberately spanning the ellipse's middle, exactly
+matching JS's own `drawBadge()` layout), not the plain fill. A naive "sample the centre for the
+fill color" test would have been wrong from the start. The fill check instead samples just
+above the bar band. Six new checks total (chip backing tone + distinctness, badge fill/
+outline/bar all mutually distinct, cage-bar tone distinct from plain glass + a same-rect
+control sample confirming the bars don't spread past their own band) -- all pass. Native
+`ctest` 32/32.
+
+**Screenshot verification split cleanly by camera angle, consistent with every other J-series
+finding.** The roll-cage bars are front-facing and close to the showcase camera -- a crop shows
+them plainly, thin diagonal lines crossing the windshield where it used to read as one flat
+gray panel, a real and immediately visible win. The chips and badge sit near the tail, the
+same region J2/J3's props did, and hit the same camera-angle wall: visible as a general area of
+detail at chase-cam distance but not individually resolvable in a screenshot crop. Both are
+fully covered by the measured decode tests regardless; the honest split (one confirmed
+visually, two confirmed only by decode) is recorded rather than glossed over, matching every
+other phase in this plan.
+
+---
+
+**The J-series (J1-J6) is complete.** Bumped livery resolution, ported three JS-prototype
+features that never made the original crossing (exhaust pipes, badge outline+bar, two-layer
+chips), added two genuinely new parts with no JS precedent (front splitter, roll-cage glimpse
+bars), and added a wheel hub detail the swatch system's own constraints required solving as
+real geometry rather than a texture trick. Every phase landed its own commit, its own
+`check_car_rig.py`/`livery_test.cpp` extension where applicable, and an honest screenshot
+verdict -- including, for J2/J3/J5, the finding that this game's fixed camera set doesn't
+offer an angle to visually confirm every small rear-mounted or wheel-hub detail, with
+geometric correctness carrying the verification instead. Native `ctest` is 32/32 throughout.
