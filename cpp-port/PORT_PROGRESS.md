@@ -8083,3 +8083,72 @@ real geometry rather than a texture trick. Every phase landed its own commit, it
 verdict -- including, for J2/J3/J5, the finding that this game's fixed camera set doesn't
 offer an angle to visually confirm every small rear-mounted or wheel-hub detail, with
 geometric correctness carrying the verification instead. Native `ctest` is 32/32 throughout.
+
+## K1 -- Nose cap convexity fix (car visual fidelity plan, part 3)
+
+The user compared fresh screenshots against real NASCAR Thunder reference photos again and
+called out "the front nose look weird... the cap appears smashed." A read-only investigation
+found the actual cause: the nose/tail cap fan's apex X coordinate was **identical to every
+ring point's own X** on that station -- the "cap" was a flat 2D disc lying exactly in the
+station's own YZ plane, not a convex bumper fascia. Worst at the nose specifically because
+station 0's `beltY == roofY` exactly (0.40, both fields identical), producing a flat 6-point
+plateau across the ring's own top (RINGF hf 0.80-1.00, k=4..9) that fed straight into the
+fan -- the triangles from the apex to that plateau all terminated at the same height, the
+triangles to the ring's widest bulge were long near-horizontal slivers, and together this
+read as a pinched, faceted fold rather than a rounded bumper. Confirmed directly with a
+close-up screenshot crop showing the diagonal crease before any code changed. The station
+table's actual dimensions (length, width, wheelbase, nose taper) checked out fine against a
+real Gen-4's proportions -- "weird dimensions" was this flat-cap artifact reading as wrong
+proportions, not an actual scale problem.
+
+**Fix**: a `NOSE_APEX_DX = 0.06` (6cm/~2.4in) forward offset on the nose apex only, turning
+the flat fan into a shallow cone. Sized from the car's own scale references, not picked
+arbitrarily: ~12% of station 0's own 0.50m half-width, ~17% of `WHEEL_RADIUS` -- a subtle,
+clearly non-planar bulge, not an exaggerated pointed nose. Clearance checked against J4's
+front splitter (its own forward tip sits at HALF_LEN+0.18; this apex lands at HALF_LEN+0.06,
+a full 0.12m clear -- no collision with J-series geometry).
+
+**A necessary companion fix, not scope creep.** The cap loop fed every vertex a hardcoded
+constant normal (`(1,0,0)`/`(-1,0,0)`), correct only because the cap used to be perfectly
+flat. Left unchanged, an offset apex would be geometrically convex but SHADE as flat --
+defeating the point. Replaced with a flat per-facet normal computed from each triangle's own
+(now possibly tilted) three positions, shipped in the same commit since the two only make
+sense together.
+
+**Tail cap deliberately out of scope.** The report was specifically about the front nose; the
+tail already has its own different fix for its own different symptom (an earlier `yLow` raise
+"so the cap fan's apex doesn't read as an inverted-V boat hull from behind"). Nothing reports
+the tail as currently broken, so it wasn't touched -- and a new `check_car_rig.py` check
+asserts the tail cap stays flat, turning this scope boundary into something enforced rather
+than just stated in a comment.
+
+**A cheaper alternative was evaluated and rejected for this phase, not silently skipped**:
+also softening station 0's flat `beltY==roofY` plateau by giving `roofY` a slightly larger
+value there. Confirmed safe in isolation (doesn't affect `car_v()`, wheel-arch relief, or any
+existing check), but it would also reshape the hood surface immediately behind the bumper
+(shared by the first body quad strip, station 0->1) -- a region nobody reported as broken.
+Bundling an unreported change with a reported fix would make it harder to attribute any new
+visual artifact to the right cause. Left as a documented, ready one-line fallback if a future
+pass decides the crease still needs softening.
+
+**New `check_car_rig.py` checks** (new "nose/tail cap" section, isolating cap vertices by a
+new `NOSE_CAP_RANGE`/`TAIL_CAP_RANGE` index range `gen_car_rig.py` now exposes, since caps
+sample ordinary body-livery UV with no distinguishing swatch the way a prop like the spoiler
+has): nose cap vertices do NOT all share one X (real non-planarity, not just re-checking a
+constant); the offset is bounded and plausible (0.02-0.15); the tail cap STILL has all-one-X
+(the scope-boundary regression guard); every cap normal is finite, unit-length, and correctly
+outward-facing. All seven checks pass, all pre-existing checks unaffected. Triangle/vertex
+cost: zero change (still 1908 verts / 1322 tris, confirmed by `check_car_rig.py`'s own print
+before and after -- this fix is pure vertex-position/normal math, no new geometry).
+
+**Why previous checks missed it**: the existing normals section validated `RING_NRM` -- the
+ring's own per-vertex normals -- but never the cap fan's, which used a hardcoded constant
+entirely outside that code path. Nothing tested cap planarity because nothing ever computed
+or asserted an expected apex offset to check against.
+
+Native `ctest` 32/32, unaffected (K1 touches no test-covered runtime path, only the generated
+mesh feeding `car_rig_data.h`). Verified visually with the same close nose 3/4 crop that
+originally caught the defect, compared directly before/after: the specular-highlight break at
+the hood/grille transition is visibly softened, a real but modest improvement consistent with
+the deliberately conservative offset -- not a dramatic transformation, and the documented
+fallback above remains available if a future pass wants to push further.

@@ -625,19 +625,72 @@ for i in range(len(RINGS) - 1):
 def _cap_v(z, wmax):
     return min(0.97, max(0.03, 0.5 + (z / wmax) * 0.47))
 
+# K1 (car visual fidelity plan, part 3): the nose apex's forward offset.
+# Every cap vertex used to sit in the station's own YZ plane -- the apex's
+# X was literally `st[0]`, identical to every ring point's own X -- so the
+# "cap" was a flat 2D disc, not a convex bumper fascia. Confirmed by a
+# close-up screenshot showing a hard diagonal crease through the nose/
+# grille area, worst here specifically because station 0's beltY==roofY
+# (0.40, identical) produces a flat 6-point plateau across the ring's own
+# top (RINGF hf 0.80-1.00, k=4..9) that fed straight into the fan.
+#
+# 0.06m (~2.4in): ~12% of station 0's own 0.50m half-width, ~17% of
+# WHEEL_RADIUS -- a subtle, clearly non-planar bulge, not an exaggerated
+# pointed nose. Clearance checked against J4's front splitter (its own
+# forward tip sits at HALF_LEN+0.18=2.72; this apex lands at HALF_LEN+0.06
+# =2.60, a full 0.12m clear).
+#
+# Tail deliberately NOT given this treatment -- out of scope. The user's
+# report was specifically about the front nose, and the tail already has
+# its own different fix for its own different symptom (yLow raised at the
+# tail's own station row "so the cap fan's apex doesn't read as an
+# inverted-V boat hull from behind"). check_car_rig.py's own new checks
+# assert the tail cap stays flat, so this boundary is enforced, not just
+# stated in a comment.
+NOSE_APEX_DX = 0.06
+
+# K1: exposed so check_car_rig.py can isolate exactly the cap vertices to
+# check -- caps sample ordinary body-livery UV (no distinguishing swatch
+# the way props like the spoiler/exhaust do), so a vertex-index range is
+# the only reliable way to find them from outside this file.
+NOSE_CAP_RANGE = None
+TAIL_CAP_RANGE = None
+
 for (idx, outward) in ((0, (1, 0, 0)), (len(RINGS) - 1, (-1, 0, 0))):
     st = CHASSIS_STATIONS[idx]
     ring = RINGS[idx]
     wmax = max(abs(p[2]) for p in ring) or 1.0
     u = car_u(st[0])
     apex_y = (st[2] + st[3]) / 2.0
-    apex = ((st[0], apex_y, 0.0), outward, (u, _cap_v(0.0, wmax)))
-    def cv(p):
-        return (p, outward, (u, _cap_v(p[2], wmax)))
+    apex_x = st[0] + NOSE_APEX_DX * outward[0] if idx == 0 else st[0]
+    apex_pos = (apex_x, apex_y, 0.0)
+    _cap_start = len(positions)
+
+    def cap_tri(p1, p2):
+        # Flat per-facet normal computed from this triangle's own three
+        # positions, replacing the old hardcoded constant `outward` every
+        # cap vertex used to share regardless of the triangle it belonged
+        # to. That constant was only ever correct because the cap was
+        # perfectly flat; now that the nose apex sits off the station's own
+        # plane, a stale flat normal would make the geometry SHADE as flat
+        # even though it no longer IS flat, defeating the point of this fix.
+        n = _norm(_cross(_sub(p1, apex_pos), _sub(p2, apex_pos)))
+        if _dot(n, outward) < 0:
+            n = (-n[0], -n[1], -n[2])
+        apex_v = (apex_pos, n, (u, _cap_v(0.0, wmax)))
+        return apex_v, (p1, n, (u, _cap_v(p1[2], wmax))), (p2, n, (u, _cap_v(p2[2], wmax)))
+
     for k in range(NK - 1):
-        emit_smooth_tri(apex, cv(ring[k]), cv(ring[k + 1]), outward)
+        a, b, c = cap_tri(ring[k], ring[k + 1])
+        emit_smooth_tri(a, b, c, outward)
     # close the fan across the underbody edge
-    emit_smooth_tri(apex, cv(ring[NK - 1]), cv(ring[0]), outward)
+    a, b, c = cap_tri(ring[NK - 1], ring[0])
+    emit_smooth_tri(a, b, c, outward)
+
+    if idx == 0:
+        NOSE_CAP_RANGE = (_cap_start, len(positions))
+    else:
+        TAIL_CAP_RANGE = (_cap_start, len(positions))
 
 # G8 (Gen-4 car overhaul): spoiler -- a flat angled blade plus two small
 # corner risers down to the deck, ported from index.html's own spoiler

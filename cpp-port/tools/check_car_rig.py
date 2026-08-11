@@ -177,6 +177,42 @@ check(worst_ring_other < 70.0,
 print("  note  wheel-arch crease at the axle stations: %.1f deg (expected -- a car has an arch lip)"
       % worst_ring_axle)
 
+# --- nose/tail cap (K1, car visual fidelity plan part 3) --------------------
+# The old cap fan's apex X was literally the station's own X -- a flat 2D
+# disc, not a convex bumper fascia -- which nothing here ever checked,
+# because nothing here ever computed or asserted an expected apex offset in
+# the first place. These checks isolate cap vertices by index range
+# (R.NOSE_CAP_RANGE/R.TAIL_CAP_RANGE, exposed by gen_car_rig.py for exactly
+# this purpose -- caps sample ordinary body-livery UV, no distinguishing
+# swatch the way a prop like the spoiler has, so an index range is the only
+# reliable way to find them from outside that file).
+print("nose/tail cap")
+nose_positions = R.positions[R.NOSE_CAP_RANGE[0]:R.NOSE_CAP_RANGE[1]]
+tail_positions = R.positions[R.TAIL_CAP_RANGE[0]:R.TAIL_CAP_RANGE[1]]
+nose_normals = R.normals[R.NOSE_CAP_RANGE[0]:R.NOSE_CAP_RANGE[1]]
+tail_normals = R.normals[R.TAIL_CAP_RANGE[0]:R.TAIL_CAP_RANGE[1]]
+
+nose_xs = sorted({round(p[0], 9) for p in nose_positions})
+check(len(nose_xs) > 1,
+      "nose cap vertices do NOT all share one X (real 3D convexity, not a flat disc)")
+nose_dx = max(nose_xs) - min(nose_xs) if len(nose_xs) > 1 else 0.0
+check(0.02 < nose_dx < 0.15, "nose apex offset is bounded and plausible (%.4f)" % nose_dx)
+
+# Tail deliberately untouched by K1 -- this is the scope-boundary regression
+# guard: if a future edit "helpfully" applies the same forward-offset
+# treatment to the tail without its own reported symptom and its own
+# justification, this fails instead of silently drifting.
+tail_xs = {round(p[0], 9) for p in tail_positions}
+check(len(tail_xs) == 1,
+      "tail cap vertices all share one X (deliberately untouched -- K1 is nose-only by design)")
+
+all_cap_normals = nose_normals + tail_normals
+check(all(all(c == c for c in n) for n in all_cap_normals), "no NaN in any cap normal")
+check(all(abs(math.sqrt(sum(c * c for c in n)) - 1.0) < 1e-6 for n in all_cap_normals),
+      "all cap normals unit length")
+check(all(n[0] > 0 for n in nose_normals), "nose cap normals face outward (+X)")
+check(all(n[0] < 0 for n in tail_normals), "tail cap normals face outward (-X)")
+
 # --- exhaust pipes (J2, car visual fidelity plan part 2) --------------------
 # Identified by swatch + joint rather than a hand-picked x/z box: SW_SIDEWALL
 # is also used by every wheel's own tire end-cap annulus, but those are
