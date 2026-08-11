@@ -8233,3 +8233,52 @@ moment) -- the decode-based `livery_test.cpp` check and `check_car_rig.py`'s geo
 are the authoritative verification for this phase, consistent with this project's own
 established preference for decoding pixels directly over relying on screenshots alone for
 color/threshold claims.
+
+## K3 -- Nose plateau softening, the K1 fallback (car visual fidelity plan, part 3)
+
+K1's own PORT_PROGRESS entry documented a rejected/deferred option: softening station 0's
+flat `beltY==roofY` plateau, held back at the time because K1's forward apex offset alone
+was judged the smaller, better-isolated change to ship first, with the plateau fix recorded
+as "a ready one-line fallback... if a future pass decides the crease still needs softening."
+Follow-up feedback after K1/K2 shipped judged the goal not yet met, without further specifics
+to investigate -- since this fallback was already diagnosed, already safety-checked, and
+directly continues the same nose-cap thread rather than opening new scope, it's the most
+defensible next step to take on its own judgment rather than guessing at an unrelated area.
+
+**The change**: `roofY` at station 0 (the bumper-cap row of `_CAR_ST_JS`) raised 0.40 -> 0.44,
+`beltY` unchanged at 0.40. Before this, the ring's own top six points (k4..k9, `RINGF` hf
+0.80-1.00) all landed at the identical flat y=0.40 -- so even with K1's apex pushed forward,
+the fan's own base was still perfectly flat across most of its span, which is what kept
+feeding it a hard crease. Raising `roofY` gives that same span real curvature: k4/k9 stay at
+0.40 exactly (`SHOULDER`'s own branch point, so the beltline/rocker below is untouched), k5/k8
+land at 0.428, k6/k7 at the new 0.44 peak -- a genuine 4cm crown instead of a flat plateau.
+
+**Confirmed safe by the same reasoning K1's own rejected-option note already worked through**,
+re-verified now that it's actually being applied rather than just reasoned about in the
+abstract: `car_v()` depends only on ring index, never on station `beltY`/`roofY`, so no UV
+band shifts; wheel-arch relief never reaches station 0 (1.12m from the front axle, outside
+`_WHEEL_NOTCH_RANGE=0.45`) and never touches `roofY` at any station regardless. `beltY` was
+deliberately left untouched specifically because changing it would also move `apex_y`
+(`=(beltY+yLow)/2`) and reshape the much larger belt-side ring span (most of the ring, not
+just the top six points) -- a materially different, larger change this phase didn't reason
+through and didn't intend to make.
+
+**A real editing mistake caught before it shipped, not after**: the first attempt at this
+edit changed the wrong tuple field -- `_CAR_ST_JS`'s row format is `(x_js, halfWidth, beltY,
+yLow, roofY)`, and the initial edit raised `beltY` to 0.44 while leaving `roofY` at its
+original 0.40, exactly backwards from the stated intent and exactly the change reasoned above
+as unsafe to make casually. Caught by re-reading the edited line directly against
+`_station()`'s own parameter order before regenerating anything, fixed to the correct field,
+and only then run through `check_car_rig.py` -- which passed cleanly (all K1/K2 checks
+included, confirming `beltY`/UV bands genuinely weren't touched by the corrected version).
+
+Triangle/vertex cost: zero change (still 1908/1322, this is pure vertex-position math on an
+existing station, no new geometry). Native `ctest` 32/32.
+
+**Verified visually against the original pre-K1 baseline, not just against K1 alone** -- a
+direct three-way comparison would have been cleaner, but the pre-K1/post-K1/post-K3 sequence
+tells the story clearly enough: the bright specular streak that ran as a hard diagonal break
+across the hood in the original screenshot now reads as a smooth, continuous curve, and the
+nose's overall silhouette is visibly domed rather than flat-topped. A materially more
+convincing result than K1 alone produced -- confirming the deferred fallback really was the
+missing half of that fix, not a redundant tweak.

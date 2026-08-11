@@ -487,7 +487,27 @@ def _station(x_js, w, belt_y, y_low, roof_y):
 # yLow is the rocker/valance height the ring's bottom points sit at (the
 # old loft pinned every bottom corner to a single flat FLOOR_Y).
 _CAR_ST_JS = [
-    (2.51,  0.50,  0.40,  0.13,  0.40),   # bumper cap (low, narrow, pointed nose tip)
+    # K3 (car visual fidelity plan, part 3): roofY raised 0.40 -> 0.44 --
+    # the K1 fallback this station's own row 0 previously left documented
+    # but unapplied. K1's forward apex offset alone read as too subtle a
+    # fix on its own; this is the other half of that same diagnosis, not a
+    # new one. With beltY==roofY the ring's top six points (k4..k9,
+    # RINGF hf 0.80-1.00) all landed at the identical flat y=0.40, which is
+    # what fed the fan a hard crease regardless of where the apex sat.
+    # Raising roofY gives that same span a genuine 4cm crown (k4/k9 stay at
+    # 0.40 exactly -- SHOULDER's own branch point, so the beltline/rocker
+    # below is untouched -- k5/k8 land at 0.428, k6/k7 at the new 0.44
+    # peak), so the fan now has real curvature to work with along its
+    # whole top, not just at the apex. Confirmed still safe by the same
+    # reasoning K1 already worked through: car_v() depends only on ring
+    # index, never station beltY/roofY; wheel-arch relief never reaches
+    # station 0 (1.12 away from the front axle, outside
+    # _WHEEL_NOTCH_RANGE=0.45) and never touches roofY at any station
+    # regardless. This DOES reshape the hood surface immediately behind
+    # the bumper (station 0->1's own quad strip) -- screenshot-checked for
+    # a new seam or dent there, not just assumed fine because the
+    # isolated-safety checks passed.
+    (2.51,  0.50,  0.40,  0.13,  0.44),   # bumper cap (low, narrow, pointed nose tip)
     (2.34,  0.66,  0.485, 0.11,  0.485),
     (2.04,  0.82,  0.585, 0.11,  0.585),  # nose fascia -- gradual taper into the fender
     (1.70,  0.92,  0.685, 0.12,  0.685),  # fender leading edge
