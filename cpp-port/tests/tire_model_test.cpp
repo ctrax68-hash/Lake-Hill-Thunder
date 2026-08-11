@@ -7,9 +7,14 @@
 // which is what confirms this upgrade didn't disturb them.
 
 #include "../src/sim/car.h"
+#include "../src/sim/race_state.h"
+#include "../src/sim/rng.h"
+#include "../src/sim/step_car.h"
+#include "../src/sim/tracks_data.h"
 
 #include <cmath>
 #include <cstdio>
+#include <vector>
 
 namespace {
 int g_failures = 0;
@@ -154,24 +159,34 @@ int main() {
 
     // ---- maxSteerAngle: reported bug "one simple touch of button makes
     // hard turn" -- traced to this constant, not the (verified-correct)
-    // 0.22-per-tick digital-input smoothing in step_car.cpp. Replicates that
-    // exact smoothing here (`c.steer += (steerIn - c.steer) * 0.22`, isPlayer
-    // branch, steerIn=1 held from a standing start) and confirms: (a) the
-    // front axle's own saturation slip angle, alpha_sat = mu*fzFront/cf,
-    // lands at a healthy fraction of full lock rather than deep inside the
-    // input's very first tick of travel; (b) replaying the exact old buggy
-    // value (0.5) against this same tap sequence saturates on tick 1 (a
-    // single 20ms tick reaching the tire's absolute lateral limit -- the
-    // "instant hard lock" the user reported), while the new value (0.12)
-    // does not saturate until several ticks in, giving a real graduated
-    // ramp through a quick tap. ----
+    // 0.22-per-tick digital-input smoothing in step_car.cpp. H8 (first
+    // pass) cut this 0.5 -> 0.12 rad; the user's follow-up report ("still
+    // ... cutting way too hard", car still visibly off-axis) plus a deeper
+    // scratch investigation (see car.h's own comment on maxSteerAngle) found
+    // 0.12 rad still let a single 160ms tap leave a permanent multi-degree
+    // heading offset large enough to clip a nearby wall, and still let
+    // ordinary full-lock cornering through the tightest real track overshoot
+    // the friction limit entirely. H9 cut it again, to 0.05 rad -- small
+    // enough that the front axle's own saturation slip angle, alpha_sat =
+    // mu*fzFront/cf, is now OUTSIDE full lock's own raw range (full lock no
+    // longer reaches the tire's friction ceiling at all, deliberately
+    // staying in the linear/proportional regime -- see the corner-holding
+    // check further below for why that's still enough to drive the game's
+    // tightest real corner). Replicates the exact tap smoothing here
+    // (`c.steer += (steerIn - c.steer) * 0.22`, isPlayer branch, steerIn=1
+    // held from a standing start) and confirms: (a) full lock no longer
+    // reaches alpha_sat at all; (b) replaying the exact H8-era value (0.5)
+    // against this same tap sequence saturates on tick 1 (a single 20ms tick
+    // reaching the tire's absolute lateral limit -- the original "instant
+    // hard lock" report), while the current value does not saturate within
+    // the window at all. ----
     {
         const AxleLoads fzStatic = axleLoads(c, 0.0, 0.0);
         const double alphaSat = c.mu * fzStatic.front / c.cf;
 
         const double fraction = alphaSat / c.maxSteerAngle;
-        expect(fraction > 0.3 && fraction < 0.95,
-               "front-axle saturation angle lands at a healthy fraction of full digital-input travel");
+        expect(fraction >= 1.0,
+               "full digital-input lock no longer reaches the front axle's own saturation slip angle");
 
         auto tapSaturationTick = [&](double maxSteer) {
             double steer = 0.0;
@@ -183,10 +198,57 @@ int main() {
         };
 
         expect(tapSaturationTick(0.5) == 1,
-               "sanity check: the OLD maxSteerAngle (0.5) reproduces the reported bug -- "
+               "sanity check: the H8-era maxSteerAngle (0.5) reproduces the original reported bug -- "
                "a held tap saturates the front axle on the very first 20ms tick");
-        expect(tapSaturationTick(c.maxSteerAngle) >= 4,
-               "the fixed maxSteerAngle gives a real multi-tick ramp before the front axle saturates");
+        expect(tapSaturationTick(c.maxSteerAngle) == 11,
+               "the current maxSteerAngle never saturates the front axle from a tap at all");
+    }
+
+    // ---- maxSteerAngle, continued (H9): the OTHER half of the persistent
+    // report -- not a tap at all, just holding the turn key through the
+    // game's tightest real corner (Milltown Bullring, R=100m) at the AI's
+    // own computed target speed for it, ordinary technique any player would
+    // use. Drives the REAL stepCar() end-to-end (not a hand transcription --
+    // this scenario is exactly what stepCar()'s isPlayer branch computes),
+    // holding gas+left the whole way from just before the tightest point.
+    // At the H8-era value (0.12 rad) this scratch-tested to the car running
+    // ~11m off the racing line into the wall inside 2 seconds -- the "car
+    // still off-axis" report, reproduced directly. Asserts the CURRENT
+    // value keeps the car close to the racing line and takes no damage. ----
+    {
+        const Track track(TRACKS[1]); // MILLTOWN BULLRING
+        const double cornerV = cornerSpeed(track, 100.0, 110.0, 0.0);
+
+        Mulberry32 rng(12345u);
+        Car car = makeCar(true, 0, track, rng);
+        car.lap = 0;
+        car.v = cornerV;
+        car.s = 105.0; // just before the tightest point (s=110)
+        PointResult p0 = track.pointAt(car.s);
+        car.x = p0.x;
+        car.y = p0.y;
+        car.hdg = p0.hdg;
+        car.vdir = p0.hdg;
+
+        RaceState state;
+        state.mode = "race";
+        state.flag = "green";
+        PaceCar pace;
+        std::vector<Car> allCars{car};
+        PlayerInput input;
+        input.gas = true;
+        input.left = true; // held full lock toward the corner
+
+        double worstLat = 0;
+        for (int i = 0; i < 100; ++i) { // 2s
+            allCars[0] = car;
+            stepCar(car, state, track, allCars, pace, input);
+            if (std::fabs(car.lat) > std::fabs(worstLat)) worstLat = car.lat;
+        }
+        expect(std::fabs(worstLat) < track.halfW() * 0.9,
+               "holding full lock through the tightest real corner stays close to the racing line, not off "
+               "into the wall");
+        expect(car.dmg == 0.0, "holding full lock through the tightest real corner takes no wall damage");
     }
 
     // ---- integrateYawDynamics(): substep-count convergence over a

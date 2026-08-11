@@ -52,28 +52,46 @@ struct CarConstants {
     // upgrade's own admission (PORT_PROGRESS.md's "Step 1" regression-pass
     // entry), never tuned for feel afterward.
     //
-    // The problem it was hiding: the front axle's linear cornering-stiffness
-    // model saturates to its maximum lateral force at a fixed slip angle,
-    // alpha_sat = mu*fzFront/cf ~= (1.0 * 1500*9.81*0.50) / 95000 ~= 0.077
-    // rad (~4.4 deg) for a fresh car at rest. At the OLD 0.5 rad value, that
-    // ceiling sat at only ~15% of the digital input's full 0->1 travel --
-    // and the existing (correct) 0.22-per-tick smoothing blows past 15% on
-    // the very first 20ms tick of any tap (0 -> 0.22 in one step). So a
-    // "touch" wasn't ramping into a turn, it was almost instantly commanding
-    // the front tire's maximum possible lateral force for as long as the
-    // button stayed down -- physically an instant hard lock, not a feel
-    // problem layered on top of correct physics.
-    //
-    // 0.12 rad puts that same ~0.077 rad ceiling at ~64% of full digital
-    // travel instead of ~15% -- the existing smoothing now takes roughly 4-5
-    // ticks (~80-100ms) to cross it rather than 1, giving a real graduated
-    // window through most of a quick tap, while a held button still reaches
-    // the tire's true friction-limited yaw rate at full lock, unchanged.
-    // cf/cr/mu and every AI/wear/setup constant are deliberately untouched
-    // -- this is the one quantity that sets how much of the tire's
-    // proportional response range the input's own travel actually reaches,
-    // not a grip or planning change.
-    double maxSteerAngle = 0.12;  // rad, full-lock front steer angle
+    // First pass (H8) cut this 0.5 -> 0.12 rad, reasoning from the front
+    // axle's saturation slip angle alone (alpha_sat = mu*fzFront/cf ~=
+    // 0.077 rad): 0.5 rad put that ceiling at only ~15% of digital travel,
+    // so a tap crossed it on tick 1 (instant full lock); 0.12 rad moved it
+    // to ~64%, giving a multi-tick ramp. That fixed the TICK-1 saturation
+    // spike but missed a second, bigger problem the user's follow-up report
+    // ("still ... cutting way too hard", car still visibly off-axis in a
+    // supplied screenshot) forced a second look at: even a non-saturating
+    // steer angle produces a yaw-rate GAIN (v*delta/(wheelBase+Kus*v^2),
+    // Kus this model's tiny near-neutral understeer coefficient) that was
+    // still far too aggressive at 0.12 rad. Two scratch simulations against
+    // the real stepCar()/integrateYawDynamics() code (not just the closed-
+    // form estimate) confirmed this concretely, not just by feel:
+    //   1. A single 160ms tap (8 ticks) on a moderately banked straight left
+    //      a PERMANENT ~5-7 degree heading offset after release (r doesn't
+    //      snap back to 0 just because steer does -- correct car behavior,
+    //      but a huge offset for "one touch"), enough on its own to clip a
+    //      nearby wall for real (dmg went from 0 to 0.2) at 0.12 rad.
+    //   2. Simply HOLDING the turn key through the game's tightest real
+    //      corner (Milltown Bullring, R=100m) at the AI's own computed
+    //      target speed for it -- ordinary technique, not a tap at all --
+    //      overshot the friction limit at 0.12 rad and put the car ~11m off
+    //      the racing line into the wall (dmg 0.137) inside 2 seconds. That
+    //      is the "car still off-axis" report, reproduced directly.
+    // 0.05 rad was chosen by sweeping both scenarios together: it's the
+    // point where the 160ms tap stops touching the wall at all (0.06 still
+    // clips it), and independently the point where holding the tightest
+    // corner at speed tracks the racing line tightest and cleanest of every
+    // value tried (within +-1.3m the whole way, zero damage -- 0.06-0.08
+    // still ran several meters wide first, just short of the wall). At
+    // 0.05 rad the front axle's linear model, per the alpha_sat figure
+    // above, never actually saturates even at full lock any more -- this
+    // iteration deliberately stays inside the tire's proportional range
+    // rather than reaching for its friction ceiling, matching how gentle a
+    // 6.9-degrees-of-old vs. 2.9-degrees-of-new full-lock angle actually
+    // reads at any realistic corner-entry speed. Confirmed not to regress
+    // AI: a headless race (LHT_FORCE_RACE) gave the same wreckCount and
+    // comparable lap times at 0.05 as at 0.12. cf/cr/mu and every AI/wear/
+    // setup constant remain untouched.
+    double maxSteerAngle = 0.05;  // rad, full-lock front steer angle
     double brakeBiasFront = 0.62; // fraction of brake force applied at the front axle
 
     // Regression-pass fix: the AI's steerIn formulas (step_car.cpp) were

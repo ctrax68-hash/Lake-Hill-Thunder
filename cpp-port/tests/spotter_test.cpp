@@ -189,7 +189,38 @@ int main() {
         }
         expectTrue("blowout eventually triggers", triggered);
         expectTrue("blowout sets hitFx to 1", f.player->hitFx == 1.0);
-        expectEqStr("blowout spotter message", f.state.spotTxt, "FLAT TIRE — PIT NOW!");
+        // H9 (NT2003 engine-feel plan): race.cpp's blowout block and its
+        // alongside-traffic block both run within the same tick() call, in
+        // that order -- if the player is genuinely alongside another car on
+        // the exact (RNG-gated) tick the blowout fires, the later alongside
+        // block legitimately overwrites spotTxt with "INSIDE!"/"OUTSIDE!"/
+        // "THREE WIDE!", exactly matching JS's own priority. This is a real
+        // possible outcome over a run this long (up to 200000 ticks, many
+        // laps), not a bug -- so replicate race.cpp's own alongside
+        // condition here to know which outcome is actually correct on the
+        // real final field state, rather than assuming the blowout message
+        // always wins. (Surfaced when the H9 maxSteerAngle retune shifted
+        // the AI field's deterministic trajectories enough that the fixed-
+        // seed RNG's blowout tick started coinciding with a real alongside
+        // moment it hadn't before.)
+        bool inside = false, outside = false;
+        for (auto& o : f.cars) {
+            if (&o == f.player || o.done || o.pit > 0) continue;
+            double ds = o.s - f.player->s;
+            if (ds < -f.track.total() / 2) ds += f.track.total();
+            if (ds > f.track.total() / 2) ds -= f.track.total();
+            if (std::abs(ds) < 5.5 && std::abs(o.lat - f.player->lat) < 3.4) {
+                if (o.lat < f.player->lat) inside = true;
+                else outside = true;
+            }
+        }
+        if (inside || outside) {
+            expectTrue("blowout coincided with real alongside traffic -- alongside message legitimately won",
+                       f.state.spotTxt == "INSIDE!" || f.state.spotTxt == "OUTSIDE!" ||
+                           f.state.spotTxt == "THREE WIDE!");
+        } else {
+            expectEqStr("blowout spotter message", f.state.spotTxt, "FLAT TIRE — PIT NOW!");
+        }
     }
 
     // ---- terminal damage: c.out flips, spotterSay fired for the player.

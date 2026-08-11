@@ -8428,3 +8428,75 @@ Native `ctest`: 32/32 passing (including the rewritten P2 sub-test and the new t
 check). No screenshot verification applies here -- this is a pure physics/feel constant, not a
 rendering change -- so per this project's "measure, don't guess" discipline, verification rests
 entirely on the decode/unit tests above.
+
+### H9: Steering feel, second pass -- full lock stays inside the tire's linear range (NT2003 engine-feel plan)
+
+The user re-tested H8's fix and reported it wasn't enough: "Steering still over dramatic
+cutting way too hard. Also car still off axis from game" (with a screenshot showing the
+player's car -- already at POS 19/20, well off the pace on lap 1 -- pointed at a visibly wrong
+angle relative to the road). H8 had reasoned entirely from the front axle's saturation slip
+angle (`alpha_sat = mu*fzFront/cf ~= 0.077` rad) and where a tap's first tick lands relative to
+it, and stopped once that first-tick spike was fixed. That framing missed a second, larger
+effect: a real tap doesn't last exactly one tick, and the car's achievable yaw-rate GAIN at
+even a non-saturating steer angle was still far higher than it needed to be.
+
+**Reproduced directly against the real `stepCar()`/`integrateYawDynamics()` code** (two scratch
+programs, not just a closed-form estimate -- this project's own "measure, don't guess"
+discipline), at H8's shipped value of `maxSteerAngle=0.12`:
+
+1. A single 160ms tap (8 ticks) of the steer key on a moderately banked straight left a
+   **permanent** ~5-7 degree heading offset once released -- correct car behavior in isolation
+   (releasing the wheel doesn't snap the heading back to whatever it was before), but far more
+   than "one touch" should produce, and by itself enough to clip a nearby wall for real (`dmg`
+   went from 0 to 0.2 within 3 seconds of the tap, no further input at all).
+2. Simply **holding** the turn key through the game's tightest real corner (Milltown Bullring,
+   `R=100m`) at the AI's own computed target speed there (`cornerSpeed()`, ~50 m/s) -- ordinary
+   technique, not a tap -- overshot the friction limit and put the car **~11 meters off the
+   racing line into the wall** (`dmg` climbing to 0.137) inside 2 seconds. This is the "car
+   still off-axis" report, reproduced directly rather than inferred from the screenshot alone.
+
+**Fix:** `maxSteerAngle: 0.12 -> 0.05` rad (~2.9 degrees full lock). Chosen by sweeping both
+scenarios together across several candidate values: 0.05 is the point where the 160ms tap stops
+touching the wall at all (0.06 still clips it), and independently the point where holding the
+tightest corner at speed tracks the racing line **tightest and cleanest of every value tried**
+(within +-1.3m the whole way, zero damage -- 0.06-0.08 stayed off the wall too but ran several
+meters wide first). At 0.05 rad the front axle's linear model never reaches `alpha_sat` even at
+full lock any more (`0.077 / 0.05 ~= 1.5`) -- this iteration deliberately keeps full lock inside
+the tire's proportional range rather than reaching for its friction ceiling, which is also *why*
+it corners more precisely: the old value was spending a large fraction of full lock fighting a
+saturated, no-longer-proportional front tire instead of turning the car.
+
+**Confirmed not to regress AI** (AI branches compute `steerAngle` from this exact same
+constant): a headless race (`LHT_FORCE_RACE`, `LHT_MAX_FRAMES=15000`) gave the identical
+`wreckCount=2` and comparable lap times at 0.05 as at 0.12.
+
+**New verification, committed (not just scratch):**
+- `tests/tire_model_test.cpp`'s maxSteerAngle block now asserts full lock stays *outside*
+  `alpha_sat` entirely (`fraction >= 1.0`, replacing H8's now-obsolete "healthy fraction between
+  0.3 and 0.95" check, whose premise -- that full lock should deliberately reach into the
+  saturated regime -- no longer holds) and that the H8-era value (0.5) still reproduces the
+  original tick-1 bug as a sanity check.
+- A new block links `src/sim/step_car.cpp` into the `tire_model_test` target (it has no
+  dependencies beyond car.h/track.h/constants.h, already linked) and drives the real `stepCar()`
+  through the Milltown-tightest-corner scenario above, asserting the car stays within 90% of the
+  track's half-width of the racing line and takes zero damage -- a real regression guard for
+  scenario 2, not just the closed-form corner-speed math.
+- The tap-sequence check from H8 continues to hold (now asserting the current value never
+  saturates within the tap window at all, rather than "saturates by tick 4+").
+
+**A pre-existing test broke as a downstream, non-regression consequence:** `spotter_test`'s
+blowout test drives a real 20-car field for up to 200,000 ticks (fixed RNG seed 555) waiting for
+a `0.0004`-per-tick blowout roll to fire, then asserts the resulting spotter message. `race.cpp`
+runs the blowout-message block and the alongside-traffic block ("INSIDE!"/"OUTSIDE!"/"THREE
+WIDE!") within the same `tick()` call, in that order -- if the player is genuinely alongside
+another car on the exact tick the blowout fires, the later alongside block legitimately
+overwrites `spotTxt`, matching JS's own priority exactly. That's a real, correct possible outcome
+over a run this long, not a bug -- it just hadn't coincided with this test's fixed RNG seed
+before. The H9 retune shifted the AI field's deterministic trajectories enough that it started
+coinciding. Fixed by having the test replicate race.cpp's own alongside condition against the
+real final field state, so it asserts the message that's actually correct for that tick (blowout
+message when clear, an alongside message when the player really is alongside someone) instead of
+assuming the blowout message always wins.
+
+Native `ctest`: 32/32 passing. No screenshot verification applies here for the same reason as
+H8 -- this is a physics/feel constant, not a rendering change.

@@ -609,8 +609,12 @@ add_test(NAME speed_model_test COMMAND speed_model_test)
 # are pure math with no Track dependency, but car.cpp's other functions
 # (makeCar()/cornerSpeed()/targetSpeed()) call into Track, so track.cpp still
 # needs linking here too (same as car_test/speed_model_test above).
+# H9 (NT2003 engine-feel plan): also links step_car.cpp so this test can
+# drive the REAL stepCar() end-to-end (a full-lock-through-the-tightest-
+# corner check), not just the pure car.cpp functions -- step_car.cpp itself
+# has no dependencies beyond car.h/track.h/constants.h, already covered.
 add_executable(tire_model_test tests/tire_model_test.cpp src/sim/car.cpp src/sim/track.cpp
-  src/render/gear_rpm.cpp)
+  src/sim/step_car.cpp src/render/gear_rpm.cpp)
 add_test(NAME tire_model_test COMMAND tire_model_test)
 
 # Step 2 (PORT_PROGRESS.md, glTF skinned-mesh import pipeline): mesh_import_test
