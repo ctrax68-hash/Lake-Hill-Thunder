@@ -227,19 +227,20 @@ Mat4f mat4Mul(const Mat4f& a, const Mat4f& b) {
 
 // H3 (NT2003 engine-feel plan): JS's carBasis()/carShadowMat()
 // (index.html:3239-3274), reduced to just the tangent-plane basis the
-// contact-shadow decal needs. Deliberately NOT plugged into the car
-// BODY's own model matrix -- that stays the pre-existing flat
-// mat4Mul(mat4Translate(...), mat4RotateY(-ch)) below, untouched by this
-// phase (see PORT_PROGRESS.md's H3 entry for why that divergence from JS
-// is fine to leave as-is). The shadow has no such slack: a flat quad
-// under a car that doesn't tilt would still visibly float/clip through
-// the asphalt on every banked corner, since the BANKED SURFACE itself
-// (unlike this port's car body) is real 3D geometry. So the shadow gets
-// its own basis, built from the same surfaceUp() the chase camera already
-// leans against (renderFrame()'s upBlend), combined with the car's own
-// heading for the forward axis -- exactly the pairing already established
-// at this file's chase-camera site above (surfaceUp(track, s) + cos/sin
-// of the car's own pose.hdg).
+// contact-shadow decal needs. When this was written, H3 deliberately did
+// NOT plug this into the car BODY's own model matrix (that stayed the
+// pre-existing flat mat4Mul(mat4Translate(...), mat4RotateY(-ch)), left as
+// "a known, pre-existing simplification" per that phase's own
+// PORT_PROGRESS entry) -- reported later as cars visibly staying flat
+// through banked corners, and fixed by `carBodyModelMat()` below, which
+// reuses this exact basis for the body too. Kept as its own function
+// regardless, since the shadow still needs its own scaled/lifted matrix
+// construction (`carShadowModelMat()`) distinct from the body's unscaled
+// one, built from the same surfaceUp() the chase camera already leans
+// against (renderFrame()'s upBlend), combined with the car's own heading
+// for the forward axis -- exactly the pairing already established at this
+// file's chase-camera site above (surfaceUp(track, s) + cos/sin of the
+// car's own pose.hdg).
 Vec3 vec3Cross(const Vec3& a, const Vec3& b) {
     return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
 }
@@ -298,6 +299,54 @@ Mat4f carShadowModelMat(const Track& track, double s, double heading, const Vec3
     m[12] = (float)(base.x + b.up.x * kShadowLift);
     m[13] = (float)(base.y + b.up.y * kShadowLift);
     m[14] = (float)(base.z + b.up.z * kShadowLift);
+    m[15] = 1.0f;
+    return m;
+}
+
+// Reported bug: cars stay flat on banked corners. Root cause, confirmed by
+// direct comparison against H3's own PORT_PROGRESS entry (search "car BODY
+// does not tilt with banking at all"): the car body's model matrix has
+// always been the flat `mat4Mul(mat4Translate(wx, carY, wy),
+// mat4RotateY(-ch))` -- only the Y-height ever followed the track, never a
+// basis tilt -- a fact H3 surfaced and explicitly deferred as "a car-body
+// change, not a shadow change... left as a known, pre-existing
+// simplification," while JS's own `carModelMat()` (index.html) DOES use a
+// full tilted `carBasis()` for the body. This is that deferred fix.
+//
+// Reuses `carShadowBasis()` as-is rather than re-deriving the same
+// re-projected-heading math a second time -- it already returns exactly
+// the orthonormal (right, fw, up) triple this needs, already verified
+// (H3's own decode check) against Big Sable's real 23-degree corner
+// banking. The only new work here is mapping that triple onto the car
+// RIG's own axis convention, which differs from the shadow decal's: the
+// rig is local X=forward/Z=left (gen_car_rig.py's own stated convention),
+// while the shadow decal's basis fields are named for ITS layout
+// (right=width axis, fw=length axis). Verified by construction, not just
+// by name: in the flat (bank=0) case this file's own existing
+// `mat4RotateY(-ch)` maps local Z=(0,0,1) to world (-sin(ch),0,cos(ch)),
+// which is exactly `cross(fw,up)` -- i.e. `carShadowBasis()`'s `right`
+// field, despite the name, is precisely the vector the rig's local Z axis
+// needs. So: col0=fw (local X), col1=up (local Y), col2=b.right (local
+// Z), matching mat4RotateY(-ch)'s own established mapping exactly when
+// bank=0, and generalizing it to a real tilt when it isn't.
+Mat4f carBodyModelMat(const Track& track, double s, double heading, const Vec3& base) {
+    const ShadowBasis b = carShadowBasis(track, s, heading);
+    Mat4f m{};
+    m[0] = (float)b.fw.x;
+    m[1] = (float)b.fw.y;
+    m[2] = (float)b.fw.z;
+    m[3] = 0.0f;
+    m[4] = (float)b.up.x;
+    m[5] = (float)b.up.y;
+    m[6] = (float)b.up.z;
+    m[7] = 0.0f;
+    m[8] = (float)b.right.x;
+    m[9] = (float)b.right.y;
+    m[10] = (float)b.right.z;
+    m[11] = 0.0f;
+    m[12] = (float)base.x;
+    m[13] = (float)base.y;
+    m[14] = (float)base.z;
     m[15] = 1.0f;
     return m;
 }
@@ -1712,13 +1761,16 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     // Car::v/fzFront/fzRear (wheel_animation.h) rather than a baked
     // animation clip. Livery still applies via getOrBuildCarTexture(),
     // unchanged, bound per-draw via SkinnedMesh::draw()'s textureOverride.
-    // Model matrix: mat4Mul(mat4Translate(wx, carY, wy), mat4RotateY(-ch))
-    // reproduces the old quad's exact world-space rotation (px = wx +
-    // lx*cos(ch) - ly*sin(ch), py = wy + lx*sin(ch) + ly*cos(ch), for the
-    // rig's local X = nose-tail / local Z = left-right, the same axes the
-    // quad's lx/ly used) -- see the mat4RotateY comment above for the
-    // derivation. Built with this file's own hand-rolled mat4* helpers
-    // rather than bx::mtx*, same reasoning as wheel_animation.cpp.
+    // Model matrix: carBodyModelMat() (see its own comment above) tilts the
+    // whole rigid body to the track's real banked normal at the car's own
+    // position, on top of the same heading rotation the original flat
+    // mat4Mul(mat4Translate(...), mat4RotateY(-ch)) always applied -- that
+    // flat construction is still exactly what this reduces to on an
+    // unbanked straight (bank=0 collapses carShadowBasis()'s tilted basis
+    // back to world-up), so this is a strict generalization, not a
+    // different formula for the flat case. Built with this file's own
+    // hand-rolled mat4* helpers rather than bx::mtx*, same reasoning as
+    // wheel_animation.cpp.
     if (!cars.empty() && track_ && carMesh_.isValid()) {
         const auto now = std::chrono::steady_clock::now();
         double dt = 0.0;
@@ -1752,10 +1804,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             // jitter/stutter (wheel-spin/suspension animation below is
             // already driven by real wall-clock dt and is unaffected).
             const InterpPose pose = interpolatedPose(c, renderAlpha, track_->total());
-            const float ch = (float)pose.hdg;
-            const float wx = (float)pose.x, wy = (float)pose.y;
             const Vec3 carPos = pos3(*track_, pose.s, pose.lat);
-            const float carY = (float)carPos.y;
 
             WheelAnimState& animState = carWheelAnim_[c.num];
             const WheelAnimInputs animIn{c.v, c.fzFront, c.fzRear};
@@ -1766,7 +1815,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             for (size_t i = 0; i < bonePalette.size(); ++i) {
                 for (int k = 0; k < 16; ++k) boneFloats[i * 16 + k] = (float)bonePalette[i][k];
             }
-            const Mat4f model = mat4Mul(mat4Translate(wx, carY, wy), mat4RotateY(-ch));
+            const Mat4f model = carBodyModelMat(*track_, pose.s, pose.hdg, carPos);
             if (!skipCarDraws()) {
                 // G23: queued rather than drawn here, so submitWorld() can
                 // issue the setBoneMatrices()/draw() pair -- which bgfx's
@@ -1779,11 +1828,12 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
                 // crash it exists to isolate.
                 draws.cars.push_back({model, std::move(boneFloats), (int)bonePalette.size(),
                                       getOrBuildCarTexture(c)});
-                // H3: the car's own contact shadow, built from the real
-                // banked surfaceUp() rather than this car-body matrix above
-                // (which never tilts with banking) -- see carShadowBasis()'s
-                // own comment for why that's the correct call even though
-                // the body it sits under stays flat.
+                // H3: the car's own contact shadow, built from the same
+                // carShadowBasis() the body above now shares (see
+                // carBodyModelMat()'s own comment) -- kept as its own call
+                // rather than reused wholesale since the shadow decal needs
+                // its own width/length scale and lift, not the rig's
+                // unscaled basis.
                 draws.shadows.push_back(carShadowModelMat(*track_, pose.s, pose.hdg, carPos));
             }
         }
@@ -1807,8 +1857,6 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             // signature for one call site.
             const double a = std::clamp(renderAlpha, 0.0, 1.0);
             const double pHdg = lerpAngRad(pace->phdg, pace->hdg, a);
-            const double pX = pace->px + (pace->x - pace->px) * a;
-            const double pY = pace->py + (pace->y - pace->py) * a;
             const double pS = lerpTrackS(pace->ps, pace->s, a, track_->total());
             const double pLat = pace->plat + (pace->lat - pace->plat) * a;
 
@@ -1822,8 +1870,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
                 for (int k = 0; k < 16; ++k) paceBoneFloats[i * 16 + k] = (float)paceBones[i][k];
             }
             const Vec3 pacePos = pos3(*track_, pS, pLat);
-            const Mat4f paceModel =
-                mat4Mul(mat4Translate((float)pX, (float)pacePos.y, (float)pY), mat4RotateY(-(float)pHdg));
+            const Mat4f paceModel = carBodyModelMat(*track_, pS, pHdg, pacePos);
             draws.cars.push_back({paceModel, std::move(paceBoneFloats), (int)paceBones.size(),
                                   getOrBuildPaceTexture(), /*isPace=*/true});
             // H3: JS gives the pace car a shadow too (index.html:4098).

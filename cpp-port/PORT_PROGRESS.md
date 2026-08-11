@@ -8282,3 +8282,75 @@ across the hood in the original screenshot now reads as a smooth, continuous cur
 nose's overall silhouette is visibly domed rather than flat-topped. A materially more
 convincing result than K1 alone produced -- confirming the deferred fallback really was the
 missing half of that fix, not a redundant tweak.
+
+### H7: Car bodies bank with the track (NT2003 engine-feel plan)
+
+Reported directly: "cars don't bank with track, cars remain flat." Root cause confirmed by
+reading H3's own entry above: the car body's model matrix has been `mat4Mul(mat4Translate(wx,
+carY, wy), mat4RotateY(-ch))` since Step 3 -- translation and a heading rotation only, the
+Y-height following `surfH()` but never a basis tilt -- ever since H3 surfaced this as "a real
+architectural fact," explicitly deferred it ("a car-body change, not a shadow change...left
+as a known, pre-existing simplification"), and gave the CONTACT SHADOW its own tilted basis
+instead so at least the shadow decal wouldn't float above/clip through banked asphalt while
+the body sitting on it stayed flat. JS's own `carModelMat()` uses a full tilted `carBasis()`
+for the body; this was always a real divergence, not a rendering nuance.
+
+**The fix reuses H3's own already-tested basis rather than re-deriving it.** `carShadowBasis()`
+already builds exactly the orthonormal (right, fw, up) triple a tilted body needs, verified
+once against Big Sable Speedway's real 23-degree corner banking when H3 shipped. The new
+`carBodyModelMat()` maps that same triple onto the car RIG's own axis convention (local
+X=forward, Y=up, Z=left, per `gen_car_rig.py`'s own stated convention -- different from the
+shadow decal's own width/length-axis naming) rather than treating the shadow's basis as
+reusable by name alone. Verified by construction: in the flat (bank=0) case, the existing
+`mat4RotateY(-ch)` maps local Z=(0,0,1) to world `(-sin(ch),0,cos(ch))`, which is exactly
+`cross(fw,up)` -- i.e. `carShadowBasis()`'s `right` field, despite its shadow-specific name, IS
+precisely the vector the rig's local Z axis needs. So the new matrix reduces to *exactly* the
+old flat one when there's no banking to speak of, not a different formula that happens to
+agree numerically.
+
+Both call sites (the field/AI cars loop and the pace car, which had its own separate,
+identical flat construction) now go through `carBodyModelMat()`. No change needed anywhere
+else: wheel spin/suspension (`wheel_animation.cpp`) is already computed entirely in local
+chassis space and rides along with whatever the outer model matrix does; the chase camera's
+own banking lean (`surfaceUp()` in `renderFrame()`'s `upBlend`) is independent of the car
+body's matrix and needed no changes; particles (tire smoke, sparks) already emit from
+`pos3()`-derived positions, not the car's orientation.
+
+**Verified with a decode scratch program** (`decode_banking.cpp`, H3's own established
+pattern for renderer.cpp-internal math too file-local to unit-test directly: hand-transcribe,
+link the real `track.cpp`/`track_surface.cpp`), against Big Sable Speedway (23-degree corners,
+5-degree straights, the same track H3's own check used):
+- The basis is genuinely orthonormal at both a straight and the corner apex, and `up.y`
+  matches `cos(bank)` exactly -- the same properties H3 already confirmed, now re-confirmed
+  for this new call site.
+- **The actual "does the car look right" check**: all 4 wheels' true touchdown points
+  (computed via the full `carBodyModelMat()` transform, using each wheel's real local offset)
+  land within 2cm of the real banked track surface at both points (1.7mm on the straight,
+  1.8cm at the 23-degree apex) -- against what the OLD flat body would have produced at that
+  same corner, roughly `TRACK_HALF * sin(23°) ≈ 0.30m` of wheel-to-surface gap on the high
+  side and matching float/clip on the low side, this is better than a 15x improvement, not a
+  marginal one.
+- **A real bug in this check's own first draft, caught by an implausible result, not
+  assumed correct**: an early version of the wheel-contact check reported an almost identical
+  ~0.35m gap at BOTH the 6-degree straight and the 23-degree corner -- if that were a real
+  banking defect, the corner's gap should have been far larger than the straight's, not
+  nearly identical, which was the tell that something in the TEST was wrong rather than the
+  fix. Root cause: the test's own first attempt subtracted `WHEEL_RADIUS` a second time when
+  computing wheel-bottom height, on top of geometry that (per `gen_car_rig.py`'s own stated
+  convention) already has its wheel bottom touch down at local Y=0 by construction. Fixed by
+  removing the double subtraction and separately by projecting each wheel's own world
+  position back through `Track::project()` instead of reusing the chassis's own arc-length
+  position for the front axle, which sits at a genuinely different `s` when the car turns.
+- Flat-case regression check: with a synthetic bank=0 up vector, the new basis's `fw`/`right`
+  match the old `mat4RotateY(-ch))`'s own local-X/local-Z mapping to within 1e-9 -- confirming
+  the strict-generalization claim above numerically, not just by inspection.
+
+Native `ctest` 32/32 (this touches no test-covered logic path, only the renderer's per-frame
+model-matrix construction). Two now-dead local variables (`wx`/`wy`/`ch` in the field-car
+loop, `pX`/`pY` in the pace-car block) removed along with the flat construction they only
+existed to feed. Screenshot-verified with a stashed before/after rebuild at Big Sable
+Speedway's corner: a real, visible lean difference on the closest car entering the banked
+turn, though modest at the shallow approach-corner camera angle sampled -- the decode check's
+numbers (1.7mm/1.8cm vs. an inferred ~30cm gap the old flat body would have produced) are the
+authoritative confirmation here, the same "measure, don't guess" discipline this project has
+applied throughout the I/J/K-series.
