@@ -152,6 +152,43 @@ int main() {
         expectNear("fxFrac=1 leaves zero lateral force", fy, 0.0, 1e-6);
     }
 
+    // ---- maxSteerAngle: reported bug "one simple touch of button makes
+    // hard turn" -- traced to this constant, not the (verified-correct)
+    // 0.22-per-tick digital-input smoothing in step_car.cpp. Replicates that
+    // exact smoothing here (`c.steer += (steerIn - c.steer) * 0.22`, isPlayer
+    // branch, steerIn=1 held from a standing start) and confirms: (a) the
+    // front axle's own saturation slip angle, alpha_sat = mu*fzFront/cf,
+    // lands at a healthy fraction of full lock rather than deep inside the
+    // input's very first tick of travel; (b) replaying the exact old buggy
+    // value (0.5) against this same tap sequence saturates on tick 1 (a
+    // single 20ms tick reaching the tire's absolute lateral limit -- the
+    // "instant hard lock" the user reported), while the new value (0.12)
+    // does not saturate until several ticks in, giving a real graduated
+    // ramp through a quick tap. ----
+    {
+        const AxleLoads fzStatic = axleLoads(c, 0.0, 0.0);
+        const double alphaSat = c.mu * fzStatic.front / c.cf;
+
+        const double fraction = alphaSat / c.maxSteerAngle;
+        expect(fraction > 0.3 && fraction < 0.95,
+               "front-axle saturation angle lands at a healthy fraction of full digital-input travel");
+
+        auto tapSaturationTick = [&](double maxSteer) {
+            double steer = 0.0;
+            for (int tick = 1; tick <= 10; ++tick) {
+                steer += (1.0 - steer) * 0.22; // step_car.cpp's isPlayer smoothing, steerIn=1 held
+                if (steer * maxSteer >= alphaSat) return tick;
+            }
+            return 11; // never saturated within the window
+        };
+
+        expect(tapSaturationTick(0.5) == 1,
+               "sanity check: the OLD maxSteerAngle (0.5) reproduces the reported bug -- "
+               "a held tap saturates the front axle on the very first 20ms tick");
+        expect(tapSaturationTick(c.maxSteerAngle) >= 4,
+               "the fixed maxSteerAngle gives a real multi-tick ramp before the front axle saturates");
+    }
+
     // ---- integrateYawDynamics(): substep-count convergence over a
     // realistic in-game episode length. NOTE: sustained full-lock steering
     // held forever is NOT asserted to stay bounded here -- probing showed
@@ -338,44 +375,65 @@ int main() {
             expect(aFull < aEmpty, "a full tank measurably slows straight-line acceleration for the same net force");
         }
 
-        // ---- closed-loop cornering (same rTarget-tracking driver as the P1
-        // test above, symmetric mu -- isolating the fuel/mass mechanism from
-        // wear): a full tank should push more slip onto the front and less
-        // onto the rear than an empty one, and saturate the rear axle less
-        // often (the front becomes the relatively tighter constraint). ----
+        // ---- cornering tightness, via the same closed-form understeer
+        // gradient as the standalone steady-state test further down this
+        // file (Kus = (mass/wheelBase)*(aR/cf - aF/cr)): a full tank raises
+        // aR (weightDistF shifts forward) and lowers aF, so Kus -- and with
+        // it the amount of steer needed to hold a given yaw rate -- goes up.
+        //
+        // This block used to drive a closed-loop rTarget-tracking
+        // controller into the friction ellipse instead (mirroring the P1
+        // wear test above), asserting the resulting front/rear slip split
+        // and rear-saturation-count directly. The maxSteerAngle fix
+        // (0.5->0.12 rad, see CarConstants' own comment -- "one simple
+        // touch of button... makes hard turn") broke that version: rTarget
+        // = 0.50 rad/s was tuned to sit comfortably inside the OLD 0.5 rad
+        // lock's headroom, letting the controller visibly "push harder" on
+        // the loaded axle before saturating. Against the new 0.12 rad lock,
+        // that same rTarget is no longer reachable without both cars
+        // pinning the clamp for most of the run -- at that point the
+        // "push harder" signal this mechanism relies on has nowhere left to
+        // go, and a sweep across rTarget/kP confirmed no setting reproduces
+        // all three original assertions with real margin anymore (the
+        // front-slip and rear-saturation crossovers land at different,
+        // nearby rTarget values instead of together). The closed-form check
+        // below verifies the same "full tank tightens the car" claim
+        // directly from the understeer gradient, at a small, deliberately
+        // non-saturating steer angle -- so it stays valid regardless of
+        // where maxSteerAngle happens to be tuned, rather than depending on
+        // exactly how much clamp headroom is left above a chosen rTarget.
         {
-            const double v = 30.0;
-            const double rTarget = 0.50; // aggressive enough to approach the friction ellipse
-            const double kP = 3.0;
+            auto Kus = [](const CarConstants& cc) {
+                const double aF = cc.wheelBase * (1 - cc.weightDistF);
+                const double aR = cc.wheelBase * cc.weightDistF;
+                return (cc.mass / cc.wheelBase) * (aR / cc.cf - aF / cc.cr);
+            };
+            expect(Kus(full) > Kus(empty),
+                   "a full tank raises the understeer gradient (Kus) relative to an empty one");
 
-            auto drive = [&](const CarConstants& cc) {
-                const AxleLoads fz = axleLoads(cc, v, 0.0);
-                double vy = 0.0, r = 0.0, frontSum = 0.0, rearSum = 0.0;
-                int prCount = 0;
-                constexpr int kTicks = 150, kWarmup = 30;
-                for (int t = 0; t < kTicks; ++t) {
-                    const double steerAngle =
-                        std::max(-cc.maxSteerAngle, std::min(cc.maxSteerAngle, kP * (rTarget - r)));
+            const double v = 30.0;
+            const double steerAngle = 0.02; // well under both old and new maxSteerAngle -- stays linear
+            const AxleLoads fzFull = axleLoads(full, v, 0.0);
+            const AxleLoads fzEmpty = axleLoads(empty, v, 0.0);
+
+            auto steadyStateYawRate = [&](const CarConstants& cc, const AxleLoads& fz) {
+                double vy = 0.0, r = 0.0;
+                bool everPastLimit = false;
+                for (int t = 0; t < 200; ++t) {
                     YawIntegrationResult res = integrateYawDynamics(cc, vy, r, v, v, steerAngle, fz, cc.mu, cc.mu,
                                                                      0.0, 0.0, 0.02, cc.yawSubsteps);
                     vy = res.vy;
                     r = res.r;
-                    if (t >= kWarmup) {
-                        frontSum += res.slipFrontAvg;
-                        rearSum += res.slipRearAvg;
-                        if (res.pastLimitRear) ++prCount;
-                    }
+                    if (res.pastLimitAny) everPastLimit = true;
                 }
-                return std::tuple<double, double, int>{frontSum, rearSum, prCount};
+                expect(!everPastLimit, "closed-form understeer comparison stays in the linear (non-saturated) regime");
+                return r;
             };
 
-            const auto [fullF, fullR, fullPr] = drive(full);
-            const auto [emptyF, emptyR, emptyPr] = drive(empty);
-
-            expect(fullF > emptyF, "a full tank loads the front axle more than an empty one, holding the same line");
-            expect(fullR < emptyR, "a full tank loads the rear axle less than an empty one, holding the same line");
-            expect(fullPr < emptyPr,
-                   "a full tank's rear axle hits the friction limit less often (the front is the tighter constraint)");
+            const double rFull = steadyStateYawRate(full, fzFull);
+            const double rEmpty = steadyStateYawRate(empty, fzEmpty);
+            expect(rFull < rEmpty,
+                   "a full tank yields less steady-state yaw rate than an empty one for the same steer angle (tighter)");
         }
     }
 

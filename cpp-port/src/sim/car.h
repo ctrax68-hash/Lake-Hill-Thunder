@@ -41,7 +41,39 @@ struct CarConstants {
     double cf = 95000.0;          // N/rad, front axle cornering stiffness
     double cr = 105000.0;         // N/rad, rear axle cornering stiffness
     double iz = 2800.0;           // kg*m^2, yaw moment of inertia
-    double maxSteerAngle = 0.5;   // rad, full-lock front steer angle
+    // Reported bug: "one simple touch of button... makes hard turn." Root
+    // cause -- this constant, not the input smoothing below it in
+    // step_car.cpp (that 0.22-per-tick blend and its unscaled-by-DT timing
+    // are both exact, verified ports of index.html's own steerIn code, at
+    // the same 50Hz tick rate; not the bug). maxSteerAngle has no JS
+    // equivalent at all -- JS's kinematic model maps c.steer straight to
+    // yaw rate with no steer-angle/tire-force concept in between -- it was
+    // introduced fresh by the bicycle-model tire upgrade and, by that
+    // upgrade's own admission (PORT_PROGRESS.md's "Step 1" regression-pass
+    // entry), never tuned for feel afterward.
+    //
+    // The problem it was hiding: the front axle's linear cornering-stiffness
+    // model saturates to its maximum lateral force at a fixed slip angle,
+    // alpha_sat = mu*fzFront/cf ~= (1.0 * 1500*9.81*0.50) / 95000 ~= 0.077
+    // rad (~4.4 deg) for a fresh car at rest. At the OLD 0.5 rad value, that
+    // ceiling sat at only ~15% of the digital input's full 0->1 travel --
+    // and the existing (correct) 0.22-per-tick smoothing blows past 15% on
+    // the very first 20ms tick of any tap (0 -> 0.22 in one step). So a
+    // "touch" wasn't ramping into a turn, it was almost instantly commanding
+    // the front tire's maximum possible lateral force for as long as the
+    // button stayed down -- physically an instant hard lock, not a feel
+    // problem layered on top of correct physics.
+    //
+    // 0.12 rad puts that same ~0.077 rad ceiling at ~64% of full digital
+    // travel instead of ~15% -- the existing smoothing now takes roughly 4-5
+    // ticks (~80-100ms) to cross it rather than 1, giving a real graduated
+    // window through most of a quick tap, while a held button still reaches
+    // the tire's true friction-limited yaw rate at full lock, unchanged.
+    // cf/cr/mu and every AI/wear/setup constant are deliberately untouched
+    // -- this is the one quantity that sets how much of the tire's
+    // proportional response range the input's own travel actually reaches,
+    // not a grip or planning change.
+    double maxSteerAngle = 0.12;  // rad, full-lock front steer angle
     double brakeBiasFront = 0.62; // fraction of brake force applied at the front axle
 
     // Regression-pass fix: the AI's steerIn formulas (step_car.cpp) were

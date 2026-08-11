@@ -8354,3 +8354,77 @@ turn, though modest at the shallow approach-corner camera angle sampled -- the d
 numbers (1.7mm/1.8cm vs. an inferred ~30cm gap the old flat body would have produced) are the
 authoritative confirmation here, the same "measure, don't guess" discipline this project has
 applied throughout the I/J/K-series.
+
+### H8: Steering feel -- one tap no longer full-locks the front tires (NT2003 engine-feel plan)
+
+Reported directly: "Turning is too oversteer one simple touch of button car makes hard turn."
+The digital-input smoothing that turns a held direction key into a steering value
+(`c.steer += (steerIn - c.steer) * (isPlayer ? 0.22 : 0.5)`, `step_car.cpp`) was checked first
+and confirmed to be an exact, verified port of the original JS game's own equivalent code at
+the same 50Hz tick rate -- not the bug. The actual root cause is `CarConstants::maxSteerAngle`,
+the rad-to-degrees ceiling that scales `c.steer`'s 0-1 travel into the tire model's
+`steerAngle` input (`steerAngle = c.steer * CAR.maxSteerAngle`). JS's own kinematic model has
+no equivalent constant at all -- it maps `c.steer` straight to yaw rate with no steer-angle/
+tire-force concept in between -- `maxSteerAngle` was introduced fresh by the bicycle-model tire
+upgrade (Step 1) and, by that upgrade's own regression-pass entry, never tuned for feel
+afterward. It shipped at `0.5` rad (~28.6 degrees).
+
+**The mechanism, quantified rather than guessed at:** the front axle's linear
+cornering-stiffness model saturates to its maximum lateral force once the slip angle passes
+`alpha_sat = mu*fzFront/cf`. For a fresh car at rest, `fzFront = mass*G*weightDistF =
+1500*9.81*0.50 = 7357.5N`, so `alpha_sat = 1.0*7357.5/95000 ~= 0.0774 rad` (~4.4 degrees). At
+the old `maxSteerAngle=0.5`, that ceiling sat at only `0.0774/0.5 ~= 15.5%` of the digital
+input's full 0->1 travel -- and the existing (correct) 0.22-per-tick smoothing blows past 15%
+on the very first 20ms tick of any tap (`0 -> 0.22` in one step, `0.22*0.5=0.11 rad >
+0.0774 rad`). So a "touch" wasn't ramping into a turn at all; it was almost instantly
+commanding the front tire's maximum possible lateral force for as long as the button stayed
+down -- an instant hard lock baked into the constant itself, not a feel problem layered on top
+of otherwise-correct physics.
+
+**Fix:** `maxSteerAngle: 0.5 -> 0.12` rad (~6.9 degrees full lock -- in range for a stock-car-
+style setup, well short of a road car's much larger lock angle, appropriate for a tire model
+that already saturates this early). This puts the same `~0.0774` rad ceiling at `~64.5%` of
+full digital travel instead of `~15.5%`. Replaying the exact tap sequence above against the
+new value: tick 1 lands at `22%*0.12=0.0264 rad` (34% of the ceiling, no saturation), and the
+input doesn't cross `alpha_sat` until tick 5 (`~100ms` in) -- a real graduated window through
+most of a quick tap, while a held button still reaches the tire's true friction-limited yaw
+rate at full lock, unchanged. `cf`/`cr`/`mu` and every AI/wear/setup constant are deliberately
+untouched -- this is the one quantity that sets how much of the tire's proportional response
+range the input's own travel actually reaches, not a grip or planning change. It also affects
+AI cars identically (`step_car.cpp`'s AI branch computes `steerAngle` the same way), which is
+intentional: the same instant-lock defect applied to every car in the field, not just the
+player's.
+
+**New `tests/tire_model_test.cpp` check** replicates the tap sequence directly (not just the
+static saturation-fraction ratio): asserts the OLD value (`0.5`, held constant in the test as
+a literal sanity check) reproduces the bug -- saturates on tick 1 -- while the fixed value
+(`0.12`) does not saturate until tick 4 or later, so a future value change that reintroduces
+near-instant lock would fail this test rather than just the vaguer fraction-band check
+alongside it.
+
+**A pre-existing test broke as a direct, expected consequence, not a regression:** P2's
+(NT2003 engine-feel plan, fuel-as-real-mass) third sub-test drove a closed-loop yaw-rate
+controller toward `rTarget=0.50` rad/s to push both a full-tank and empty-tank car toward the
+friction ellipse, and asserted the resulting front/rear slip split and rear-saturation-count.
+That `rTarget` was tuned to sit comfortably inside the *old* `0.5` rad lock's headroom, letting
+the controller visibly "push harder" on the more-loaded axle before saturating. Against the
+new `0.12` rad lock, `rTarget=0.50` is no longer reachable without the controller pinning the
+clamp for most of the run on both cars -- and once both are pegged at the same clamped input,
+the "push harder" signal that test relies on has nowhere left to go. A parameter sweep (rTarget
+and kP, both old and new `maxSteerAngle`) confirmed this wasn't a tuning slip: no rTarget/kP
+combination reproduces all three original assertions with real margin under the new value --
+the front-slip and rear-saturation crossovers land at different, nearby `rTarget` values
+instead of together, an artifact of how little clamp headroom is left, not of the fuel-weight
+mechanism itself. Replaced that sub-test with a check on the same closed-form understeer
+gradient the file's own standalone steady-state test already uses (`Kus =
+(mass/wheelBase)*(aR/cf - aF/cr)`): a full tank raises `Kus` (confirmed: `0.00146` vs.
+`0.00075` empty) and so yields measurably less steady-state yaw rate for the same small,
+deliberately non-saturating steer angle (`0.02 rad`, confirmed via `integrateYawDynamics()`
+directly, not just the closed-form formula) -- the same "full tank tightens the car" claim,
+verified in a way that doesn't depend on exactly how much headroom is left above a chosen
+`rTarget`, so it won't need re-tuning again if `maxSteerAngle` is ever adjusted further.
+
+Native `ctest`: 32/32 passing (including the rewritten P2 sub-test and the new tap-sequence
+check). No screenshot verification applies here -- this is a pure physics/feel constant, not a
+rendering change -- so per this project's "measure, don't guess" discipline, verification rests
+entirely on the decode/unit tests above.
