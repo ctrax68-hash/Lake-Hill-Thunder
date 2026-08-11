@@ -328,6 +328,28 @@ int main() {
                    std::fabs(glassHiPx[0] - 26 / 255.0) < 0.02 && std::fabs(glassHiPx[1] - 33 / 255.0) < 0.02);
     }
 
+    // K2 (car visual fidelity plan, part 3): the rear glass rect used to
+    // overshoot its real 3D opening by ~47% of its width (uRG1 was pinned
+    // to the "deck start" station instead of the "rear axle, belt/roof
+    // rejoin" station two stations earlier), painting glassDark/glassHi
+    // onto what should be plain trunk-decklid paint. u=0.635 sits inside
+    // the OLD rear-glass rect (u<0.665) but outside the corrected one
+    // (u>0.6085) -- measured directly against a scratch build: decodes to
+    // (192,0,0), the plain red body tone, clearly distinct from both
+    // glassDark(16,20,30) and glassHi(26,33,46), confirming the previously
+    // glass-painted decklid area now reads as body paint.
+    {
+        LiveryScheme scheme{0, 0, 0, CarPalette::White};
+        const auto pixels = buildLiveryPixels(red, 7, 1, &scheme);
+        constexpr double GV0 = 0.335, GVH = 0.330;
+        const auto px = pixelAt(pixels, (int)(0.635 * kLiveryTextureSize), (int)((GV0 + GVH * 0.5) * kLiveryTextureSize));
+        const std::array<double, 3> glassDark{16 / 255.0, 20 / 255.0, 30 / 255.0};
+        const std::array<double, 3> glassHi{26 / 255.0, 33 / 255.0, 46 / 255.0};
+        expectTrue("corrected rear-glass boundary: former overshoot area is no longer glassDark",
+                   px != glassDark);
+        expectTrue("corrected rear-glass boundary: former overshoot area is no longer glassHi", px != glassHi);
+    }
+
     if (g_failures == 0) {
         std::printf("livery_test: shading bands, stripe styles, and number decals all match expectations.\n");
         return 0;

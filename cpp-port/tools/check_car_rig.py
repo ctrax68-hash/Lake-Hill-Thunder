@@ -213,6 +213,62 @@ check(all(abs(math.sqrt(sum(c * c for c in n)) - 1.0) < 1e-6 for n in all_cap_no
 check(all(n[0] > 0 for n in nose_normals), "nose cap normals face outward (+X)")
 check(all(n[0] < 0 for n in tail_normals), "tail cap normals face outward (-X)")
 
+# --- glass UV alignment vs real station geometry (K2, plan part 3) ---------
+# Before K2, nothing here checked ANY glass rect's U-bound against real
+# station geometry -- only that fixed V-bands fell somewhere within the
+# ring's full V-range, a much weaker guarantee. That gap is exactly why the
+# rear-glass rect shipped painted 1.875x too wide (bleeding onto the trunk
+# decklid) without ever failing a check. Same loose-cross-file-sync
+# convention this file already uses for the SW_* swatches and the `bands`
+# list above: a small commented copy of livery.cpp's own post-K2 glass
+# constants (livery.cpp:422,435,443-444), checked against the real station
+# table via car_u()/car_v() rather than against each other.
+print("glass UV alignment vs real station geometry")
+
+# livery.cpp's own carU() formula, replicated here (same convention
+# tests/livery_test.cpp already uses for its own inlined copy of it) --
+# it takes raw JS-scale x, a different domain than this file's own car_u()
+# below (which takes THIS rig's already-scaled station x). The two are
+# equal at corresponding points by construction -- that's the entire
+# reason _station() scales every station x by HALF_LEN/2.51 -- but the raw
+# and scaled values are not interchangeable inputs to each other's
+# function, which is exactly the bug this section's first draft had
+# (comparing car_u(0.68) [wrong domain] against the real station value and
+# getting a false failure).
+def _carU_raw(x):
+    return 0.02 + (2.51 - x) / 5.02 * 0.76
+
+_K_SEAM_W = 0.0035  # livery.cpp's own kSeamW, copied here for the same reason
+_uWS0, _uWS1 = _carU_raw(0.68), _carU_raw(0.02)
+_uSG0 = _carU_raw(0.02) + _K_SEAM_W
+_uRG0, _uRG1 = _carU_raw(-1.00), _carU_raw(-1.40) - _K_SEAM_W
+
+_st6_u = R.car_u(R.CHASSIS_STATIONS[6][0])   # cowl/windshield base
+_st8_u = R.car_u(R.CHASSIS_STATIONS[8][0])   # A-pillar top
+_st10_u = R.car_u(R.CHASSIS_STATIONS[10][0])  # fastback glass start
+_st11_u = R.car_u(R.CHASSIS_STATIONS[11][0])  # rear axle, belt/roof rejoin
+
+check(abs(_uWS0 - _st6_u) < 1e-9, "windshield uWS0 exactly matches the cowl station (regression guard)")
+check(abs(_uWS1 - _st8_u) < 1e-9, "windshield uWS1 exactly matches the A-pillar station (regression guard)")
+check(abs(_uSG0 - (_st8_u + _K_SEAM_W)) < 1e-9,
+      "side-glass uSG0 anchors to the A-pillar station + seam margin (K2 fix)")
+check(abs(_uRG0 - _st10_u) < 1e-9, "rear-glass uRG0 exactly matches the fastback-glass-start station (regression guard)")
+# The actual bug-catcher: fails against the pre-K2 uRG1 (carU(-1.75), which
+# overshoots station 11 by far more than 0.01), passes after the fix, and
+# would catch a future regression that widens it back out.
+check(0 < _st11_u - _uRG1 <= 0.01,
+      "rear-glass uRG1 sits strictly inside the real station-11 boundary, with a small bounded margin (%.4f)"
+      % (_st11_u - _uRG1))
+
+# GV0/GVH deliberately unchanged this phase (see livery.cpp's own K2
+# comment) -- documents the real target span is still satisfied today,
+# groundwork for a future tightening rather than an assertion of a fix.
+_GV0, _GVH = 0.335, 0.330
+_real_belt_lo, _real_belt_hi = R.car_v(9), R.car_v(4)
+check(_GV0 >= _real_belt_lo and _GV0 + _GVH <= _real_belt_hi,
+      "beltline V-span [%.3f,%.3f] still stays within the real beltline [%.3f,%.3f]"
+      % (_GV0, _GV0 + _GVH, _real_belt_lo, _real_belt_hi))
+
 # --- exhaust pipes (J2, car visual fidelity plan part 2) --------------------
 # Identified by swatch + joint rather than a hand-picked x/z box: SW_SIDEWALL
 # is also used by every wheel's own tire end-cap annulus, but those are

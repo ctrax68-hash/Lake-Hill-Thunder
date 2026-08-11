@@ -8152,3 +8152,84 @@ originally caught the defect, compared directly before/after: the specular-highl
 the hood/grille transition is visibly softened, a real but modest improvement consistent with
 the deliberately conservative offset -- not a dramatic transformation, and the documented
 fallback above remains available if a future pass wants to push further.
+
+## K2 -- Glass rect UV correction (car visual fidelity plan, part 3)
+
+Continues the investigation into the user's "bad window lines" report. `gen_car_rig.py`'s
+`car_u()` and `livery.cpp`'s `carU()` are algebraically identical (once each is fed its own
+correct domain -- `car_u()` takes this rig's already-scaled station x, `carU()` takes raw
+JS-scale x; the two agree exactly at corresponding points because that's the entire reason
+`_station()` scales every station x by `HALF_LEN/2.51` in the first place), which makes the
+two files' UV bounds directly comparable and let this investigation find two real defects,
+not one.
+
+**The reported bug**: the rear/backlight glass rect was painted with `uRG1 = carU(-1.75)`
+(station 12, "deck start"), but the real glass-adjacent roofline rise ends two stations
+earlier, at `carU(-1.40)` (station 11, "rear axle... belt/roof rejoin" -- `beltY` and `roofY`
+meet again there). Painted width was 1.875x the real glass width -- roughly 47% of the
+painted rect landed on the opaque trunk decklid, not glass. Fixed to `uRG1 = carU(-1.40) -
+kSeamW`, reusing the file's own already-declared `kSeamW=0.0035` seam-margin constant (hoisted
+slightly earlier in the function so both this and its original use sites can share it) as the
+inward reveal margin, rather than a new magic number. `uRG0` was already exactly correct
+(station 10) and is unchanged.
+
+**A second, related defect found during the investigation, not in the original report**: the
+side-glass rect's forward edge (`uSG0 = carU(0.30)`) landed 42% of the way inside the
+windshield's own real U-range -- the side window started well past "windshield mid" toward
+the A-pillar. The windshield's own sun-strip accent band, painted AFTER the side-glass base
+fill, fell entirely inside that overlap and visibly bled its accent color onto both front door
+windows. Same defect class as the rear-glass bug (a U-bound not anchored to real station
+geometry), on the opposite pillar. Fixed to `uSG0 = carU(0.02) + kSeamW`, anchored to the
+A-pillar station -- the same real boundary `uWS1` already uses. Included in this same phase
+rather than split out: same file, same section, same fix technique and risk level, and
+directly serves "bad window lines" (window paint bleeding onto another window is about as
+literal a reading of that complaint as exists).
+
+**Deliberately NOT touched this phase**: the beltline V-span (`GV0=0.335, GVH=0.330`), inset
+only ~0.016 from the real beltline `[0.319,0.681]`. Thin but non-zero -- glass stays fully
+inside the real opening here, unlike the two U-axis bugs above which actually overshot, so
+this isn't what "bad window lines" is describing. Also not a genuine one-line fix: the
+beltline character line a few lines below is a SEPARATELY hardcoded `0.320`/`0.677` pair
+despite its own comment claiming it tracks `GV0`/`GVH`, and the door-number badge clearance
+math was tuned against the current band -- tightening `GV0`/`GVH` correctly means a
+coordinated multi-constant change, out of scope here. `check_car_rig.py`'s new section
+documents the real target span so this is ready to pick up later without touching the
+constant now. The `kPatches` "rear-window surround" comment, which cited the old (now stale)
+rear-glass span, was also corrected to the new numbers.
+
+**New `check_car_rig.py` checks** (new "glass UV alignment vs real station geometry"
+section, the same loose-cross-file-sync convention already used for the `SW_*` swatches and
+the existing V-band list): a small commented copy of `livery.cpp`'s post-fix glass constants,
+checked against the real station table. `uWS0`/`uWS1`/`uRG0` are regression guards (already
+exactly correct, confirmed to stay that way); `uSG0` confirms the fix lands exactly on the
+A-pillar station plus seam margin; and `uRG1` is the actual bug-catcher -- asserted strictly
+inside the real station-11 boundary by a small bounded margin, which fails against the old
+value and passes against the new one, catching any future regression that widens it back out.
+**A real bug in this check's own first draft was caught before it shipped**: comparing
+`car_u(0.68)` (feeding a raw JS-scale value into the function that expects this rig's scaled
+domain) against the real station value produced false failures on every regression guard --
+fixed by replicating `carU()`'s own raw-domain formula locally (the same convention
+`livery_test.cpp` already uses for its own inlined copy), the same care this project's own
+"measure, don't guess" discipline expects of a check, not just of the feature it's checking.
+
+**New `livery_test.cpp` check**: samples `u=0.635` (inside the OLD rear-glass rect, outside
+the corrected one) and asserts it no longer decodes to `glassDark`/`glassHi` -- measured
+directly against a scratch build first (decodes to (192,0,0), plain body red, clearly
+distinct from both glass tones), confirming the previously-glass-painted decklid area now
+reads as body paint. Native `ctest` 32/33 -> 33/33.
+
+**Why previous checks missed both bugs**: the existing "UV / livery band alignment" section
+only ever checked that fixed V-bands fell within the ring's FULL V-range -- a much weaker
+guarantee than checking against a real feature's actual location -- and never checked any
+glass rect's U-bound against real station geometry at all. That's exactly the gap the new
+section closes.
+
+Verified with a showcase-camera crop of the cowl/A-pillar area (a subtle but plausible
+improvement in that region, matching K1's own honest "real but modest" framing rather than
+overclaiming); a clean paired before/after chase-cam comparison of the rear glass wasn't
+achievable (the live race simulation isn't frame-for-frame deterministic between two scripted
+runs, so the two captures show different cars at different track positions, not the same
+moment) -- the decode-based `livery_test.cpp` check and `check_car_rig.py`'s geometric checks
+are the authoritative verification for this phase, consistent with this project's own
+established preference for decoding pixels directly over relying on screenshots alone for
+color/threshold claims.

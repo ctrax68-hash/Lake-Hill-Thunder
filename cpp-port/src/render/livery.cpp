@@ -320,10 +320,13 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         //             one (starts at 0.540). v 0.076-0.138, above the
         //             near-black rocker (ends 0.052) and below the door-
         //             number ellipse (starts 0.153).
-        //   rear win  u 0.556-0.658: inside the rear glass's own u span
-        //             (0.551-0.665). v 0.244-0.308, the sail panel below
-        //             the glass rect (starts 0.335), stopping short of the
-        //             beltline seam (0.320).
+        //   rear win  u 0.556-0.658: roughly under the rear glass's own u
+        //             span (K2: [0.551,0.609] after correcting uRG1, was
+        //             [0.551,0.665] before -- these patches don't actually
+        //             depend on the exact glass bound either way, since
+        //             their v 0.244-0.308 sits on the sail panel below the
+        //             glass rect entirely (glass paints v in [0.335,0.665]
+        //             only), stopping short of the beltline seam (0.320).
         // The hood straddles v=0.5 on one continuous surface, so its blocks
         // are authored symmetric already; the side-panel blocks are single
         // entries mirrored onto the far flank.
@@ -407,14 +410,49 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // exhaust soot smudge, right side only (index.html:2686-2691).
     c.fillEllipse(0.615, 0.058, 0.055, 0.028, {8 / 255.0, 8 / 255.0, 9 / 255.0}, 0.30);
 
+    // kSeamW hoisted up from the panel-shutlines section below (it used to
+    // be declared there) so K2's glass-rect bounds, right below, can reuse
+    // it as their own inward reveal margin instead of a new magic number.
+    constexpr double kSeamW = 0.0035;
+
     // Glass rect bounds, hoisted above both the H2 shutlines (which anchor
     // to the windshield/rear-glass edges) and the glass section itself
     // below (index.html:2692-2727), which is where these were originally
     // declared.
     const double uWS0 = carU(0.68), uWS1 = carU(0.02);
-    const double uSG0 = carU(0.30), uSG1 = carU(-0.95);
-    const double uRG0 = carU(-1.00), uRG1 = carU(-1.75);
+    // K2 (car visual fidelity plan, part 3): uSG0 used to be carU(0.30),
+    // which landed 42% of the way inside the windshield's own real U-range
+    // [uWS0,uWS1] -- the side window started well past "windshield mid"
+    // toward the A-pillar. The windshield's own sun-strip accent band
+    // (painted after the side-glass base fill, below) fell entirely inside
+    // that overlap and visibly bled onto both front door windows -- a real
+    // "bad window lines" bug, not just a theoretical one, found while
+    // investigating the rear-glass bug below. Anchored instead to the
+    // A-pillar station (x=0.02), the same real boundary uWS1 already uses,
+    // with the same kSeamW reveal margin every other seam in this file
+    // uses. uSG1 is unchanged -- carU(-0.95) already sits just before
+    // uRG0 (fastback glass start), already well-tuned to real geometry.
+    const double uSG0 = carU(0.02) + kSeamW, uSG1 = carU(-0.95);
+    // K2: uRG1 used to be carU(-1.75) (station 12, "deck start"), but the
+    // real glass-adjacent roofline rise ends two stations earlier, at
+    // carU(-1.40) (station 11, "rear axle... belt/roof rejoin" -- beltY
+    // and roofY meet again there). The painted rect was 1.875x the real
+    // glass width; ~47% of it landed on the opaque trunk decklid, not
+    // glass. Pulled in to the real boundary with the same kSeamW reveal
+    // margin, so trunk paint can't bleed onto glass at the seam either.
+    const double uRG0 = carU(-1.00), uRG1 = carU(-1.40) - kSeamW;
     constexpr double GV0 = 0.335, GVH = 0.330;
+    // K2: the beltline V-span (GV0/GVH) is inset only ~0.016 from the real
+    // beltline [car_v(4),car_v(9)]=[0.319,0.681] (thin but non-zero --
+    // glass still stays fully inside the real opening, unlike the two U-
+    // axis bugs above which actually overshot). Deliberately left alone in
+    // this phase: the beltline character line just below is a SEPARATELY
+    // hardcoded 0.320/0.677 pair despite its own comment claiming it
+    // tracks GV0/GVH, and the door-number badge clearance math was tuned
+    // against the current band -- tightening GV0/GVH correctly means a
+    // coordinated multi-constant change, not the single-value fix this
+    // phase is otherwise scoped as. check_car_rig.py's own new checks
+    // record the real target span so this is ready to pick up later.
 
     // ---- H2 (NT2003 engine-feel plan): panel shutlines ----
     //
@@ -426,7 +464,6 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // above) means the crease shows through whatever paint scheme is
     // underneath, the way a real seam would regardless of the wrap on it.
     const std::array<double, 3> seamShadow{0.0, 0.0, 0.0};
-    constexpr double kSeamW = 0.0035;
 
     // Beltline character line: right where the glass band starts/ends
     // (GV0=0.335 / GV0+GVH=0.665 below), the crease real cars have at the
