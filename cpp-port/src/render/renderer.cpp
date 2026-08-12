@@ -1815,7 +1815,24 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             for (size_t i = 0; i < bonePalette.size(); ++i) {
                 for (int k = 0; k < 16; ++k) boneFloats[i * 16 + k] = (float)bonePalette[i][k];
             }
-            const Mat4f model = carBodyModelMat(*track_, pose.s, pose.hdg, carPos);
+            // H10 (NT2003 engine-feel plan): the menu's static showcase car
+            // (CameraMode::Showcase) sits at s=0, and every track in
+            // TRACKS[] happens to bank the start/finish line by 12-23
+            // degrees -- H7's carBodyModelMat() tilting it there produced a
+            // hero shot that reads as broken (the parked car pitched hard
+            // and reading as sunk into the track), not the "car banks with
+            // the track" fix that reported bug was actually about, which
+            // was always about a MOVING race, never this parked, curated
+            // hero pose (kShowcaseCarIdx's own comment: "picked for a
+            // livery/pose that reads well in the showcase angle" -- an
+            // unplanned 12-23 degree tilt was never part of that curation).
+            // Keep the showcase car on the pre-H7 flat construction; every
+            // other camera mode (Chase/TopDown, i.e. real cars mid-race)
+            // keeps the real tilt H7 fixed.
+            const Mat4f model = cameraMode_ == CameraMode::Showcase
+                                     ? mat4Mul(mat4Translate((float)carPos.x, (float)carPos.y, (float)carPos.z),
+                                               mat4RotateY((float)-pose.hdg))
+                                     : carBodyModelMat(*track_, pose.s, pose.hdg, carPos);
             if (!skipCarDraws()) {
                 // G23: queued rather than drawn here, so submitWorld() can
                 // issue the setBoneMatrices()/draw() pair -- which bgfx's

@@ -8500,3 +8500,47 @@ assuming the blowout message always wins.
 
 Native `ctest`: 32/32 passing. No screenshot verification applies here for the same reason as
 H8 -- this is a physics/feel constant, not a rendering change.
+
+### H10: Menu showcase car no longer tilts with the start/finish line's own banking
+
+User re-tested and reported (with a screenshot of the menu screen): "home screen looks like
+shit and cars still look like shit." The screenshot showed the menu's static hero-shot car
+pitched hard and reading as sunk into the track -- not a livery/geometry defect (the K-series
+already closed those out), a real regression in H7's own "cars bank with the track" fix.
+
+**Root cause:** H7 tilts every car's body via `carBodyModelMat()` in the single shared per-car
+draw loop in `renderFrame()` -- correct for the racing field, but that loop also draws the
+menu's one decorative showcase car (`main.cpp`'s `menuShowcaseCars`), and every track in
+`TRACKS[]` happens to bank its own start/finish line (`s=0`, where `makeCar()` always spawns
+the showcase car) by 12-23 degrees. H7 shipped without checking this -- the showcase car had
+been silently, uniformly tilted on every track ever since, reading as broken (front pitched up,
+rear reading as sunk into the road) rather than as an intentional banked hero shot.
+
+**Fix:** in the per-car model-matrix construction, `CameraMode::Showcase` now keeps the
+pre-H7 flat construction (`mat4Mul(mat4Translate(carPos), mat4RotateY(-heading))`) instead of
+`carBodyModelMat()`; every other camera mode (Chase/TopDown, i.e. real cars mid-race) keeps
+H7's real tilt unchanged. `kShowcaseCarIdx`'s own comment already establishes this car's pose
+was hand-picked "for a livery/pose that reads well in the showcase angle" -- an unplanned
+12-23 degree pitch was never part of that curation, and the reported bug H7 fixed was always
+about a moving race, never this parked hero shot. The showcase camera itself already computes
+its eye/look/up from the real banked surface normal (`surfaceUp()`), so it still frames the
+(now flat) car correctly -- confirmed with WASM screenshots on 3 of the 4 tracks
+(THUNDER OVAL, MILLTOWN BULLRING, CEDAR VALLEY -- the exact track from the user's own
+screenshot is THUNDER OVAL, the menu's default, and now matches).
+
+**Found but explicitly NOT fixed in this pass:** cycling to BIG SABLE SPEEDWAY (the steepest
+track, 23 degrees, and the only one using the "dusk-lights" environment) shows the showcase car
+reduced to a tiny, barely-visible sliver near the horizon. Confirmed via `git stash` that this
+is a **pre-existing bug, unrelated to H7 or this fix** -- it reproduces identically on the
+pre-H7 code (git history before H7 even shipped the tilted body). A direct numeric probe of the
+showcase camera's eye/at/up vectors at that track's `s=0` found nothing degenerate (finite,
+sane values, `cos(angle between up and view direction) = 0.13`, nowhere near the +-1 that would
+break `mtxLookAt`) -- whatever's wrong lives somewhere else in that specific environment's
+render path (stadium lighting geometry, sky/fog for the "dusk-lights" preset, or something
+depth/clip-related), not in the eye/at/up math itself. Out of scope for a banking-tilt fix;
+flagged here as a real, reproduced, known follow-up rather than silently left for someone to
+rediscover.
+
+No automated test covers `renderFrame()`'s visual output directly (this is the same category as
+H1-H7's own screenshot-only verification). Native `ctest`: 32/32 (unaffected -- this touches
+only the menu's decorative render path).
