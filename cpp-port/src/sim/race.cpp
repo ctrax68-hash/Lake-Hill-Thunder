@@ -458,7 +458,7 @@ void tick(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& 
             if (c.wear > 0.92 && !c.blown && c.v > 25 && rngR.next() < 0.0004) {
                 c.blown = true;
                 c.hitFx = 1;
-                if (c.isPlayer) spotterSay(state, "FLAT TIRE — PIT NOW!");
+                if (c.isPlayer) spotterSay(state, "FLAT TIRE - PIT NOW!");
                 if (state.flag == "green" && state.greenLockT <= 0) {
                     c.spinT = 1.8 + rngR.next() * 1.2;
                     c.spinDir = rngR.next() < 0.5 ? -1 : 1;
@@ -468,7 +468,7 @@ void tick(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& 
             }
             if (c.dmg >= 1 && !c.out) {
                 c.out = true;
-                if (c.isPlayer) spotterSay(state, "TOO MUCH DAMAGE — WE’RE DONE");
+                if (c.isPlayer) spotterSay(state, "TOO MUCH DAMAGE - WE'RE DONE");
             }
         }
     }
@@ -558,7 +558,7 @@ void tick(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& 
         }
         if (player->fuel < 0.15 && !state.fuelMsg) {
             state.fuelMsg = true;
-            spotterSay(state, "FUEL LOW — PIT SOON");
+            spotterSay(state, "FUEL LOW - PIT SOON");
         }
         if (player->wear > 0.85 && !state.tireMsg) {
             state.tireMsg = true;
@@ -566,7 +566,7 @@ void tick(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& 
         }
         if (player->dmg > 0.6 && !state.dmgMsg) {
             state.dmgMsg = true;
-            spotterSay(state, "HEAVY DAMAGE — PIT FOR REPAIRS");
+            spotterSay(state, "HEAVY DAMAGE - PIT FOR REPAIRS");
         }
     }
 

@@ -759,6 +759,14 @@ set_tests_properties(determinism_test PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRE
 add_executable(race_sim_test tests/race_sim_test.cpp ${SIM_SOURCES})
 add_test(NAME race_sim_test COMMAND race_sim_test)
 
+# L2 (NT2003/2004 fidelity pass): drivability_test runs a FULL race through
+# the real tick() with the player car driven by a lane-holding controller,
+# and asserts the player is not wrecked out. See that file's own header for
+# why the rest of the suite could pass while the game was unplayable. Needs
+# the whole sim (race.cpp included), hence ${SIM_SOURCES} like race_sim_test.
+add_executable(drivability_test tests/drivability_test.cpp ${SIM_SOURCES})
+add_test(NAME drivability_test COMMAND drivability_test)
+
 # Phase 6b (PORT_PROGRESS.md): spotter_test exercises tick()'s spotter-message
 # trigger conditions (alongside calls, laps-to-go/fuel/tire/damage one-shots,
 # blowout/terminal-damage DNF) and c.hitFx accumulation end-to-end through a

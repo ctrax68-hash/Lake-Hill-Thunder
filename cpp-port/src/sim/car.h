@@ -52,46 +52,49 @@ struct CarConstants {
     // upgrade's own admission (PORT_PROGRESS.md's "Step 1" regression-pass
     // entry), never tuned for feel afterward.
     //
-    // First pass (H8) cut this 0.5 -> 0.12 rad, reasoning from the front
-    // axle's saturation slip angle alone (alpha_sat = mu*fzFront/cf ~=
-    // 0.077 rad): 0.5 rad put that ceiling at only ~15% of digital travel,
-    // so a tap crossed it on tick 1 (instant full lock); 0.12 rad moved it
-    // to ~64%, giving a multi-tick ramp. That fixed the TICK-1 saturation
-    // spike but missed a second, bigger problem the user's follow-up report
-    // ("still ... cutting way too hard", car still visibly off-axis in a
-    // supplied screenshot) forced a second look at: even a non-saturating
-    // steer angle produces a yaw-rate GAIN (v*delta/(wheelBase+Kus*v^2),
-    // Kus this model's tiny near-neutral understeer coefficient) that was
-    // still far too aggressive at 0.12 rad. Two scratch simulations against
-    // the real stepCar()/integrateYawDynamics() code (not just the closed-
-    // form estimate) confirmed this concretely, not just by feel:
-    //   1. A single 160ms tap (8 ticks) on a moderately banked straight left
-    //      a PERMANENT ~5-7 degree heading offset after release (r doesn't
-    //      snap back to 0 just because steer does -- correct car behavior,
-    //      but a huge offset for "one touch"), enough on its own to clip a
-    //      nearby wall for real (dmg went from 0 to 0.2) at 0.12 rad.
-    //   2. Simply HOLDING the turn key through the game's tightest real
-    //      corner (Milltown Bullring, R=100m) at the AI's own computed
-    //      target speed for it -- ordinary technique, not a tap at all --
-    //      overshot the friction limit at 0.12 rad and put the car ~11m off
-    //      the racing line into the wall (dmg 0.137) inside 2 seconds. That
-    //      is the "car still off-axis" report, reproduced directly.
-    // 0.05 rad was chosen by sweeping both scenarios together: it's the
-    // point where the 160ms tap stops touching the wall at all (0.06 still
-    // clips it), and independently the point where holding the tightest
-    // corner at speed tracks the racing line tightest and cleanest of every
-    // value tried (within +-1.3m the whole way, zero damage -- 0.06-0.08
-    // still ran several meters wide first, just short of the wall). At
-    // 0.05 rad the front axle's linear model, per the alpha_sat figure
-    // above, never actually saturates even at full lock any more -- this
-    // iteration deliberately stays inside the tire's proportional range
-    // rather than reaching for its friction ceiling, matching how gentle a
-    // 6.9-degrees-of-old vs. 2.9-degrees-of-new full-lock angle actually
-    // reads at any realistic corner-entry speed. Confirmed not to regress
-    // AI: a headless race (LHT_FORCE_RACE) gave the same wreckCount and
-    // comparable lap times at 0.05 as at 0.12. cf/cr/mu and every AI/wear/
-    // setup constant remain untouched.
-    double maxSteerAngle = 0.05;  // rad, full-lock front steer angle
+    // H8 cut this 0.5 -> 0.12 and H9 0.12 -> 0.05, each time reasoning from
+    // an isolated scenario (a tap; a held corner) and each time making the
+    // real problem WORSE. L1 (NT2003/2004 fidelity pass) reverses the
+    // direction entirely, to 0.26 rad (~15 degrees) -- the real-world figure,
+    // since a NASCAR turns its front wheels roughly 15 degrees to get through
+    // a corner. Two things forced the correction:
+    //
+    // 1. PLAYING the game instead of only unit-testing it. Holding gas and
+    //    tapping the steer key gently (120ms taps, 280ms apart) put the car
+    //    into the infield and then into a terminal-damage DNF on lap 1, 20th
+    //    of 20. Three passes of narrow, passing tests never caught that the
+    //    game was simply not drivable.
+    // 2. A drivability harness (tests/tire_model_test.cpp's L1 checks, and
+    //    scratchpad/drivability.cpp) that drives the real stepCar() with a
+    //    look-ahead lane-holding controller on all four tracks and measures
+    //    damage. Sweeping full lock across 0.05/0.12/0.26 at three different
+    //    cornering stiffnesses, 0.26 won on EVERY track and every stiffness:
+    //      lock=0.05: dmg 0.97/1.00/0.77/0.00, 2/3/2/2 laps (two write-offs)
+    //      lock=0.26: dmg 0.28/0.40/0.35/0.00, 3/4/2/2 laps (no write-offs)
+    //
+    // The mechanism, which every previous pass had backwards: a small lock
+    // does not make the car gentle, it makes the car UNABLE TO RECOVER. Once
+    // an excursion starts, 2.9 degrees of lock cannot generate enough
+    // corrective yaw to get back, so the car grinds down the wall and
+    // accumulates damage to a write-off. That is exactly the lap-1 DNF above.
+    // Tap harshness is a real but SEPARATE problem, and it is fixed at its
+    // own source -- the player's digital-input ramp rate in step_car.cpp --
+    // rather than by crippling the car's steering authority.
+    //
+    // Also tested and REJECTED, recorded so it isn't re-attempted: raising
+    // the understeer gradient by softening the front axle (cf 95000 ->
+    // 75000/53000) to cut the yaw gain. The closed-form case for it is
+    // genuinely attractive -- cf/cr are near-identical today, so Kus ~= 0.0008
+    // and the characteristic speed sqrt(L/Kus) lands at 60.9 m/s (~136 mph),
+    // inside the racing band, meaning yaw gain RISES with speed (8.65 at
+    // 30 m/s -> 10.92 at 60) when a real stock car should firm up. But
+    // measured on the same harness it made drivability consistently worse
+    // (at lock=0.26, dmg 0.28 -> 0.44 at cf=75000 -> 0.53 at cf=53000),
+    // because cf also carries the yaw DAMPING term: softening the front axle
+    // cut damping ~21% and the car became more oscillatory, which dominates
+    // the gain benefit under a real (bang-bang, digital) player input. cf/cr
+    // therefore stay exactly as they were.
+    double maxSteerAngle = 0.26;  // rad, full-lock front steer angle (~15 deg)
     double brakeBiasFront = 0.62; // fraction of brake force applied at the front axle
 
     // Regression-pass fix: the AI's steerIn formulas (step_car.cpp) were

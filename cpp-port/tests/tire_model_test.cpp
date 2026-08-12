@@ -181,75 +181,47 @@ int main() {
     // hard lock" report), while the current value does not saturate within
     // the window at all. ----
     {
-        const AxleLoads fzStatic = axleLoads(c, 0.0, 0.0);
-        const double alphaSat = c.mu * fzStatic.front / c.cf;
-
-        const double fraction = alphaSat / c.maxSteerAngle;
-        expect(fraction >= 1.0,
-               "full digital-input lock no longer reaches the front axle's own saturation slip angle");
-
-        auto tapSaturationTick = [&](double maxSteer) {
+        // The 0.12-per-tick player ramp (step_car.cpp) must stay slow enough
+        // that a short tap is a nudge, not a lock-slam. Replicates that exact
+        // smoothing from a standing start with the key held.
+        auto steerAfterTicks = [](double blend, int ticks) {
             double steer = 0.0;
-            for (int tick = 1; tick <= 10; ++tick) {
-                steer += (1.0 - steer) * 0.22; // step_car.cpp's isPlayer smoothing, steerIn=1 held
-                if (steer * maxSteer >= alphaSat) return tick;
-            }
-            return 11; // never saturated within the window
+            for (int t = 0; t < ticks; ++t) steer += (1.0 - steer) * blend;
+            return steer;
         };
-
-        expect(tapSaturationTick(0.5) == 1,
-               "sanity check: the H8-era maxSteerAngle (0.5) reproduces the original reported bug -- "
-               "a held tap saturates the front axle on the very first 20ms tick");
-        expect(tapSaturationTick(c.maxSteerAngle) == 11,
-               "the current maxSteerAngle never saturates the front axle from a tap at all");
+        // A "tap" is ~8 ticks (160ms). At the old 0.22 that reached 81% of
+        // full lock -- ~12 degrees of steering off a flick of a key, which is
+        // the reported jolt. At 0.12 it reaches ~64%.
+        const double tap = steerAfterTicks(0.12, 8);
+        expect(tap < steerAfterTicks(0.22, 8),
+               "the player ramp is slower than the old 0.22, so a short tap commands less lock");
+        expect(tap < 0.70, "a 160ms tap stays well short of full lock");
+        // ...but must still reach effectively full lock when genuinely held,
+        // or the player cannot catch a slide (measured: ramps at/below 0.04
+        // collapse into write-offs on two tracks).
+        expect(steerAfterTicks(0.12, 40) > 0.99,
+               "holding the key still reaches full lock within ~0.8s, preserving recovery authority");
     }
 
-    // ---- maxSteerAngle, continued (H9): the OTHER half of the persistent
-    // report -- not a tap at all, just holding the turn key through the
-    // game's tightest real corner (Milltown Bullring, R=100m) at the AI's
-    // own computed target speed for it, ordinary technique any player would
-    // use. Drives the REAL stepCar() end-to-end (not a hand transcription --
-    // this scenario is exactly what stepCar()'s isPlayer branch computes),
-    // holding gas+left the whole way from just before the tightest point.
-    // At the H8-era value (0.12 rad) this scratch-tested to the car running
-    // ~11m off the racing line into the wall inside 2 seconds -- the "car
-    // still off-axis" report, reproduced directly. Asserts the CURRENT
-    // value keeps the car close to the racing line and takes no damage. ----
-    {
-        const Track track(TRACKS[1]); // MILLTOWN BULLRING
-        const double cornerV = cornerSpeed(track, 100.0, 110.0, 0.0);
+    // The actual "can a player drive this?" check lives in its own test,
+    // tests/drivability_test.cpp, because it needs the full race.cpp tick()
+    // (the other 19 cars, collisions and the dmg>=1 DNF rule) rather than
+    // one car alone. A single-car version was written here first and is
+    // deliberately NOT kept: measured against the pre-L1 constants it
+    // reported ~0.97 damage while the full race had the player wrecked out
+    // entirely on 3 of 4 tracks, so it systematically under-reported the
+    // very failure it existed to catch. See that file's header.
 
-        Mulberry32 rng(12345u);
-        Car car = makeCar(true, 0, track, rng);
-        car.lap = 0;
-        car.v = cornerV;
-        car.s = 105.0; // just before the tightest point (s=110)
-        PointResult p0 = track.pointAt(car.s);
-        car.x = p0.x;
-        car.y = p0.y;
-        car.hdg = p0.hdg;
-        car.vdir = p0.hdg;
-
-        RaceState state;
-        state.mode = "race";
-        state.flag = "green";
-        PaceCar pace;
-        std::vector<Car> allCars{car};
-        PlayerInput input;
-        input.gas = true;
-        input.left = true; // held full lock toward the corner
-
-        double worstLat = 0;
-        for (int i = 0; i < 100; ++i) { // 2s
-            allCars[0] = car;
-            stepCar(car, state, track, allCars, pace, input);
-            if (std::fabs(car.lat) > std::fabs(worstLat)) worstLat = car.lat;
-        }
-        expect(std::fabs(worstLat) < track.halfW() * 0.9,
-               "holding full lock through the tightest real corner stays close to the racing line, not off "
-               "into the wall");
-        expect(car.dmg == 0.0, "holding full lock through the tightest real corner takes no wall damage");
-    }
+    // H9's "hold full lock through the tightest corner and stay on the racing
+    // line" check was REMOVED here rather than re-tuned, because L1 invalidated
+    // its premise rather than its threshold. That assertion was only ever
+    // satisfiable because full lock had been shrunk to 2.9 degrees -- barely
+    // more than Milltown's corner needs -- so pinning the key happened to
+    // trace the line. With full lock back at a realistic ~15 degrees, holding
+    // it through a corner that needs ~11.6 correctly oversteers to the inside;
+    // a real driver modulates rather than pinning the wheel. Asserting the old
+    // behaviour would be asserting the bug. The drivability guard above covers
+    // the same ground properly, with a driver that actually steers.
 
     // ---- integrateYawDynamics(): substep-count convergence over a
     // realistic in-game episode length. NOTE: sustained full-lock steering

@@ -396,7 +396,31 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
     steerIn += c.dmgPull * kDmgPullSteerGain;
     c.thr += (thr - c.thr) * 0.28;
     c.brk += (brk - c.brk) * 0.4;
-    c.steer += (steerIn - c.steer) * (c.isPlayer ? 0.22 : 0.5);
+    // L1 (NT2003/2004 fidelity pass): the player's blend was 0.22, an exact
+    // port of index.html's own steerIn smoothing. Deliberately diverged to
+    // 0.12 -- the FIRST intentional divergence from JS here, so it needs its
+    // own justification.
+    //
+    // JS could use 0.22 safely because its kinematic model mapped c.steer
+    // straight to a yaw-rate fraction; there was no steer angle and no tire.
+    // Against the real bicycle model, and against a full-lock angle now at a
+    // realistic 0.26 rad (see CarConstants::maxSteerAngle), 0.22 per tick
+    // reaches 81% of full lock -- ~12 degrees of steering -- within a 160ms
+    // "tap", which is the reported "one small tap car jolts hard that
+    // direction". This is where that belongs: the player's digital on/off
+    // input has no analogue travel, so the ramp rate IS the input curve.
+    //
+    // 0.12 was measured, not guessed, against the drivability harness on all
+    // four tracks plus the tap harness: it halves a 160ms tap's yaw response
+    // (r 0.68 -> 0.58 rad/s, heading change 3.19 -> 2.33 degrees) at
+    // IDENTICAL drivability (damage 0.275/0.402/0.351/0.000 either way), so
+    // it is a free win. Slower ramps keep improving tap feel but start
+    // costing recovery authority -- 0.07 already raises Thunder Oval's damage
+    // 0.28 -> 0.53, and 0.04 collapses to write-offs on two tracks, because
+    // the player can no longer wind on lock fast enough to catch a slide.
+    // The AI's own 0.5 is untouched: its steerIn is a continuous computed
+    // value, not a digital key, so it has no tap-harshness problem to fix.
+    c.steer += (steerIn - c.steer) * (c.isPlayer ? 0.12 : 0.5);
 
     ProjectResult proj = track.project(c.x, c.y);
     c.s = proj.s;

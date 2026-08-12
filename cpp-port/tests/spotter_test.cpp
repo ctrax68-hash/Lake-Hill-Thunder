@@ -29,6 +29,25 @@ void expectEqStr(const char* label, const std::string& got, const std::string& e
         std::fprintf(stderr, "%s: got '%s' expected '%s'\n", label, got.c_str(), expected.c_str());
         ++g_failures;
     }
+    // L4 (NT2003/2004 fidelity pass): every spotter string reaches the screen
+    // through ui_draw.cpp, whose glyph loop iterates BYTES (`for (char ch :
+    // text)`) against an ASCII/CP437 bitmap font. A multi-byte UTF-8
+    // character therefore explodes into several garbage glyphs -- an em-dash
+    // and a curly apostrophe in "TOO MUCH DAMAGE - WE'RE DONE" rendered
+    // in-game as "TOO MUCH DAMAGE <garbage> WE<garbage>RE DONE", which is
+    // what playing the game actually showed on screen. Guarding it here (on
+    // every message this test checks, rather than as a one-off) means a
+    // future non-ASCII spotter string fails a test instead of shipping as
+    // on-screen mojibake.
+    for (unsigned char ch : got) {
+        if (ch > 0x7F) {
+            std::fprintf(stderr, "%s: message is not pure ASCII ('%s') -- ui_draw.cpp's bitmap font "
+                                  "renders multi-byte UTF-8 as garbage glyphs\n",
+                         label, got.c_str());
+            ++g_failures;
+            break;
+        }
+    }
 }
 
 // Places `c` at track-position `s`, lateral offset `lat`, matching
@@ -219,7 +238,7 @@ int main() {
                        f.state.spotTxt == "INSIDE!" || f.state.spotTxt == "OUTSIDE!" ||
                            f.state.spotTxt == "THREE WIDE!");
         } else {
-            expectEqStr("blowout spotter message", f.state.spotTxt, "FLAT TIRE — PIT NOW!");
+            expectEqStr("blowout spotter message", f.state.spotTxt, "FLAT TIRE - PIT NOW!");
         }
     }
 
@@ -236,7 +255,7 @@ int main() {
         f.player->dmg = 1.0;
         tick(f.state, f.cars, f.pace, f.track, rngR, input, f.finishOrder);
         expectTrue("terminal damage sets out", f.player->out);
-        expectEqStr("terminal damage spotter message", f.state.spotTxt, "TOO MUCH DAMAGE — WE’RE DONE");
+        expectEqStr("terminal damage spotter message", f.state.spotTxt, "TOO MUCH DAMAGE - WE'RE DONE");
     }
 
     if (g_failures == 0) {

@@ -8544,3 +8544,85 @@ rediscover.
 No automated test covers `renderFrame()`'s visual output directly (this is the same category as
 H1-H7's own screenshot-only verification). Native `ctest`: 32/32 (unaffected -- this touches
 only the menu's decorative render path).
+
+## L1/L2 -- The car is actually drivable now, and a test finally proves it (NT2003/2004 fidelity pass)
+
+Reported for the third time running: "Steering still too much, one small tap car jolts hard
+that direction." H8 (0.5 -> 0.12) and H9 (0.12 -> 0.05) had each cut `maxSteerAngle`, each
+verified against a scenario test, each shipped, and each been wrong. This pass started
+differently -- by **playing the game** and by **researching what NASCAR Thunder actually did**
+rather than reasoning further from the same closed-form model.
+
+**Playing it settled the question immediately.** Driving the WASM build through Playwright --
+hold gas, tap the steer key gently (120ms taps, 280ms apart) -- put the car into the infield
+within a lap, then into terminal damage, finishing **20th of 20 with a DNF on lap 1**. The
+game was not "twitchy", it was unplayable, and three consecutive passes of green unit tests had
+said nothing about it.
+
+**Root cause, and why every previous fix made it worse.** A small steering lock does not make a
+car gentle -- it makes it *unable to recover*. At 0.05 rad the front wheels turned 2.9 degrees;
+once any excursion started there was not enough steering authority left to correct it, so the
+car ground along the wall and accumulated damage until it was written off. That is precisely
+the lap-1 DNF. Research confirmed the target: a real NASCAR turns its front wheels roughly
+**15 degrees** to get through a corner, so 2.9 was ~5x too little (and H8's original 28.6 about
+2x too much -- neither pass ever bracketed the real figure).
+
+`maxSteerAngle` therefore goes **up**, to 0.26 rad (~15 degrees), and the genuinely separate
+problem -- tap harshness -- is fixed at its own source: the player's digital-input ramp in
+`step_car.cpp`, cut from 0.22 to 0.12 per tick. That is this port's first deliberate divergence
+from `index.html`, and it is justified because JS had no steer angle at all (its kinematic model
+mapped `c.steer` straight to a yaw-rate fraction); against a real 15-degree lock, 0.22/tick
+reaches 81% of full lock inside a 160ms tap, which *is* the reported jolt. A digital on/off key
+has no analogue travel, so the ramp rate is the input curve.
+
+**Measured, not guessed.** A new harness drives the real `stepCar()`/`tick()` with a look-ahead
+lane-holding controller. Full-race results (300s, the real 20-car field, collisions, DNF rule):
+
+| | Thunder Oval | Milltown | Cedar Valley | Big Sable |
+|---|---|---|---|---|
+| before (lock 0.05 / ramp 0.22) | **DNF**, 50 impacts | **DNF**, 82 impacts | **DNF**, 19 impacts | ok, 5 |
+| after (lock 0.26 / ramp 0.12) | survived, 13 | survived, 12 | survived, 6 | survived, 11 |
+
+The ramp change is a free win on its own: it halves a 160ms tap's yaw response (r 0.68 -> 0.58
+rad/s, heading change 3.19 -> 2.33 degrees) at *identical* drivability. Slower ramps keep
+improving tap feel but start costing recovery -- 0.07 raises Thunder Oval's damage 0.28 -> 0.53,
+and 0.04 collapses into write-offs on two tracks. The AI's own 0.5 ramp is untouched: its
+`steerIn` is a continuous computed value, not a digital key, so it has no tap problem to fix.
+
+**A physically attractive change that measurement rejected**, recorded so it is not re-attempted:
+softening the front axle (`cf` 95000 -> 75000/53000) to raise the understeer gradient. The
+closed-form case is real -- `cf`/`cr` are near-identical, so `Kus ~= 0.0008` and the
+characteristic speed `sqrt(L/Kus)` lands at 60.9 m/s (~136 mph), *inside* the racing band, so
+yaw gain rises with speed (8.65 at 30 m/s -> 10.92 at 60) where a real stock car should firm up.
+But on the same harness it made drivability consistently worse (at lock 0.26: damage 0.28 ->
+0.44 at cf=75000 -> 0.53 at cf=53000), because `cf` also carries the yaw *damping* term --
+softening the front cut damping ~21% and the car became more oscillatory, which dominates the
+gain benefit under real (bang-bang, digital) player input. `cf`/`cr` stay exactly as they were.
+
+**L2 -- the guard that was missing all along.** New `tests/drivability_test.cpp` runs a full
+race through the real `tick()` -- grid start, pace laps, green, cautions, the other 19 cars,
+collisions, the `dmg>=1` DNF rule -- with the player driven by that same controller, and asserts
+the player is never wrecked out, never writes the car off, and is not in near-constant contact.
+Confirmed to genuinely catch the bug: it produces **8 failures and 3 DNFs on the pre-L1
+constants** and passes clean after. A single-car version was written first and deliberately
+discarded -- it reported ~0.97 damage where the full race had the player wrecked out entirely,
+because most real damage comes from traffic, so it under-reported the exact failure it existed
+to catch.
+
+H9's "hold full lock through the tightest corner and stay on the racing line" check was removed
+rather than re-tuned: it was only ever satisfiable because full lock had been shrunk to barely
+more than that corner needs. With a realistic lock, holding it through a corner that needs ~11.6
+degrees correctly oversteers to the inside -- a real driver modulates. Asserting the old
+behaviour would be asserting the bug.
+
+Native `ctest`: 33/33. Headless AI race (`LHT_FORCE_RACE`) unchanged at `wreckCount=2`.
+
+## L4 -- Garbled spotter text on screen (NT2003/2004 fidelity pass)
+
+Visible in the play session's own screenshots: `TOO MUCH DAMAGE - WE'RE DONE` rendered in-game
+as `TOO MUCH DAMAGE <garbage> WE<garbage>RE DONE`. `ui_draw.cpp`'s glyph loop iterates **bytes**
+(`for (char ch : text)`) against an ASCII/CP437 bitmap font, so the em-dash (U+2014) and curly
+apostrophe (U+2019) in four spotter strings each exploded into several garbage glyphs. Replaced
+with ASCII in `race.cpp`. `spotter_test.cpp`'s own `expectEqStr()` now additionally asserts every
+checked message is pure ASCII, so a future non-ASCII spotter string fails a test instead of
+shipping as on-screen mojibake.
