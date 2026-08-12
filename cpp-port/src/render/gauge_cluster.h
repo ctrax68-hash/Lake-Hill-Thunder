@@ -31,13 +31,15 @@ struct GaugeBox {
 // disagree with the car it is reporting on. `speed` is Car::v and `draftF`
 // is Car::draftF, both straight off the player's Car.
 //
-// The speed readout is captioned SPD, not MPH: Car::v is the simulation's
-// own speed unit (gear_rpm.cpp's table breaks at 14/26/40/70, which are not
-// mile-per-hour figures), so an MPH label would assert a unit the number
-// does not carry.
+// L9: the speed readout is captioned MPH and converted from Car::v. This
+// reverses an earlier claim here that Car::v carried no known unit -- the
+// gear breakpoints (14/26/40/70) are not mph figures precisely because they
+// are m/s, i.e. 31/58/89/157 mph, exactly a stock car's shift points. See
+// gauge_cluster.cpp's own comment for why the raw number made the game read
+// as half pace.
 //
 // `captionRow` is the dbgText row the "GEAR" caption prints on; "SPD"
-// follows three rows below and "DRAFT" six. The caller owns it, for the same
+// follows three rows below (the MPH readout) and "DRAFT" six. The caller owns it, for the same
 // reason status_bars.cpp's base row is caller-supplied -- dbgText can only
 // be addressed in whole 8x16 cells, so only the caller knows which rows its
 // own layout has left free.

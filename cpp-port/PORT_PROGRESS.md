@@ -8663,3 +8663,56 @@ Thunder's asphalt, particularly in the near field. That residue *is* an exposure
 track normal that multiplier lands around 3x, which is why a 0.25 albedo arrives near 0.73
 before tonemapping. Changing it touches every lit surface in the game (cars, stands, walls), so
 it is its own change with its own before/after pass rather than something to slip in here.
+
+## L9 -- "Cars are slow": the speedometer was showing metres per second
+
+Reported alongside the steering complaint: the cars feel slow. **They are not -- the readout
+was.** `Car::v` is metres per second and the gauge printed it raw under the caption `SPD`, so a
+car genuinely doing 107 mph displayed "48", and flat out at ~79 m/s it displayed "79" rather
+than **177 mph**. In a game whose entire subject is speed, one missing conversion made every lap
+read as half pace.
+
+The old comment in `gauge_cluster.cpp` justified the raw number by arguing the ported gear
+breakpoints (14/26/40/70) "are not mile-per-hour figures", and concluded the unit was therefore
+unknown. That reasoning was backwards: they are not mph figures *because they are m/s* --
+31/58/89/157 mph, which are exactly a stock car's shift points. The unit was always known, and
+the unqualified number was the thing asserting something untrue. Both that comment and the
+matching one in `gauge_cluster.h` are corrected rather than left recording the wrong conclusion.
+
+Display-only -- no physics constant moves -- so lap times, AI behaviour and every existing test
+are untouched. Native `ctest`: 33/33.
+
+## L8 -- Steering resolution: diagnosed, measured, and deliberately NOT shipped yet
+
+The user reported the car still overreacts after L1. The diagnosis is solid and worth recording
+even though the fix is not landing in this commit.
+
+**What is actually wrong.** Every previous pass (H8, H9, L1) moved the *magnitude* of the
+steering response. The real defect is *resolution* -- how much angle one unit of key-press buys.
+From this model's own steady-state relation, the steer angle each corner needs at racing speed:
+Big Sable 1.11 deg, Cedar 1.54, Thunder Oval 2.06, Milltown 2.47 (the tightest in the game).
+Against what a key press commands at 45 m/s: **one 20ms tick already commands 1.79 deg -- 72% of
+the tightest corner's worth -- and a 160ms tap commands 9.54 deg, a 26m turn radius at 100 mph.**
+The whole usable range is the first ~17% of input travel. That was equally true at every
+`maxSteerAngle` ever tried, which is exactly why none of them fixed it.
+
+**The fix that should work** is a nonlinear input curve (`angle = maxLock * |steer|^gamma`),
+which softens the centre while leaving full lock reachable when the key is held, so recovery
+authority is untouched. At the user-chosen gamma=2.5 a 160ms tap commands 4.89 deg (51m radius)
+instead of 9.54 deg (26m).
+
+**Why it is not shipped.** With the curve applied player-only, `drivability_test` degrades
+monotonically as gamma rises -- 0 failures at 1.0, 2 at 1.5, 3 at 2.0, 6 at 2.5, including a
+fresh DNF on Cedar Valley at 2.5. That is the exact failure mode this whole L-series exists to
+prevent, so the change is held rather than shipped against a red guard, and the guard was NOT
+loosened to accommodate it.
+
+**An honest caveat about that guard.** It drives a bang-bang autopilot, which systematically
+rewards raw steering authority -- the opposite of what the user is asking for -- so it is
+biased against this class of fix. Two replacement controllers were tried (proportional key
+pulsing, and a model-inverting controller that is gamma-neutral by construction). Both were
+*worse* drivers: the model-inverting one DNFs on Thunder Oval and Milltown at gamma=1.0, i.e.
+on the current shipped code, proving it is measuring controller quality rather than car
+quality. Neither was kept. The correct next step is to make the guard robust (average over
+several RNG seeds rather than trusting one chaotic trajectory) so it can adjudicate this
+honestly, rather than to tune either the curve or the thresholds until they agree.

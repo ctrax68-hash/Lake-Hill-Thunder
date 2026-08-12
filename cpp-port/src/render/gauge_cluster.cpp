@@ -105,15 +105,28 @@ void drawGaugeCluster(const GaugeBox& box, int captionRow, double rpm, int gear,
                          packColor(Theme::kWhite), segOff);
     }
 
-    // "SPD", not "MPH": Car::v is the simulation's own speed unit -- the
-    // ported gear table breaks at 14/26/40/70 (gear_rpm.cpp, index.html:1392),
-    // which are not mile-per-hour figures -- so labelling it MPH would be
-    // stating a unit this number does not carry. The JS original's own HUD
-    // prints it unqualified for the same reason.
-    bgfx::dbgTextPrintf(colAt(colX), captionRow + 3, attr(kWhite, kBlack), "SPD");
+    // L9 (NT2003/2004 fidelity pass): MPH, converted -- reversing this
+    // comment's own earlier conclusion, which was wrong.
+    //
+    // It previously argued that Car::v carries no known unit, on the grounds
+    // that the ported gear breakpoints (14/26/40/70, gear_rpm.cpp) "are not
+    // mile-per-hour figures". That is true but backwards: they are not mph
+    // figures because they are METRES PER SECOND -- 31/58/89/157 mph, which
+    // are exactly the shift points a stock car uses. The unit was always
+    // known, so the honest label is MPH and the raw number was the thing
+    // stating something untrue.
+    //
+    // Reported as "cars are slow". They are not -- the readout was. Flat out
+    // the car genuinely reaches ~79 m/s and the gauge displayed "79", when
+    // that is 177 mph; mid-corner it showed 48 for a real 107 mph. In a game
+    // whose entire subject is speed, that one missing conversion made every
+    // lap read as half pace. Display-only: no physics constant moves, so lap
+    // times, AI behaviour and every existing test are untouched.
+    constexpr double kMetresPerSecToMph = 2.2369362920544; // exact: 3600/1609.344
+    bgfx::dbgTextPrintf(colAt(colX), captionRow + 3, attr(kWhite, kBlack), "MPH");
     {
         char buf[8];
-        std::snprintf(buf, sizeof(buf), "%d", (int)std::lround(std::max(0.0, speed)));
+        std::snprintf(buf, sizeof(buf), "%d", (int)std::lround(std::max(0.0, speed) * kMetresPerSecToMph));
         const std::string txt(buf);
         const float w = measureSevenSegText(20.0f, 4.0f, txt);
         pushSevenSegText(uiOut, rightX - w, (float)(captionRow + 3) * kCellH + 18.0f, 20.0f, 30.0f, 4.0f, txt,
