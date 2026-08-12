@@ -8626,3 +8626,40 @@ apostrophe (U+2019) in four spotter strings each exploded into several garbage g
 with ASCII in `race.cpp`. `spotter_test.cpp`'s own `expectEqStr()` now additionally asserts every
 checked message is pure ASCII, so a future non-ASCII spotter string fails a test instead of
 shipping as on-screen mojibake.
+
+## L3 -- The track surface was invisible: anisotropic filtering (NT2003/2004 fidelity pass)
+
+Playing the game, the racing surface read as a near-uniform washed-out gray. Measured from a
+race screenshot, track pixels sat at **~185/255 all the way across the road, varying by +-3** --
+flat. Yet `track_surface_texture.cpp` already authors a real surface, confirmed by dumping the
+texture directly: a base of ~64 with rubber-groove bands dipping to ~42 (a genuine 34%
+contrast) at V=0.26/0.42/0.60, a warm apron tint, a yellow apron line, a white outer line and
+tar expansion seams. So this was never missing art -- all of it was being destroyed somewhere
+between the texture and the screen. Worth knowing because the racing groove is the signature
+look of an oval: per HowStuffWorks it is literally "a wide black line that follows each of the
+turns", laid down as rubber builds up.
+
+**Root cause: isotropic mip selection, not exposure.** The ribbon deliberately tiles one full
+copy of the texture per `asphaltTileLength()` of track -- 4-5m, tied to each track's own
+`Stadium::seamEvery` so expansion seams land at real spacing (G17). That means the U direction
+is enormously minified at any distance, and isotropic filtering picks the mip level from the
+*largest* derivative -- U -- then blurs V by that same amount. The lateral groove bands were
+being averaged away as collateral damage of the along-track tiling, with nothing wrong with the
+bands themselves. Exposure was ruled out first by arithmetic: if lighting alone were blowing a
+0.25 albedo up to 0.73, the 0.15 groove would still land at ~0.44 and stay clearly visible as
+banding, which it did not.
+
+Fixed at the sampler, where the problem is: `BGFX_SAMPLER_MIN_ANISOTROPIC |
+BGFX_SAMPLER_MAG_ANISOTROPIC` on the asphalt texture, which keeps V sharp while still filtering
+U honestly. Deliberately *not* fixed by re-authoring the texture darker or slowing the tiling --
+both would have been fighting the sampler, and the darker-texture version would have broken
+again under a different track's lighting preset. Measured after: lateral brightness spread
+across the road went from ~5 to 89-147 in race views on Big Sable, i.e. real structure where
+there was none.
+
+**Honestly incomplete.** The surface still reads brighter and lower-contrast than NASCAR
+Thunder's asphalt, particularly in the near field. That residue *is* an exposure question --
+`fs_textured_lit.sc` computes `texel * (ambient + sunColor*ndotl)`, and with a near-vertical
+track normal that multiplier lands around 3x, which is why a 0.25 albedo arrives near 0.73
+before tonemapping. Changing it touches every lit surface in the game (cars, stands, walls), so
+it is its own change with its own before/after pass rather than something to slip in here.

@@ -750,9 +750,31 @@ void Renderer::setTrack(const Track& track) {
         if (bgfx::isValid(asphaltTexture_)) bgfx::destroy(asphaltTexture_);
         const std::vector<uint8_t> asphaltPixels = buildAsphaltPixels(track.stadium().seamEvery);
         const std::vector<uint8_t> asphaltMips = buildRgba8MipChain(asphaltPixels, kAsphaltTextureSize);
-        asphaltTexture_ = bgfx::createTexture2D((uint16_t)kAsphaltTextureSize, (uint16_t)kAsphaltTextureSize, true, 1,
-                                                 bgfx::TextureFormat::RGBA8, 0,
-                                                 bgfx::copy(asphaltMips.data(), (uint32_t)asphaltMips.size()));
+        // L3 (NT2003/2004 fidelity pass): ANISOTROPIC filtering, and this
+        // sampler specifically needs it -- the whole authored track surface
+        // was invisible without it. Measured before the fix: rendered track
+        // pixels sat at a uniform ~185/255 all the way across the road, +-3,
+        // while buildAsphaltPixels() genuinely authors a base of ~64 with
+        // rubber-groove bands dipping to ~42 (a real 34% contrast), an apron
+        // tint, a yellow apron line and tar expansion seams. None of it
+        // reached the screen.
+        //
+        // Cause: the ribbon tiles one full copy of this texture per ~4m of
+        // track (asphaltTileLength() ties tiling to each track's own
+        // seamEvery so seams land at real spacing), so at any distance the
+        // U-direction minification is enormous. Isotropic mip selection
+        // picks the level from the LARGEST derivative -- U -- and then blurs
+        // V by that same amount, so the lateral groove bands were being
+        // destroyed as collateral damage of the along-track tiling, not
+        // because anything was wrong with them. That is exactly the case
+        // anisotropic filtering exists for: it keeps V sharp while still
+        // filtering U honestly. Fixing it here rather than by re-authoring
+        // the texture darker or slowing the tiling, both of which would just
+        // be fighting the sampler.
+        asphaltTexture_ = bgfx::createTexture2D(
+            (uint16_t)kAsphaltTextureSize, (uint16_t)kAsphaltTextureSize, true, 1, bgfx::TextureFormat::RGBA8,
+            BGFX_SAMPLER_MIN_ANISOTROPIC | BGFX_SAMPLER_MAG_ANISOTROPIC,
+            bgfx::copy(asphaltMips.data(), (uint32_t)asphaltMips.size()));
     }
 
     const double halfW = track.halfW();
