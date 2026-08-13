@@ -423,6 +423,25 @@ add_executable(lht_port
 )
 add_dependencies(lht_port lht_shaders)
 target_link_libraries(lht_port PRIVATE SDL2::SDL2 SDL2::SDL2main bgfx)
+
+# L13: the build identity drawn on the menu (src/ui/menu.cpp). Configure-time
+# is fine here, unlike the service worker's CACHE_NAME -- this is a human
+# readability aid, not a cache-correctness mechanism, and a slightly stale
+# short SHA still answers "which build am I looking at" as long as the date
+# moves. Falls back to a timestamp when git isn't available.
+execute_process(
+  COMMAND git rev-parse --short HEAD
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  OUTPUT_VARIABLE LHT_BUILD_SHA
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  RESULT_VARIABLE LHT_BUILD_SHA_RESULT
+)
+if(NOT LHT_BUILD_SHA_RESULT EQUAL 0 OR LHT_BUILD_SHA STREQUAL "")
+  set(LHT_BUILD_SHA "nogit")
+endif()
+string(TIMESTAMP LHT_BUILD_DATE "%m-%d %H:%M" UTC)
+target_compile_definitions(lht_port PRIVATE
+  LHT_BUILD_STAMP="${LHT_BUILD_SHA} ${LHT_BUILD_DATE}")
 target_include_directories(lht_port PRIVATE
   third_party/bgfx.cmake/bgfx/include
   third_party/bgfx.cmake/bx/include
@@ -465,22 +484,15 @@ if(EMSCRIPTEN)
   # shell indefinitely, no matter how many times the underlying deploy
   # actually changed. Falls back to a timestamp if `git` isn't available
   # (e.g. a source tarball with no .git) rather than failing the build.
-  execute_process(
-    COMMAND git rev-parse --short HEAD
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    OUTPUT_VARIABLE LHT_CACHE_VERSION
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    RESULT_VARIABLE LHT_GIT_RESULT
-  )
-  if(NOT LHT_GIT_RESULT EQUAL 0 OR LHT_CACHE_VERSION STREQUAL "")
-    string(TIMESTAMP LHT_CACHE_VERSION "%Y%m%d%H%M%S")
-  endif()
-  # Written into the build tree, not back into web/ -- unlike
-  # tools/gen_car_rig.py's committed output, this value is only meaningful
-  # for the commit currently being built, so baking it into a tracked file
-  # would just be pointless commit noise every push.
-  configure_file(${CMAKE_CURRENT_SOURCE_DIR}/web/sw.js.in
-                  ${CMAKE_CURRENT_BINARY_DIR}/generated_sw/sw.js @ONLY)
+  # L13: the stamp is now produced at BUILD time by cmake/stamp_sw.cmake,
+  # hashed from the built lht_port.wasm -- see the POST_BUILD step below and
+  # that script's own header. The previous execute_process(git rev-parse) +
+  # configure_file() pair here both ran at CONFIGURE time, so the stamp froze
+  # until someone reconfigured: shipped builds carried a CACHE_NAME three
+  # commits stale, the worker's activate handler consequently never purged
+  # anything, and installed PWAs kept serving their original cached build
+  # indefinitely. That is the whole reason repeated real gameplay fixes
+  # appeared to change nothing for the player.
 
   # ---- Phase 7b: PWA installability wrapper (PORT_PROGRESS.md) ----
   # emcc's own output mechanism only ever produces lht_port.html/.js/.wasm --
@@ -490,6 +502,14 @@ if(EMSCRIPTEN)
   # (not a configure-time file(COPY)) so editing these files doesn't need a
   # manual reconfigure to take effect.
   add_custom_command(TARGET lht_port POST_BUILD
+    # L13: regenerate sw.js FIRST, stamped from the wasm just produced, then
+    # stage it. `copy_if_different` on a file whose content now actually
+    # changes per build is what finally makes the cache bust.
+    COMMAND ${CMAKE_COMMAND}
+            -DWASM=$<TARGET_FILE_DIR:lht_port>/lht_port.wasm
+            -DTEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/web/sw.js.in
+            -DOUT=${CMAKE_CURRENT_BINARY_DIR}/generated_sw/sw.js
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/stamp_sw.cmake
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_CURRENT_SOURCE_DIR}/web/manifest.json
             ${CMAKE_CURRENT_BINARY_DIR}/generated_sw/sw.js

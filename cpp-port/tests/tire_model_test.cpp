@@ -221,9 +221,16 @@ int main() {
         const double Kus = (c.mass / c.wheelBase) * (aR / c.cf - aF / c.cr);
         const double deltaNeeded = (vRace / rMin) * (c.wheelBase + Kus * vRace * vRace) / vRace;
 
-        // The player's mapping, exactly as step_car.cpp applies it.
+        // The player's mapping, exactly as step_car.cpp applies it -- INCLUDING
+        // L15's speed-sensitive yaw-authority cap, without which this would be
+        // asserting a mapping the game no longer has.
+        auto lockAt = [&](double v) {
+            const double vAuth = std::max(6.0, v);
+            const double authored = c.steerYawAuthority * (c.wheelBase + Kus * vAuth * vAuth) / vAuth;
+            return std::min(c.maxSteerAngle, authored);
+        };
         auto commandedAngle = [&](double steer) {
-            return std::pow(steer, c.steerCurveGamma) * c.maxSteerAngle;
+            return std::pow(steer, c.steerCurveGamma) * lockAt(vRace);
         };
 
         // The bug, stated as a test. A 160ms tap used to command ~3.9x the
@@ -244,10 +251,25 @@ int main() {
         // used to be 72% of a whole corner's steering.
         expect(commandedAngle(steerAfterTicks(0.12, 1)) < deltaNeeded * 0.25,
                "the shortest possible key press is a fine nudge, not most of a corner's steering");
-        // ...while a HELD key still reaches full lock. This is exactly the
-        // property the rejected speed-cap alternative would have destroyed.
-        expect(commandedAngle(steerAfterTicks(0.12, 50)) > c.maxSteerAngle * 0.99,
-               "holding the key still reaches full lock, preserving recovery authority");
+        // ---- L15: what a HELD key commands. Previously this asserted that
+        // holding reaches full lock, which is exactly what made the car spin:
+        // full lock is 15 deg while the tightest corner needs 2.47, so holding
+        // the button commanded ~6x the steering the track ever asks for -- a
+        // 16m radius at 100mph, which is a spin, not a hard turn. The property
+        // that actually matters is that a held key gives a firm corner and NOT
+        // a spin, and that low speed keeps every degree of lock for recovery.
+        const double heldAngle = commandedAngle(steerAfterTicks(0.12, 50));
+        expect(heldAngle > deltaNeeded,
+               "holding the key can still out-turn the tightest corner, so a slide is catchable");
+        expect(heldAngle < deltaNeeded * 3.0,
+               "...but holding it no longer commands multiples of any corner on the track (i.e. a spin)");
+        // Low speed must keep the full mechanical lock -- pit manoeuvring and
+        // spin recovery depend on it, and this is the property that made a
+        // blanket speed cap the wrong shape of fix.
+        expect(lockAt(8.0) > c.maxSteerAngle * 0.99,
+               "at low speed the full mechanical lock is still available");
+        expect(lockAt(vRace) < c.maxSteerAngle,
+               "at racing speed the yaw-authority cap is what binds, not the mechanical lock");
     }
 
     // The actual "can a player drive this?" check lives in its own test,

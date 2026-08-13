@@ -1,17 +1,43 @@
-// Phase 7b (PORT_PROGRESS.md): cache-first service worker for the WASM app
-// shell. CACHE_NAME bakes in the deployed commit's short git SHA (see this
-// file's own .in template + CMakeLists.txt's configure_file() call) so
-// every real deploy is automatically cache-busting -- the activate handler
-// below deletes anything not matching the current name, but that only
-// helps if the name actually changes every time, which a hand-maintained
-// string reliably failed to do (a real live-site bug this project hit
-// more than once: CACHE_NAME sat at 'lht-v4' across several real feature
-// deploys, so browsers with an already-installed service worker never had
-// a reason to notice anything changed and kept serving their original
-// cached shell indefinitely).
+// Phase 7b (PORT_PROGRESS.md): service worker for the WASM app shell.
+//
+// L13 (NT2003/2004 fidelity pass) rewrote the caching strategy after
+// discovering that this file was serving stale builds indefinitely -- the
+// single most likely reason several rounds of real, verified gameplay fixes
+// never reached the player at all. Three separate defects, all now fixed:
+//
+//  1. CACHE_NAME was stamped with the git SHA via CMake's configure_file(),
+//     which runs at CONFIGURE time, not build time. So the stamp froze at
+//     whenever cmake last reconfigured: HEAD was three commits past the
+//     value actually shipped in build-web/sw.js. Since activate only deletes
+//     caches whose name DIFFERS from the current one, a name that never
+//     changes means a cache that is never purged. It is now stamped from a
+//     hash of the built lht_port.wasm, computed by a POST_BUILD step, so it
+//     changes whenever the build's actual content changes -- including local
+//     builds with no commit, which a SHA can never capture. (This file's
+//     previous comment described the same class of bug happening before, with
+//     a hand-maintained 'lht-v4' string; the SHA was meant to be the fix and
+//     merely moved the freeze one step earlier.)
+//
+//  2. APP_SHELL listed './index.html', which does not exist -- emcc emits
+//     lht_port.html. cache.addAll() rejects ATOMICALLY if any entry 404s, so
+//     the install-time precache always failed outright, silently. The app
+//     still worked only because the fetch handler cached at runtime, and that
+//     runtime cache then never expired.
+//
+//  3. The fetch handler was cache-first for EVERYTHING, including the wasm.
+//     Cache-first on the application binary is what makes a bad version
+//     sticky, and an installed (added-to-home-screen) PWA makes it stickiest.
+//     The app shell is now network-first with a cache fallback, so a running
+//     install picks up a new build on its next launch while still working
+//     offline. Icons/manifest stay cache-first -- they are small, static, and
+//     genuinely benefit from it.
 const CACHE_NAME = 'lht-@LHT_CACHE_VERSION@';
+
+// The real entry document is lht_port.html (emcc's own output name), not
+// index.html. Everything here must actually exist or addAll() rejects and
+// the whole precache is lost.
 const APP_SHELL = [
-  './index.html',
+  './lht_port.html',
   './lht_port.js',
   './lht_port.wasm',
   './manifest.json',
@@ -19,6 +45,15 @@ const APP_SHELL = [
   './icons/icon-512.png',
   './icons/apple-touch-icon.png',
 ];
+
+// Requests that must never be served from a stale cache while the network is
+// available: the program itself. Matched by suffix so query strings don't
+// defeat it.
+function isAppShellCode(url) {
+  return url.pathname.endsWith('/lht_port.html') || url.pathname.endsWith('/lht_port.js') ||
+         url.pathname.endsWith('/lht_port.wasm') || url.pathname.endsWith('/') ||
+         url.pathname.endsWith('/index.html');
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -39,6 +74,26 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+
+  if (isAppShellCode(url)) {
+    // Network-first: take a fresh copy when we can, fall back to cache when
+    // offline. This is what lets an already-installed app pick up a new build.
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response.ok && response.type === 'basic') {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          }
+          return response;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // Everything else (icons, manifest): cache-first is fine and saves traffic.
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;

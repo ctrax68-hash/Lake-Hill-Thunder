@@ -147,6 +147,20 @@ void drawMenu(const MenuSelection& sel, int laps, bool tilt, const std::string& 
 
     bgfx::dbgTextPrintf(kCol, kRowTitle, attr(kYellow, kBlack), "LAKE HILL THUNDER");
 
+    // L13 (NT2003/2004 fidelity pass): the running build's identity, on
+    // screen. This exists because several rounds of real, verified gameplay
+    // fixes appeared to change nothing for the player, and neither of us
+    // could tell whether a given build had actually reached the browser --
+    // the service worker had been serving a permanently stale cached copy
+    // (see web/sw.js.in's header). A build stamp makes "is this the new
+    // build?" answerable at a glance instead of by inference, which is worth
+    // far more than the two lines it costs. LHT_BUILD_STAMP is defined by
+    // CMakeLists.txt; the fallback keeps non-CMake/IDE builds compiling.
+#ifndef LHT_BUILD_STAMP
+#define LHT_BUILD_STAMP "dev"
+#endif
+    bgfx::dbgTextPrintf(kCol + 19, kRowTitle, attr(kGrey, kBlack), "build %s", LHT_BUILD_STAMP);
+
     // Checkered accent band between the title and the first bar -- a
     // generic racing motif, not a reproduction of any real logo/lockup.
     const float checkerY = (kRowTitle + 1) * kCellH;

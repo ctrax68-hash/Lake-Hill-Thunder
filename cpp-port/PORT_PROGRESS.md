@@ -8784,3 +8784,83 @@ verifies it bit-for-bit) and was harmless under JS's *kinematic* model, which ha
 to violate -- it became wrong the moment the bicycle tire model replaced it. Fixing it is a
 deliberate divergence affecting the AI as well, so it gets its own pass rather than being folded
 in here. Milltown's remaining late-race DNFs in the guard trace to this.
+
+## L13 -- The service worker was serving a stale build, probably for this entire conversation
+
+Report: "still unplayable, immediately crash after using turn button" -- the fourth such report
+after four rounds of measured, verified steering fixes. This round I stopped tuning the car and
+asked why none of it was landing. The answer was that it very likely never reached the player.
+
+`build-web/sw.js` was **cache-first**, and its `activate` handler only deletes caches whose name
+differs from the current one -- so `CACHE_NAME` is the *only* thing that can invalidate a
+browser's copy. Three defects meant it never changed:
+
+1. **The stamp was frozen at CMake CONFIGURE time.** `execute_process(git rev-parse)` +
+   `configure_file()` both run during configure, so a plain rebuild never refreshed it. Caught
+   red-handed: `HEAD` was `178969f` while the shipped worker still read `lht-bdd7a5f` -- three
+   commits stale. This file's own comment described the same class of bug happening before with
+   a hand-maintained `'lht-v4'` string; switching to the git SHA was meant to be the fix and
+   merely moved the freeze one step earlier.
+2. **`APP_SHELL` listed `./index.html`, which does not exist** (emcc emits `lht_port.html`).
+   `cache.addAll()` rejects atomically on any 404, so the install-time precache failed outright,
+   silently, every time. The app worked only via runtime caching -- which then never expired.
+3. **Cache-first on the application binary itself**, which is what makes a bad version sticky.
+
+The user confirmed they run it **installed to the home screen**, which is the worst case: a PWA
+pins its cached shell hardest. The most probable single explanation for four rounds of "nothing
+changed" is that they were playing the build they first installed.
+
+**Fixes.** The stamp now comes from a **SHA-256 of the built `lht_port.wasm`**, computed by a
+`POST_BUILD` step (`cmake/stamp_sw.cmake`) so it re-runs on every build and changes whenever the
+build's actual content changes -- including local builds with no commit behind them, which a git
+SHA can never capture. `APP_SHELL` now lists files that exist. The app shell (html/js/wasm) is
+**network-first with cache fallback**, so an installed app picks up a new build on next launch
+while still working offline; icons/manifest stay cache-first.
+
+**Verified by the round-trip that had never been run:** changed a constant, rebuilt *without*
+reconfiguring, and the cache name moved `lht-2efab52bb381` -> `lht-b0d3d844e832`; reverting the
+constant restored the original stamp exactly, confirming it is content-addressed and won't churn
+on identical builds.
+
+**Also added: an on-screen build stamp** (`build <sha> <date>`, beside the menu title). Several
+rounds of this conversation were spent unable to tell whether a fix had reached the browser at
+all. A stamp makes that answerable at a glance instead of by inference, for both of us.
+
+## L15 -- Holding the turn button commanded a spin, at any speed
+
+The user's actual symptom, once asked precisely, was **"car spins wildly but survives"** -- a
+yaw-instability, not the damage/DNF failure the previous rounds had been chasing. That reframes
+it: L8's input curve softened the *centre* of the travel, which does nothing whatsoever for a
+player who simply **holds** the button.
+
+The arithmetic: at 45 m/s the tightest corner in the game needs **2.47 deg** of steer, while full
+lock is **15 deg**. Holding the key therefore commanded roughly **6x** the steering the track
+ever asks for -- a **16m turning radius at 100mph**, which is not a hard turn, it is a spin.
+
+**Fix:** cap full player lock by constant yaw *authority* rather than by angle, since the angle
+that means "a spin" changes with speed. `delta_max = steerYawAuthority * (wheelBase + Kus*v^2)/v`,
+clamped to `maxSteerAngle` -- which, inverting the model's own steady-state relation, makes full
+input command exactly `steerYawAuthority` rad/s at every speed. At 0.8 rad/s:
+
+| speed | lock | held-key radius (was) | tap radius (was) |
+|---|---|---|---|
+| 10 m/s | 13.1 deg (full) | 12 m | 38 m |
+| 45 m/s | 4.4 deg | **56 m** (16 m) | **171 m** (26 m) |
+| 60 m/s | 4.2 deg | 75 m | 229 m |
+
+Low speed keeps every degree of mechanical lock, so pit manoeuvring and spin recovery are
+untouched -- that is precisely the property a blanket speed cap would have destroyed.
+
+**Correcting an earlier rejection.** I tested a speed-sensitive cap earlier in this work and
+rejected it, reporting that it "cost recovery authority and produced DNFs at every setting".
+That verdict came from `drivability_test`'s bang-bang autopilot -- the instrument later proven
+to be measuring its own incompetence rather than the car (63% DNF against the game's own AI
+managing 17% on the identical car, slot, traffic and seeds). The measurement was invalid and the
+rejection did not stand.
+
+`tests/tire_model_test.cpp`'s static assertions were updated to model the real (capped) mapping
+rather than the uncapped one they had been describing, and now assert the property that actually
+matters: a held key can still out-turn the tightest corner (so a slide is catchable) but no
+longer commands multiples of any corner on the track. Verified both directions -- disabling the
+cap fails them. Browser-checked: holding the turn key for a full second now leaves the car on
+track, undamaged, at 71 MPH. Native `ctest` 33/33; AI unchanged at `wreckCount=2` (player-gated).

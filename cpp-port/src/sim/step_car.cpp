@@ -606,8 +606,25 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         // time for nothing.
         double steerAngle = c.steer * CAR.maxSteerAngle;
         if (c.isPlayer) {
+            // L15: cap full lock by constant yaw AUTHORITY before applying
+            // L8's curve. Full lock is 15 deg, but the tightest corner needs
+            // 2.47 deg at racing speed -- so holding the key used to command
+            // ~6x what the track asks for, i.e. a spin ("car spins wildly").
+            // Inverting the steady-state relation r = v*delta/(L + Kus*v^2),
+            // delta_max = C*(L + Kus*v^2)/v makes full input command exactly
+            // C rad/s at any speed. Clamped to maxSteerAngle so low speed
+            // keeps every degree of lock for manoeuvring and spin recovery.
+            const double aF = CAR.wheelBase * (1 - CAR.weightDistF);
+            const double aR = CAR.wheelBase * CAR.weightDistF;
+            const double kus = (CAR.mass / CAR.wheelBase) * (aR / CAR.cf - aF / CAR.cr);
+            const double vAuth = std::max(6.0, vSafe);
+            const double lockAuth = CAR.steerYawAuthority * (CAR.wheelBase + kus * vAuth * vAuth) / vAuth;
+            const double lock = std::min(CAR.maxSteerAngle, lockAuth);
+            // L8's curve, applied to that speed-appropriate lock: fine
+            // control near centre, and now a ceiling that is a hard corner
+            // rather than a spin.
             const double mag = std::pow(std::fabs(c.steer), CAR.steerCurveGamma);
-            steerAngle = sign(c.steer) * mag * CAR.maxSteerAngle;
+            steerAngle = sign(c.steer) * mag * lock;
         }
 
         // Longitudinal-grip fraction already spent at each axle (RWD engine

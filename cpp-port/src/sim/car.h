@@ -137,6 +137,39 @@ struct CarConstants {
     // gamma 1.0 and 2.5 (15/24 both). An earlier single-seed run suggested
     // otherwise and was noise -- see tests/drivability_test.cpp's header.
     double steerCurveGamma = 2.5; // player-only; see step_car.cpp's use site
+
+    // L15 (NT2003/2004 fidelity pass): maximum steady-state yaw rate, rad/s,
+    // that FULL player input is allowed to command -- at any speed.
+    //
+    // Reported symptom: "car spins wildly but survives". L8's input curve
+    // softened the centre of the travel, which does nothing at all for a
+    // player who simply HOLDS the turn button, and holding it is what spins
+    // the car. The arithmetic, from the same steady-state relation used
+    // throughout: at 45 m/s the tightest corner in the game needs 2.47 deg of
+    // steer, while full lock is 15 deg -- roughly 6x more than the track ever
+    // asks for, commanding a 16m turning radius at 100mph. That is not a
+    // hard turn, it is a spin, and no amount of curve shaping prevents it.
+    //
+    // The cap is expressed as yaw authority rather than as an angle because
+    // the angle that means "a spin" changes with speed: delta_max =
+    // steerYawAuthority * (wheelBase + Kus*v^2) / v, clamped to
+    // maxSteerAngle. Inverting the steady-state relation, that makes full
+    // input command exactly this yaw rate at every speed, so the car answers
+    // the controls consistently instead of turning into a hair trigger as it
+    // gains speed. At 0.8 rad/s that works out to ~4.4 deg of lock at 45 m/s
+    // (still comfortably more than the 2.47 the tightest corner needs, and a
+    // 56m radius rather than 16m), ~7.1 deg at 20 m/s, and the full 15 deg
+    // below ~10 m/s -- so pit-lane manoeuvring and spin recovery keep every
+    // degree of steering they have ever had.
+    //
+    // I rejected a speed-sensitive cap earlier in this work, on the grounds
+    // that it "cost recovery authority and produced DNFs at every setting".
+    // That verdict came from drivability_test's bang-bang autopilot, which
+    // was later proven to be measuring its own incompetence rather than the
+    // car (63% DNF against the game's own AI managing 17% on the identical
+    // car, slot, traffic and seeds). The measurement was invalid, so the
+    // rejection does not stand.
+    double steerYawAuthority = 0.8; // rad/s at full lock; player-only
     double brakeBiasFront = 0.62; // fraction of brake force applied at the front axle
 
     // Regression-pass fix: the AI's steerIn formulas (step_car.cpp) were
