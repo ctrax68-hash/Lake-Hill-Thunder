@@ -22,7 +22,13 @@
 //     lht_port.html. cache.addAll() rejects ATOMICALLY if any entry 404s, so
 //     the install-time precache always failed outright, silently. The app
 //     still worked only because the fetch handler cached at runtime, and that
-//     runtime cache then never expired.
+//     runtime cache then never expired. First fix attempt swapped the entry
+//     to './lht_port.html' -- correct for a local build-web/ serve, but wrong
+//     again on the actual GitHub Pages deploy, which renames the built file
+//     to index.html (pages.yml). Final fix: the HTML document isn't precached
+//     at all (see the APP_SHELL comment below); only the fetch handler's
+//     network-first runtime path serves it, since that path is filename-
+//     agnostic across both environments.
 //
 //  3. The fetch handler was cache-first for EVERYTHING, including the wasm.
 //     Cache-first on the application binary is what makes a bad version
@@ -33,11 +39,16 @@
 //     genuinely benefit from it.
 const CACHE_NAME = 'lht-@LHT_CACHE_VERSION@';
 
-// The real entry document is lht_port.html (emcc's own output name), not
-// index.html. Everything here must actually exist or addAll() rejects and
-// the whole precache is lost.
+// The HTML entry document is deliberately NOT precached here. Locally it's
+// emcc's own output name (lht_port.html); on the real GitHub Pages deploy,
+// .github/workflows/pages.yml renames the built file to index.html. Any
+// single hardcoded name is wrong in one of those two environments, and
+// addAll() rejects ATOMICALLY on a single 404, which would silently kill
+// the whole precache again -- exactly the bug this rewrite exists to fix.
+// The fetch handler's isAppShellCode() below already matches lht_port.html,
+// index.html, and bare '/', so the document gets cached opportunistically
+// on first real visit instead, with no environment assumption baked in.
 const APP_SHELL = [
-  './lht_port.html',
   './lht_port.js',
   './lht_port.wasm',
   './manifest.json',
