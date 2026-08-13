@@ -8927,3 +8927,59 @@ Verified: native ctest 33/33. tire_model_test passes with margin on the new rati
 drivability_test (steerYawAuthority=0.95 alone, engine constants unchanged): DNF 0/24, Thunder
 Oval worst-seed damage 0.392 -> 0.627 (up, but nowhere near the 1.0 DNF threshold), all other
 tracks unchanged from baseline.
+
+## L18 -- Engine power/force retune: a deliberate JS-parity departure
+
+Second half of the same feedback round as L17: "car acceleration sucks." Traced to
+CAR.power/CAR.maxForce (car.h) -- a byte-for-byte, never-retuned port of the original JS game's
+own engine constants (index.html:457), shared identically across the player AND all 19 AI cars
+(no player-only throttle ramp or traction-control exists anywhere in this codebase).
+
+Engine force model (step_car.cpp ~522-555): `engFRaw = min(maxForce, power/v) * modifiers`,
+clamped by the traction budget `engF = min(engFRaw, muEff*fz.rear)`.
+
+Old values (245000 W / 8200 N) worked out to 219 hp/ton, a=5.10 m/s^2 at 20 m/s, a=3.37 m/s^2 at
+40 m/s (the power-limited region -- exactly corner-exit-to-next-corner on this oval), 0-60=5.22s,
+top speed 177.3 mph. Real stock-car reference is ~435 hp/ton -- roughly double what this model had.
+
+**First attempt, rejected by measurement.** Raised power to 295000 W (+20%) and maxForce to
+8700 N (+6%), reasoned purely from the traction-budget clamp (which makes an unrealistic
+wheelspin-free launch structurally impossible regardless of how high these constants go).
+`drivability_test`'s 6-seed x 4-track solo guard caught what that arithmetic couldn't: Cedar
+Valley's worst-seed damage jumped 0.000 -> 1.000 and Thunder Oval's 0.392 -> 0.934. Isolating each
+constant (power alone, maxForce alone, combined with L17's steering) showed no single clean
+culprit -- each independently pushed a different track toward its worst case, and the outcome
+flipped almost discontinuously with as little as a 4% change in one constant, holding the others
+fixed. That's this simulator's own previously-documented chaos (bang-bang control + wall
+collisions across only 6 seeds), not a smooth dose-response curve, which makes fine-grained
+bisection against a single run's worst-case number unreliable. Neither jump failed the test's
+actual codified gate (`dnfRate <= 0.40`, `earlyDnf == 0` both held), but a worst-seed trajectory
+ending in a fully wrecked car is a real regression even when the assertion doesn't catch it, so I
+backed off instead of shipping past a technicality.
+
+**Settled values:** power 245000 -> 265000 W (+8%, 355 hp, 237 hp/ton), maxForce 8200 -> 8350 N
+(+2%) -- the largest step, combined with L17's steerYawAuthority=0.95, that stayed clean (not
+merely passing) across every track's worst-seed damage:
+
+                   old       new
+    hp/ton         219       237
+    a @ 20 m/s     5.10      5.20 m/s^2
+    a @ 40 m/s     3.37      3.70 m/s^2  (+10%, the flagged weak point)
+    0-60 mph       5.22 s    5.12 s
+    top speed      177.3     182.5 mph
+
+**Deliberately not matched to real NASCAR's ~435 hp/ton**, and smaller than the first attempt
+above. Two already-open, documented issues explain why a bigger step keeps finding trouble on
+specific tracks rather than failing outright: L12 (`cornerSpeed()`/`targetSpeed()` already command
+entry speeds up to 4.26x the tire's physical limit on some tracks -- faster corner-exit raises how
+hard/often a car reaches its next over-committed corner) and wall-contact damage (~0.105 dmg/sec
+at racing speed, ~9.5s cumulative contact is a permanent DNF). This leaves real "sucks" headroom
+on the table on purpose -- the honest path to a bigger engine retune later is fixing L12 and/or
+the wall-damage rate first, not re-bisecting this same chaotic 6-seed guard with different luck.
+`torqueCurveMultiplier()` (car.cpp) is untouched -- shape-only, already tested separately, not the
+lever for overall pace.
+
+**Verified:** native ctest 33/33. `drivability_test` (final combined L17+L18 values): DNF rate
+0/24 (unchanged from baseline), Thunder Oval worst-seed damage 0.392 -> 0.668, Milltown/Cedar
+Valley/Big Sable Speedway all at or below their pre-change worst-case damage. No early-lap DNFs on
+any track.

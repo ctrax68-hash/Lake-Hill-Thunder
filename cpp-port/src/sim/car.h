@@ -16,8 +16,75 @@ using Color3 = std::array<double, 3>;
 // CAR (index.html:398)
 struct CarConstants {
     double mass = 1500;
-    double power = 245000;
-    double maxForce = 8200;
+
+    // L18 (first post-launch feedback pass): "car acceleration sucks".
+    // power/maxForce below were a byte-for-byte, never-retuned port of the
+    // original JS game's own engine constants (index.html:457) -- shared
+    // identically by the player and all 19 AI cars (no player-only throttle
+    // ramp or traction-control exists anywhere in this codebase, unlike
+    // steering's player/AI split). step_car.cpp's engine-force model:
+    // engFRaw = min(maxForce, power/v) * modifiers, further clamped by the
+    // traction budget engF = min(engFRaw, muEff*fz.rear) -- so raising these
+    // constants can't produce an unrealistic wheelspin-free launch; the
+    // clamp is a real physical safety net, not just a test guard.
+    //
+    // Old values (245000 W / 8200 N) worked out to 219 hp/ton, a=5.10 m/s^2
+    // at 20 m/s, a=3.37 m/s^2 at 40 m/s -- and that 40 m/s figure is exactly
+    // the power-limited, corner-exit-to-next-corner region on this oval,
+    // which is what most likely read as "sucks" rather than 0-60 or top
+    // speed in isolation. Real stock-car reference is ~435 hp/ton -- roughly
+    // double what this model had.
+    //
+    // power alone can't fix the corner-exit weakness: below the power/
+    // maxForce breakeven speed, engFRaw = min(maxForce, power/v) is governed
+    // entirely by the flat maxForce cap, and corner-exit speeds on this oval
+    // sit largely in/below that band -- so both constants move together.
+    //
+    // First attempt raised power 245000 -> 295000 W (+20%) and maxForce
+    // 8200 -> 8700 N (+6%), reasoned from the traction budget alone (engF is
+    // clamped by muEff*fz.rear, so nothing about the launch itself gets
+    // unrealistic). drivability_test's 6-seed x 4-track solo guard caught
+    // what the traction-budget arithmetic couldn't see: at those values,
+    // Cedar Valley's worst-seed damage jumped 0.000 -> 1.000 (vs. baseline)
+    // and Thunder Oval's 0.392 -> 0.934 -- not from any single cause, since
+    // isolating power alone, maxForce alone, and combined with L17's looser
+    // steering each independently pushed one track or another toward
+    // worst-case damage, in a way that flipped almost discontinuously with
+    // even a 4% change (a signature of this simulator's already-documented
+    // chaos, not a smooth dose-response). Neither of those tracks failed the
+    // test's own codified gate (dnfRate stayed under 0.40, earlyDnf stayed
+    // 0), but a worst-case trajectory ending in a fully wrecked car is a real
+    // player-facing regression even when the assertion doesn't catch it, so
+    // I backed off rather than ship on a technicality.
+    //
+    // Settled on power 245000 -> 265000 W (+8%) and maxForce 8200 -> 8350 N
+    // (+2%) -- the largest step that stayed CLEAN (not just passing) across
+    // every track's worst-seed damage, combined with L17's steerYawAuthority
+    // change:
+    //
+    //                    old       new
+    //     hp/ton         219       237
+    //     a @ 20 m/s     5.10      5.20 m/s^2
+    //     a @ 40 m/s     3.37      3.70 m/s^2  (+10%, the flagged weak point)
+    //     0-60 mph       5.22 s    5.12 s
+    //     top speed      177.3     182.5 mph
+    //
+    // Deliberately NOT matched to real NASCAR's ~435 hp/ton, and smaller than
+    // this file's own first attempt above. Two already-open, documented
+    // issues explain why a bigger step keeps finding trouble on specific
+    // tracks: L12 (cornerSpeed()/targetSpeed() already command entry speeds
+    // up to 4.26x the tire's physical limit on some tracks -- faster
+    // corner-exit raises how hard/often a car reaches its next
+    // over-committed corner) and wall-contact damage (~0.105 dmg/sec at
+    // racing speed, ~9.5s cumulative contact is a permanent DNF). This
+    // leaves real "sucks" complaint headroom on the table on purpose --
+    // revisit upward only after L12 and/or the wall-damage rate are actually
+    // fixed, not by re-running this same drivability_test bisection with a
+    // different seed set and hoping. torqueCurveMultiplier() (car.cpp) is
+    // deliberately untouched -- it's a shape-only lever, tested separately,
+    // not the fix for overall pace (see its own comment).
+    double power = 265000;
+    double maxForce = 8350;
     double brakeForce = 11500;
     double cdA = 0.32 * 2.2;
     double roll = 380;
