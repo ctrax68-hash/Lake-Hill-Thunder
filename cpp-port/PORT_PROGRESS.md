@@ -8864,3 +8864,36 @@ matters: a held key can still out-turn the tightest corner (so a slide is catcha
 longer commands multiples of any corner on the track. Verified both directions -- disabling the
 cap fails them. Browser-checked: holding the turn key for a full second now leaves the car on
 track, undamaged, at 71 MPH. Native `ctest` 33/33; AI unchanged at `wreckCount=2` (player-gated).
+
+## L16 -- None of this had ever reached the live site, and a bug in L13 itself would have blocked it anyway
+
+A pasted crash trace (`Lake Hill Thunder failed to start: Script error.`) had `/home/runner/work/`
+file paths -- a GitHub Actions build. That sent me to `.github/workflows/pages.yml`, which
+deploys to GitHub Pages only `on: push: branches: [main]`. `main` was at `0151d6f`, dated six days
+prior and **before H7** -- every fix in this entire conversation (H7 banking, H8/H9/L1/L8/L15
+steering, L3 track surface, L9 MPH, L13's own cache-busting) existed only on
+`claude/i5-livery-grille-polish-7e181s`, 19 commits ahead and never merged. `pages.yml` had
+nothing new to build the whole time this conversation was reporting fixes.
+
+That means "spins wildly" was very likely just `maxSteerAngle = 0.5` -- the untouched original,
+pre-H8 value -- still live in production, and essentially every "still unplayable" report in this
+conversation may have been against that same six-day-old build throughout. It also means L13's
+own browser-cache diagnosis, while real, was one layer upstream of the actual blocker: a browser
+with zero cache would still have fetched this same stale build, because the server never had
+anything newer to serve.
+
+**A second, genuine bug was found while investigating, in L13's own work.** `web/sw.js.in`'s
+`APP_SHELL` was fixed to list `./lht_port.html` -- correct for a local `build-web/` serve, but
+`pages.yml` line 61 renames the built file to `index.html` on deploy (`cp .../lht_port.html
+site/index.html`). `cache.addAll()` rejects atomically on any 404, so the real deployed service
+worker's install-time precache would have failed outright even after merging -- the same class of
+bug L13 set out to fix, just inverted, because `pages.yml` was never read while writing it.
+**Fixed** by dropping the HTML document from `APP_SHELL` entirely; the fetch handler's existing
+network-first `isAppShellCode()` path already matches `lht_port.html`, `index.html`, and bare `/`,
+so it caches opportunistically at runtime with no environment-specific filename baked in.
+
+**With the user's explicit authorization** (asked directly: merge now, open a PR, or keep
+iterating on the branch -- answer: "Merge branch into main now"), `main` had not diverged
+(`git log --oneline claude/i5-livery-grille-polish-7e181s..main` confirmed empty, `main`'s HEAD is
+the branch's own merge-base), so the branch was fast-forwarded into `main` and pushed, triggering
+`pages.yml` for the first time with any of this conversation's work in it.
