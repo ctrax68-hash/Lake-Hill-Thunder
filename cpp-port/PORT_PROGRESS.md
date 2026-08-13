@@ -8897,3 +8897,33 @@ iterating on the branch -- answer: "Merge branch into main now"), `main` had not
 (`git log --oneline claude/i5-livery-grille-polish-7e181s..main` confirmed empty, `main`'s HEAD is
 the branch's own merge-base), so the branch was fast-forwarded into `main` and pushed, triggering
 `pages.yml` for the first time with any of this conversation's work in it.
+
+## L17 -- First real player feedback: "steering is a tad stiff"
+
+With the site actually live (L16), the first playtest report against current code arrived:
+"steering is a tad stiff, car acceleration sucks." Steering half of that first -- a mild
+overshoot from L15's own anti-spin fix, not a request to undo it.
+
+steerCurveGamma (2.5, centre-feel resolution) stays untouched -- that isn't what was reported.
+steerYawAuthority (L15's newer, exactly-once-tuned lever) is raised 0.8 -> 0.95 rad/s:
+
+    10 m/s: 13.13 deg -> 14.90 deg (full mechanical lock)
+    45 m/s: 4.39 deg  -> 5.22 deg  (~19% more lock at racing speed)
+    60 m/s: 4.20 deg  -> 4.99 deg
+
+Milltown's tightest corner still only needs 2.47 deg at 45 m/s. Held-key-to-corner ratio moves
+1.77x -> 2.10x, inside tire_model_test.cpp's 3.0x "not a spin" bound with real headroom left
+(~1.36 rad/s before that bound is hit) -- this is a deliberately conservative single step, per
+this file's own H8/H9 lesson about moving one variable at a time and verifying before moving
+further.
+
+Discovered while tuning this alongside the acceleration retune below: this constant and
+power/maxForce are NOT independent under drivability_test's chaotic solo-driver simulation --
+identical engine-force values produced different worst-seed wall-contact outcomes depending on
+steerYawAuthority alone. Documented directly in car.h so a future pass doesn't tune one and
+assume the other is unaffected.
+
+Verified: native ctest 33/33. tire_model_test passes with margin on the new ratio.
+drivability_test (steerYawAuthority=0.95 alone, engine constants unchanged): DNF 0/24, Thunder
+Oval worst-seed damage 0.392 -> 0.627 (up, but nowhere near the 1.0 DNF threshold), all other
+tracks unchanged from baseline.

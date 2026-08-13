@@ -169,7 +169,33 @@ struct CarConstants {
     // car (63% DNF against the game's own AI managing 17% on the identical
     // car, slot, traffic and seeds). The measurement was invalid, so the
     // rejection does not stand.
-    double steerYawAuthority = 0.8; // rad/s at full lock; player-only
+    //
+    // L17 (first post-launch feedback pass): "steering is a tad stiff",
+    // reported once this build was actually live (L16) instead of stuck on a
+    // six-day-stale deploy. Not a request to undo the anti-spin fix above --
+    // a mild overshoot in that same direction. steerCurveGamma (below) stays
+    // untouched; it governs centre-feel resolution, which isn't what was
+    // reported. steerYawAuthority is the newer, single-purpose, exactly-once
+    // -tuned lever, and the right one to isolate per this file's own H8/H9
+    // lesson about moving one variable at a time. Raised 0.8 -> 0.95:
+    //
+    //     10 m/s: 13.13 deg -> 14.90 deg (full mechanical lock)
+    //     45 m/s: 4.39 deg  -> 5.22 deg  (~19% more lock at racing speed)
+    //     60 m/s: 4.20 deg  -> 4.99 deg
+    //
+    // Milltown's tightest corner still only needs 2.47 deg at 45 m/s, so this
+    // doesn't touch that margin. Held-key-to-corner ratio moves 1.77x ->
+    // 2.10x, still well inside tire_model_test.cpp's 3.0x "not a spin" bound
+    // (headroom extends to ~1.36 rad/s). If still stiff after a re-test, the
+    // next step is 1.0-1.1 rad/s -- verify this step first, don't pre-move it.
+    //
+    // Noted while tuning L18 alongside this: solo-driver drivability_test
+    // showed this change is NOT independent of engine-force tuning -- the
+    // same power/maxForce values produced different worst-seed wall-contact
+    // outcomes depending on whether steerYawAuthority was 0.8 or 0.95, on a
+    // chaotic (not smooth) basis. Re-run drivability_test after touching
+    // EITHER this or power/maxForce again, even if the other looks untouched.
+    double steerYawAuthority = 0.95; // rad/s at full lock; player-only
     double brakeBiasFront = 0.62; // fraction of brake force applied at the front axle
 
     // Regression-pass fix: the AI's steerIn formulas (step_car.cpp) were
