@@ -201,6 +201,53 @@ int main() {
         // collapse into write-offs on two tracks).
         expect(steerAfterTicks(0.12, 40) > 0.99,
                "holding the key still reaches full lock within ~0.8s, preserving recovery authority");
+
+        // ---- L8: steering RESOLUTION -- the property four earlier passes
+        // missed. They all asked "how big is the response"; the reported bug
+        // ("one small tap car jolts hard") is really "how finely can the
+        // player ask for it". That is a static property of the input mapping,
+        // so it is asserted directly here. Deliberately NOT measured through
+        // the full-race harness: that harness turned out to pass on broken
+        // code purely because of the RNG seed it hardcoded (see
+        // drivability_test.cpp's header), whereas this arithmetic cannot.
+        //
+        // The yardstick is derived from the model's own steady-state relation
+        // rather than hardcoded: the steer angle needed to hold the tightest
+        // corner in the game (Milltown, R=100m) at racing speed. Everything
+        // the player does in a corner should fit inside this.
+        const double vRace = 45.0, rMin = 100.0;
+        const double aF = c.wheelBase * (1 - c.weightDistF);
+        const double aR = c.wheelBase * c.weightDistF;
+        const double Kus = (c.mass / c.wheelBase) * (aR / c.cf - aF / c.cr);
+        const double deltaNeeded = (vRace / rMin) * (c.wheelBase + Kus * vRace * vRace) / vRace;
+
+        // The player's mapping, exactly as step_car.cpp applies it.
+        auto commandedAngle = [&](double steer) {
+            return std::pow(steer, c.steerCurveGamma) * c.maxSteerAngle;
+        };
+
+        // The bug, stated as a test. A 160ms tap used to command ~3.9x the
+        // tightest corner's steering (9.54 vs 2.47 deg -- a 26m radius at
+        // 100mph). At the chosen gamma it commands ~1.98x (4.89 deg, 51m):
+        // a real 2x improvement, deliberately not "less than one corner's
+        // worth", which would need gamma ~4.0 and a centre range flat enough
+        // to feel numb. Asserting < 1.0x here would assert a value nobody
+        // chose; this bound is the honest one for what shipped.
+        expect(commandedAngle(tap) < deltaNeeded * 2.5,
+               "a 160ms tap no longer commands multiples of the tightest corner's steering");
+        // Prove the CURVE is doing the work, not some other constant having
+        // quietly moved: the same tap through the old linear mapping
+        // overshot that corner badly.
+        expect(tap * c.maxSteerAngle > deltaNeeded * 3.0,
+               "sanity: the same tap through the OLD linear mapping overshot that corner ~3.9x");
+        // The finest possible input -- one 20ms tick -- must be a nudge. It
+        // used to be 72% of a whole corner's steering.
+        expect(commandedAngle(steerAfterTicks(0.12, 1)) < deltaNeeded * 0.25,
+               "the shortest possible key press is a fine nudge, not most of a corner's steering");
+        // ...while a HELD key still reaches full lock. This is exactly the
+        // property the rejected speed-cap alternative would have destroyed.
+        expect(commandedAngle(steerAfterTicks(0.12, 50)) > c.maxSteerAngle * 0.99,
+               "holding the key still reaches full lock, preserving recovery authority");
     }
 
     // The actual "can a player drive this?" check lives in its own test,

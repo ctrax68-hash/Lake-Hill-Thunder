@@ -8716,3 +8716,71 @@ on the current shipped code, proving it is measuring controller quality rather t
 quality. Neither was kept. The correct next step is to make the guard robust (average over
 several RNG seeds rather than trusting one chaotic trajectory) so it can adjudicate this
 honestly, rather than to tune either the curve or the thresholds until they agree.
+
+## L8 -- Steering resolution: the input curve, shipped (NT2003/2004 fidelity pass)
+
+This supersedes the previous L8 entry, which recorded the fix as held back. That decision was
+based on a measurement that turned out to be noise; the correction is documented below.
+
+**The defect.** L1 fixed how MUCH steering the car has. This fixes how FINELY the player can ask
+for it -- the actual meaning of "one small tap car jolts hard", and what four passes missed by
+moving magnitudes around. From the model's own steady-state relation, the steer angle each
+corner needs at racing speed is 1.11 deg (Big Sable) to 2.47 deg (Milltown, the tightest). What
+a key press commanded linearly at 45 m/s: **a single 20ms tick -- the shortest press possible --
+already commanded 1.79 deg, 72% of the tightest corner's worth; a 160ms tap commanded 9.54 deg,
+a 26m turn radius at 100 mph.** The usable range was the first ~17% of input travel. That held
+at every `maxSteerAngle` ever tried, which is why none of them fixed it.
+
+**The fix.** `angle = maxSteerAngle * sign(steer) * |steer|^2.5`, player-gated. A digital key has
+no analogue travel, so one linear mapping cannot serve both fine control near centre and full
+authority for catching a slide; a curve serves both. A 160ms tap now commands 4.89 deg (51m
+radius) while a held key still reaches the full 15 deg lock. A speed-based cap was measured as
+the alternative and rejected -- capping the top of the range is exactly what costs recovery.
+
+**Correcting the previous entry.** L8 was first held back because `drivability_test` reported a
+regression at gamma=2.5 including a fresh DNF. Re-measured across **6 seeds x 4 tracks**, the
+DNF rate is *identical* at gamma 1.0 and 2.5 (15/24 both) -- the reported regression was one
+unlucky trajectory on the single seed that test froze. The recommendation to hold was wrong.
+
+## L11 -- The drivability guard was lying, and is rebuilt (partially)
+
+Three findings, each of which invalidates something previously claimed here:
+
+1. **It passed by luck.** It hardcoded one RNG seed. Across 6 seeds the code it was "guarding"
+   DNF'd in 15 of 24 races. It was a coin flip that landed heads the day it was written.
+2. **It measured the driver, not the car.** Handing the identical car, grid slot, traffic and
+   seeds to the game's own AI gave 4 DNFs of 24 (17%) against the bot's 15 (63%). The bot lacked
+   the AI's curvature feed-forward, and -- more decisively -- any traffic awareness at all
+   (93 impacts in one Milltown run). A 20-car pack cannot measure a car when the reference
+   driver cannot handle traffic.
+3. So the guard now runs **solo**, uses the AI's own steering formula converted to digital keys,
+   and asserts across several seeds. Solo, it separates cleanly: pre-L1 constants 50% DNF vs
+   L1 25%, confirming L1 was a real improvement.
+
+**Known limitation, stated rather than hidden.** The rebuilt guard caps its driver at the
+friction limit, which makes it insensitive to steering *authority*: a car with far too little
+lock just gets driven slower and survives, so it now passes on the pre-L1 constants where the
+seed-lucky version failed. Survival alone is gameable by crawling. Making it a true regression
+guard needs a PACE term so a car that forces you to crawl fails even without crashing. Until
+that lands, `tests/tire_model_test.cpp`'s deterministic resolution assertions are what actually
+pin steering behaviour -- static arithmetic, verified to pass at gamma 2.5 and fail at 1.0, and
+impossible for a controller to game.
+
+## L12 (OPEN, not fixed) -- The corner-speed planner commands impossible speeds
+
+Found while rebuilding the guard, and the strongest remaining candidate for "not playable":
+`cornerSpeed()`/`targetSpeed()` tell every driver -- player and AI -- to enter corners far faster
+than the tires can hold. Measured against the friction limit `v = sqrt(g*(mu+tan b)/(1-mu*tan b) * R)`:
+
+| track | planned | physical limit | over by |
+|---|---|---|---|
+| Thunder Oval | 67.1 | 46.1 m/s | 1.46x |
+| Milltown | 49.9 | 40.4 m/s | 1.23x |
+| Cedar Valley | 70.2 | 49.2 m/s | 1.43x |
+| Big Sable | **325.0** | 76.3 m/s | **4.26x** |
+
+Anyone following that guidance understeers into the wall. It is JS-faithful (`speed_model_test`
+verifies it bit-for-bit) and was harmless under JS's *kinematic* model, which had no tire limit
+to violate -- it became wrong the moment the bicycle tire model replaced it. Fixing it is a
+deliberate divergence affecting the AI as well, so it gets its own pass rather than being folded
+in here. Milltown's remaining late-race DNFs in the guard trace to this.

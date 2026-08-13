@@ -95,6 +95,48 @@ struct CarConstants {
     // the gain benefit under a real (bang-bang, digital) player input. cf/cr
     // therefore stay exactly as they were.
     double maxSteerAngle = 0.26;  // rad, full-lock front steer angle (~15 deg)
+
+    // L8 (NT2003/2004 fidelity pass): input-curve exponent for the PLAYER's
+    // steering -- `angle = maxSteerAngle * sign(steer) * |steer|^gamma`.
+    //
+    // L1 fixed how MUCH steering the car has. This fixes how FINELY the
+    // player can ask for it, which is what "the car overreacts" actually
+    // meant and what four passes missed by moving magnitudes around instead.
+    // From this model's own steady-state relation r = v*delta/(wheelBase +
+    // Kus*v^2), the steer angle each corner really needs at racing speed:
+    //
+    //     Big Sable (R=240m, 50 m/s): 1.11 deg   (7.5% of full lock)
+    //     Cedar     (R=160m, 45 m/s): 1.54 deg  (10.4%)
+    //     Thunder   (R=120m, 45 m/s): 2.06 deg  (13.8%)
+    //     Milltown  (R=100m, 45 m/s): 2.47 deg  (16.6%)  <- tightest in game
+    //
+    // What a key press commanded LINEARLY at 45 m/s (lock 0.26, ramp 0.12):
+    //
+    //     20ms (one tick):  1.79 deg -> 138m radius
+    //     40ms:             3.36 deg ->  74m
+    //     160ms ("a tap"):  9.54 deg ->  26m radius -- a spin, not a corner
+    //
+    // A SINGLE 20ms tick -- the shortest press possible -- already commanded
+    // 72% of the steering the tightest corner in the game needs, and by 40ms
+    // it commanded more than any corner needs. The entire usable range was
+    // the first ~17% of input travel; past that everything was oversteer.
+    // That held at every maxSteerAngle ever tried (0.5/0.12/0.05/0.26), which
+    // is exactly why none of them fixed it: it is a resolution problem, not a
+    // magnitude one.
+    //
+    // A digital key has no analogue travel, so one LINEAR mapping cannot
+    // serve both fine control near centre and full authority for catching a
+    // slide. A curve serves both: at 2.5 a 160ms tap commands 4.89 deg (51m
+    // radius -- a correction, not a spin) while a HELD key still reaches the
+    // full 15 deg lock, leaving recovery authority untouched. A speed-based
+    // cap was measured as the alternative and rejected: capping the top of
+    // the range is precisely what costs recovery.
+    //
+    // Verified NOT to make wrecking worse, which is the thing that matters:
+    // across 6 RNG seeds x 4 tracks the player's DNF rate is identical at
+    // gamma 1.0 and 2.5 (15/24 both). An earlier single-seed run suggested
+    // otherwise and was noise -- see tests/drivability_test.cpp's header.
+    double steerCurveGamma = 2.5; // player-only; see step_car.cpp's use site
     double brakeBiasFront = 0.62; // fraction of brake force applied at the front axle
 
     // Regression-pass fix: the AI's steerIn formulas (step_car.cpp) were

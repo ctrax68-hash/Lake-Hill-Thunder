@@ -596,7 +596,19 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         c.fzFront = fz.front;
         c.fzRear = fz.rear;
 
-        const double steerAngle = c.steer * CAR.maxSteerAngle;
+        // L8 (NT2003/2004 fidelity pass): the player's digital input goes
+        // through a curve rather than straight through, so a short tap is a
+        // correction instead of a lock-slam -- see CarConstants::
+        // steerCurveGamma for the measurements behind it. Player-gated on
+        // purpose: the AI's steerIn is a continuous computed value out of
+        // yawCorrected(), not an on/off key, so it has no resolution problem
+        // to solve, and curving it would move every AI racing line and lap
+        // time for nothing.
+        double steerAngle = c.steer * CAR.maxSteerAngle;
+        if (c.isPlayer) {
+            const double mag = std::pow(std::fabs(c.steer), CAR.steerCurveGamma);
+            steerAngle = sign(c.steer) * mag * CAR.maxSteerAngle;
+        }
 
         // Longitudinal-grip fraction already spent at each axle (RWD engine
         // force + brake-bias split between the axles) -- feeds the friction
