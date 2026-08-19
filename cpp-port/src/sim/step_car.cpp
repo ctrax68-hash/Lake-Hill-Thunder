@@ -392,7 +392,25 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         const double ff = (c.v * curvFF) / std::max(0.05, yawLim);
         steerIn = yawCorrected(ff + dHdg * 1.3, yawLim);
 
-        const bool closing = blocker && bd < 8 && c.v > blocker->v - 0.5;
+        // N2: `c.v > blocker->v - 0.5` is a "not meaningfully slower than the
+        // car ahead" test, and it is correct while moving -- but it does not
+        // require any actual CLOSING SPEED, so two stopped cars satisfy it
+        // (0 > -0.5). The result is a permanent latch: a stationary car sees a
+        // stationary blocker within 8 m, commands thr=0/brk=0.7, and therefore
+        // stays stationary, forever.
+        //
+        // That is not a corner case. Measured on Cedar Valley, the entire
+        // 19-car field ended up jammed into a 33 m stretch (s=1770..1803) with
+        // 11 active collision pairs, every car at exactly 0.00 m/s with zero
+        // throttle, and the race never finished -- the field simply froze at
+        // t~450 s and sat there. That is the "after one lap all cars crashed"
+        // report: they had not crashed, they had deadlocked.
+        //
+        // The `c.v > 2.0` floor breaks the latch: below walking pace a car
+        // stops yielding to the queue and falls through to its normal
+        // target-speed logic, so the jam disperses. Contact at under 2 m/s is
+        // harmless, and above that the original yielding behaviour is intact.
+        const bool closing = blocker && bd < 8 && c.v > blocker->v - 0.5 && c.v > 2.0;
         if (closing) {
             thr = 0;
             brk = 0.7;

@@ -236,13 +236,52 @@ Car makeCar(bool isPlayer, int idx, const Track& track, Mulberry32& rng) {
 }
 
 // cornerSpeed() (index.html:629-636)
+// L12/N2: DELIBERATE DIVERGENCE FROM JS. The iteration below is JS's exactly
+// (index.html:629-635) and speed_model_test.cpp used to assert it bit-for-bit.
+// It does not converge: `mu` is grown by the aero term `dfK*v*v`, that inflated
+// mu is fed to cornerCap(), whose denominator `max(0.25, 1 - mu*t)` PINS at
+// 0.25 once mu*tan(bank) exceeds 0.75 -- after which cornerCap grows linearly
+// in mu, mu grows as v^2, and each pass compounds the last. Big Sable, banked
+// 23 deg:
+//
+//     iter 0: mu= 1.48  denom=0.370  -> v=110.2 m/s
+//     iter 1: mu= 2.94  denom=0.250  -> v=178.1
+//     iter 2: mu= 6.07  denom=0.250  -> v=247.4
+//     iter 3: mu=10.79  denom=0.250  -> v=325.0   <- only stops here because
+//     iter 4: mu=17.90  denom=0.250  -> v=415.4      the loop runs 4 times
+//
+// against a physical limit of 76.3 m/s. The planned/limit ratios were Milltown
+// 1.23x, Cedar Valley 2.11x, Thunder Oval 2.45x, Big Sable 4.26x.
+//
+// This was harmless under JS's KINEMATIC model, which had no tire limit to
+// violate and its own separate yaw cap. Against this port's bicycle tire model
+// it is fatal, and it is shared by every car: measured over 600 s of full-field
+// racing, Cedar Valley (2.11x) completed 4 laps with 7 DNFs and 11 of 20 cars
+// in the pits, while Milltown -- the ONLY track whose planner is nearly honest
+// at 1.23x -- ran 17 laps with 1 DNF. Reported as "after one lap all cars
+// crashed".
+//
+// Fix: clamp the planned speed to the friction-circle limit the tires can
+// actually deliver, computed from the UN-inflated tire mu so the aero feedback
+// cannot re-enter through the clamp. This is the same construction
+// tests/drivability_test.cpp already applies to its own reference driver (and
+// for the same stated reason -- "a real driver does not drive into a wall
+// because a number told them to"), promoted here so the AI and the player's
+// corner-speed guidance get it too, rather than only the test harness.
 double cornerSpeed(const Track& track, double R, double s, double wear) {
     double v = 55;
     for (int it = 0; it < 4; ++it) {
         const double mu = CAR.mu * (1 - 0.12 * wear) + CAR.dfK * v * v;
         v = std::sqrt(cornerCap(mu, track.bankAt(s)) * R);
     }
-    return v;
+    // kCornerSpeedMargin: drive to just inside the limit, not exactly on it --
+    // a plan sitting precisely at the friction circle leaves nothing for
+    // bumps, traffic, wear or the yaw transient, and the per-tick model will
+    // saturate on the first disturbance.
+    constexpr double kCornerSpeedMargin = 0.95;
+    const double muTire = CAR.mu * (1 - 0.12 * wear);
+    const double vLimit = std::sqrt(cornerCap(muTire, track.bankAt(s)) * R);
+    return std::min(v, vLimit * kCornerSpeedMargin);
 }
 
 // targetSpeed() (index.html:637-649)

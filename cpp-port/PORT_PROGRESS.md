@@ -9151,3 +9151,92 @@ exonerated: the player is always the higher-indexed car `b`, so `a.isPlayer ? 1 
 to it (L10's dead-code suspicion is correct), and the effect favours the player anyway. Next step
 there is a corner-entry measurement, not another tuning guess -- four steering passes in this
 project have shipped on plausible reasoning and made things worse.
+
+## N2 -- "After one lap all cars crashed": they had not crashed, the field had deadlocked
+
+Two distinct defects, found by finally measuring instead of theorising. The `LHT_FORCE_RACE`
+headless path needs a display and could not run here, so the measurement was rebuilt the way
+`drivability_test` does it -- linking the sim directly, no window.
+
+**Baseline, 600 s of full-field racing per track (shipped code):**
+
+| track | lead lap | DNF | pitting | running |
+|---|---|---|---|---|
+| Thunder Oval | 8 | 3 | 3 | 17 |
+| Milltown Bullring | 17 | 1 | 0 | 19 |
+| **Cedar Valley** | **4** | **7** | **11** | 13 |
+| Big Sable Speedway | 5 | 0 | 9 | 6 |
+
+Cedar Valley needed 600 seconds for four laps. Tracing it showed why: by t=450 s **every surviving
+car was at exactly 0.00 m/s and stayed there permanently.** A dump at t=500 s found all 19 AI cars
+crammed into a 33-metre stretch (s=1770..1803) with 11 active collision pairs, several pinned at
+the track edge, all commanding **zero throttle**, with the race unable to end.
+
+### The deadlock (`step_car.cpp`, AI race branch)
+
+```cpp
+const bool closing = blocker && bd < 8 && c.v > blocker->v - 0.5;
+if (closing) { thr = 0; brk = 0.7; }
+```
+
+That is a "not meaningfully slower than the car ahead" test, and it never checks for actual
+closing *speed*. Two stopped cars satisfy it -- `0 > -0.5` -- so a stationary car sees a
+stationary blocker, commands zero throttle and 70% brake, and therefore stays stationary. Once a
+pack bunches up, the whole field latches and never recovers. Fixed by requiring `c.v > 2.0`:
+below walking pace a car stops yielding to the queue and falls through to its normal target-speed
+logic, so the jam disperses. Contact under 2 m/s is harmless and the yielding behaviour above it
+is untouched.
+
+### L12, closed at last (`cornerSpeed()`)
+
+Long-deferred, and confirmed as a genuine runaway rather than merely an optimistic constant.
+`cornerSpeed()` grows `mu` by the aero term `dfK*v*v`, feeds that inflated mu into `cornerCap()`,
+whose denominator `max(0.25, 1 - mu*t)` pins at 0.25 once `mu*tan(bank)` passes 0.75 -- after
+which cornerCap is linear in mu, mu is quadratic in v, and each pass compounds. Big Sable:
+
+    iter 0: mu= 1.48  denom=0.370  -> v=110.2 m/s
+    iter 1: mu= 2.94  denom=0.250  -> v=178.1
+    iter 2: mu= 6.07  denom=0.250  -> v=247.4
+    iter 3: mu=10.79  denom=0.250  -> v=325.0   <- terminates only because the
+    iter 4: mu=17.90  denom=0.250  -> v=415.4      loop runs exactly 4 times
+
+against a 76.3 m/s physical limit. Planned/limit ratios were Milltown 1.23x, Cedar Valley 2.11x,
+Thunder Oval 2.45x, Big Sable 4.26x -- and Milltown, the only nearly-honest one, was also the only
+healthy track in the baseline. Clamped to the friction-circle limit computed from the un-inflated
+tire mu (so aero cannot re-enter through the clamp), at a 0.95 margin. All four tracks now plan
+0.95x.
+
+**Honest note on ordering:** the L12 clamp alone did NOT fix the attrition -- it made Cedar Valley
+*worse*, converting a slow-but-moving field into the total freeze above, because slower planning
+bunched the pack harder. The deadlock was the primary defect; L12 was a real bug amplifying it.
+Shipping the clamp alone would have been a regression.
+
+**After both fixes:**
+
+| track | lead lap | DNF | running |
+|---|---|---|---|
+| Thunder Oval | 8 -> **10** | 3 | 16 |
+| Milltown Bullring | -- | 1 | 16 (races now actually *finish*) |
+| **Cedar Valley** | 4 -> **7** | **7 -> 0** | **20** |
+| Big Sable Speedway | 5 -> **9** | 0 | 16 |
+
+### `speed_model_test` rewritten, not re-baselined
+
+That test asserted `cornerSpeed()`/`targetSpeed()` bit-for-bit against JS ground truth -- one of
+its expected values was literally `320.82072783979334` -- and it passed for this port's entire
+life, including on the day the field froze. It was pinning faithfulness to a formula that is wrong
+for the physics this port actually runs. Rewritten to assert the property that matters: sweep
+every curved metre of every track at four wear levels and require the plan never to exceed the
+tires' friction limit (nor collapse far below it). Spot-checking three hand-picked (R, s) pairs is
+exactly how the old version missed Big Sable planning 727 mph 200 m from a sampled point.
+**Verified the new assertions fail on the pre-fix formula** -- 37 failures across all four tracks.
+
+Native `ctest` 33/33.
+
+**Still open from this round:** the "pulls hard right into corners" report (N1). Tilt steer (user
+confirms OFF), `dmgPull`, asymmetric wear and the setup knobs are all ruled out, and `collide()`
+was checked and exonerated (the player is always the higher-indexed car `b`, so
+`a.isPlayer ? 1 : 2` never applies to it -- L10's dead-code suspicion is correct, and the effect
+favours the player anyway). Measured turn-in shows 2.1x-4.6x authority margin with ~10 m of ramp
+delay: real, but not obviously the complaint. Next step is a corner-entry measurement including
+yaw inertia, not another tuning guess.
