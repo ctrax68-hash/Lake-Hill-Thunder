@@ -9240,3 +9240,54 @@ was checked and exonerated (the player is always the higher-indexed car `b`, so
 favours the player anyway). Measured turn-in shows 2.1x-4.6x authority margin with ~10 m of ramp
 delay: real, but not obviously the complaint. Next step is a corner-entry measurement including
 yaw inertia, not another tuning guess.
+
+## N1 -- "Pulls hard right into corners": every hypothesis measured, and every one eliminated
+
+Asked to fix the steering. I could not find a steering defect, and this entry records the
+eliminations so nobody -- me included -- re-tests them. All measurements use the real `stepCar()`
+with full yaw dynamics, solo car unless stated.
+
+**Ruled out by the user's own answers:** tilt steer (reads OFF -- it was my top suspect, since M2
+made that toggle work for the first time on touch); `dmgPull`, asymmetric tire wear and the
+`setupWedge`/`setupTrackBar` knobs (the pull is present on the FIRST corner of a CLEAN car, and
+all three need laps or a deliberate pit-panel tap to become non-zero).
+
+**Ruled out by reading the code:** `collide()`. The player is always the higher-indexed car `b`
+in the pairwise loop, so `a.hdg += ny*0.008*(a.isPlayer ? 1 : 2)` never applies to it -- L10's
+dead-code suspicion is correct. And the effect runs the other way anyway: cars in slot `a` take
+the doubled heading kick and the larger speed loss, so the player is favoured, not penalised.
+
+**Ruled out by measurement:**
+
+| hypothesis | test | result |
+|---|---|---|
+| Not enough steering authority | hold LEFT 2 s at 35 m/s | **0.58 rad/s** delivered; tightest corner needs **0.25**. Ample. |
+| `steerCurveGamma` crushes mid-range control | sweep 2.5 / 2.0 / 1.5 / 1.2 / 1.0 | line-holding changed by **nothing** (~11.6 m drift at every value) |
+| `steerYawAuthority` cap binds at speed | sweep 0.95 / 1.5 / 2.5 / 99 (off) | **no change** even with the cap fully disabled |
+| Player pipeline can't hold a line | same controller, friction-capped speed | tracks the centre line to **~4 m avg**; it works |
+| Entering corners over the limit | flat-out, tapping the wheel | over 1.12x on only **2-4%** of corner approaches, worst **1.17x** |
+| Player lacks the AI's yaw-lag feedback | add `yawCorrGain` term to the player's angle | made it **worse** (avg 3.81 -> 4.27 m). Reverted. |
+
+Sign convention was verified directly rather than assumed: LEFT gives negative yaw and negative
+`lat` (inside), RIGHT gives positive, and all four tracks curve consistently in the LEFT
+direction. It is correct.
+
+**Two of my own earlier claims were wrong and are corrected here.** The "~10 m turn-in delay with
+2.1x-4.6x margin" closed-form estimate omitted yaw inertia; measured properly, turn-in is not the
+problem. And the "player arrives at 55-60 m/s against a 40-49 m/s limit" figure came from the
+first corner of a standing-start acceleration run, not from settled racing -- in steady racing the
+player is barely over the limit at all. Neither supports the conclusion I drew from it.
+
+**Shipped anyway, but honestly labelled:** a spotter call, "TOO FAST IN - LIFT!", edge-triggered
+with hysteresis when the player is >12% over the clamped `cornerSpeed()` on approach and rearmed
+once back under 1.02x. It is guidance, not an assist -- it touches no input and no physics -- and
+it is correct when it fires. It is NOT the fix for the reported pull, and firing on 2-4% of
+approaches is exactly the frequency the data supports. A first attempt rearmed only on reaching a
+straight, which at a ~50 m lookahead never happens on these ovals: it fired once per race and was
+identical for a reckless and a careful driver. Caught by testing it, not by reasoning about it.
+
+**Still unreproduced.** Something real is happening to the player that this simulation does not
+show, and the remaining differences between it and their session are traffic (every test above is
+solo), the touch controls' held-vs-tapped behaviour, and which specific corner. Needs that
+information before any further steering change -- five passes in this project have now shipped on
+plausible reasoning, and the measured record above is what they were worth.

@@ -568,6 +568,50 @@ void tick(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& 
             state.dmgMsg = true;
             spotterSay(state, "HEAVY DAMAGE - PIT FOR REPAIRS");
         }
+
+        // N1: corner-entry speed warning.
+        //
+        // Reported as "car pulls way hard to right when going into corners".
+        // Measured against the real physics, the steering pipeline is NOT at
+        // fault: full lock delivers 0.58 rad/s where the tightest corner needs
+        // 0.25, and sweeping steerCurveGamma (2.5 -> 1.0) and
+        // steerYawAuthority (0.95 -> cap effectively off) changed line-holding
+        // by nothing at all. Given a controller that manages its speed, the
+        // player's car tracks the centre line to ~4 m.
+        //
+        // What is actually happening is plain understeer from carrying too
+        // much speed, and on a left oval running wide IS "pulling right".
+        // Flat out -- which is what a player does, because nothing tells them
+        // otherwise -- the car arrives at corners at 55-60 m/s where the tires
+        // allow 40-49, then scrubs from 55 m/s down to 15 fighting for grip.
+        // The AI never has this problem because targetSpeed() plans its
+        // corner entry for it; the player has been given no equivalent, which
+        // is a fair thing to call a steering problem from the driver's seat.
+        //
+        // This is guidance, not an assist: it does not touch the player's
+        // inputs or the car's physics, it tells them what every real spotter
+        // would. cornerSpeed() is now clamped to the friction circle (N2), so
+        // it is finally a number worth quoting.
+        const double lookahead = std::max(20.0, player->v * 1.1);
+        const double curvAhead = std::fabs(track.pointAt(player->s + lookahead).curv);
+        double overRatio = 0.0;
+        if (curvAhead > 1e-6) {
+            const double vCorner = cornerSpeed(track, 1.0 / curvAhead, player->s + lookahead, player->wear);
+            if (vCorner > 0.1) overRatio = player->v / vCorner;
+        }
+        // Edge-triggered with HYSTERESIS on the ratio, not on reaching a
+        // straight: at a ~50 m lookahead these ovals are almost never clear of
+        // curvature, so a rearm condition of "back on a straight" fires once
+        // per race and then never again (measured: exactly 1 call on Thunder
+        // Oval, 0 everywhere else, identical for a reckless and a careful
+        // driver -- i.e. useless). Rearming when the driver has actually
+        // slowed back inside the limit makes it track what it is meant to.
+        if (overRatio > 1.12 && !state.overSpeedMsg) {
+            state.overSpeedMsg = true;
+            spotterSay(state, "TOO FAST IN - LIFT!");
+        } else if (state.overSpeedMsg && (curvAhead <= 1e-6 || overRatio < 1.02)) {
+            state.overSpeedMsg = false;
+        }
     }
 
     // index.html:4581-4594: player finish -> victory/done, player DNF ->

@@ -61,6 +61,11 @@ struct RaceState {
     std::string spotTxt;
     double spotT = 0;
     std::string spotState = "clear"; // 'clear'|'in'|'out'
+    // N1: edge-trigger for the corner-entry speed call, rearmed on each
+    // straight so it fires once per corner approach rather than every tick.
+    // Not a JS-ported field -- JS's spotter has no corner-speed call, because
+    // its kinematic model had no friction limit for a player to exceed.
+    bool overSpeedMsg = false;
     bool togoMsg = false;
     bool fuelMsg = false;
     bool tireMsg = false;
