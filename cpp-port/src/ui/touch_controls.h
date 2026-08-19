@@ -13,6 +13,31 @@
 // full parity; revisit if a real mobile device's touch targets feel wrong.
 
 #include <SDL_rect.h>
+#include <SDL_touch.h>
+
+// M2: one tap used to count twice, and that broke every press-toggle in the
+// game on touch devices.
+//
+// SDL2 synthesizes a mouse click from every touch, unconditionally
+// (SDL_touch.c's `SYNTHESIZE_TOUCH_TO_MOUSE 1`, and SDL_mouse.c defaults the
+// SDL_HINT_TOUCH_MOUSE_EVENTS hint to true). So a single browser touchstart
+// queues BOTH an SDL_FINGERDOWN and an SDL_MOUSEBUTTONDOWN at the same pixel,
+// and main.cpp's event loop dispatched a click from each of them.
+//
+// Symptoms, all reported or confirmed: the TRACK row advanced by 2 per tap, so
+// only Thunder Oval and Cedar Valley were ever reachable and half the game's
+// tracks looked missing; LAPS skipped 5 and 20; and QUALIFYING, SOUND, TILT
+// STEER, PIT and CAM -- every plain `!x` toggle -- were double-toggled back to
+// their original value and appeared completely dead. The controls that seemed
+// fine (VOLUME, START RACE, and the held GAS/BRAKE/steer buttons) only seemed
+// fine because they are idempotent: doing them twice is doing them once.
+//
+// Desktop mouse was never affected, which is how this survived so long.
+//
+// Filtering here rather than calling SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS,
+// "0") keeps the decision local to this app's dispatch, instead of changing
+// global SDL behaviour that other parts of the input path may rely on.
+inline bool isSyntheticTouchMouse(Uint32 mouseWhich) { return mouseWhich == SDL_TOUCH_MOUSEID; }
 
 struct TouchRegions {
     SDL_Rect bL, bR, bB, bG, bP;

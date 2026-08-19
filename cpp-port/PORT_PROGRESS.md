@@ -9050,3 +9050,52 @@ branch now bounds-checks the upper end (it only ever checked `>= 0`), and the te
 `gridAhead` when it strips the field.
 
 Native `ctest` 33/33.
+
+## M2 -- One tap counted twice, and that hid half the game
+
+Report: *"only two tracks appearing not 4, only tracks that appear are Thunder Oval and Cedar
+Valley."* Those are array indices 0 and 2 -- every other entry -- which is an indexing signature,
+not missing data. All four tracks are present and correct in `tracks_data.h`.
+
+There is no track *list* in the UI at all: `menu.cpp` draws a single cycling `TRACK: <name>` row,
+and `handleMenuClick()` advances `trackIdx = (trackIdx + 1) % 4`. That arithmetic was never wrong.
+**One tap invoked it twice.**
+
+SDL2 synthesizes a mouse click from every touch, unconditionally -- `SDL_touch.c`'s
+`SYNTHESIZE_TOUCH_TO_MOUSE 1`, with `SDL_mouse.c` defaulting `SDL_HINT_TOUCH_MOUSE_EVENTS` to
+true. So a browser `touchstart` queues **both** an `SDL_FINGERDOWN` and an `SDL_MOUSEBUTTONDOWN`
+at the same pixel, and `main.cpp`'s event loop dispatched a click from each: it handled both event
+types and never checked `ev.button.which` (a repo-wide grep for `.which` returned nothing).
+
+The blast radius was much wider than the track selector, and explains several things that were
+never separately reported because they read as "that button does nothing":
+
+| control | behaviour on touch |
+|---|---|
+| TRACK | advanced by 2 -- only 2 of 4 tracks reachable |
+| LAPS | 3 -> 10 -> 3, skipping 5 and 20 |
+| QUALIFYING / SOUND / TILT STEER | plain `!x` toggles, double-toggled -> **completely dead** |
+| PIT / CAM (in-race) | same, **dead** |
+| VOLUME / START RACE / held GAS,BRAKE,steer | fine -- but only because they are idempotent |
+
+Desktop mouse was never affected, which is how this survived from `e584f34` (2026-07-24) to now.
+**Not a regression from any of this conversation's work**: `git diff --stat` across H7..L18 shows
+`src/platform/main.cpp` was never touched.
+
+**Fix:** `isSyntheticTouchMouse()` (in `touch_controls.h`, alongside the other pure input helpers)
+filters SDL's synthetic duplicate out of both the `SDL_MOUSEBUTTONDOWN` and `SDL_MOUSEBUTTONUP`
+branches. Chosen over `SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0")` so the decision stays local
+to this app's dispatch instead of changing global SDL behaviour the rest of the input path may
+depend on. The release needed the same filter: letting it through cleared the held drive buttons
+out from under a finger still on the screen.
+
+**Test coverage:** `menu_test` never referenced `TRACKS`, `trackIdx`, or any track name, and
+`main.cpp`'s event loop has no harness at all (this file's own header explains why event delivery
+can't be exercised headlessly). Extracted `cycleTrack()` into `menu.cpp` beside `cycleLaps()` and
+asserted the property that actually broke: **coverage, not cycle length.** A cycle-length check
+would have passed on the bug, since advancing by 2 through a 4-entry list still returns to its
+start. Verified the new assertion fails when `cycleTrack()` is made to advance by 2. Also pinned
+the tap arithmetic (one tap == one dispatch) against the filter predicate, with an explicit note
+in the test that this covers the predicate and not main.cpp's wiring.
+
+Native `ctest` 33/33.

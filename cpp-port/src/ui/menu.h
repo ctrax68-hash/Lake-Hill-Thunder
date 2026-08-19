@@ -55,6 +55,18 @@ MenuRegions computeMenuRegions();
 // #lapTog handler (index.html:4706-4709) exactly.
 int cycleLaps(int laps);
 
+// Advances MenuSelection::trackIdx to the next track, wrapping. `trackCount`
+// is TRACKS.size(), passed in rather than read here so this stays free of a
+// tracks_data.h dependency (menu.cpp is linked into menu_test, which has no
+// reason to pull the track table in).
+//
+// M2: extracted from main.cpp's handleMenuClick() so the 4-cycle is actually
+// testable. The arithmetic was never wrong -- one tap invoked it twice (see
+// isSyntheticTouchMouse() in touch_controls.h), so the selector advanced by 2
+// and half the tracks were unreachable. A helper with a test pins the cycle
+// itself, which is the half that belongs in this file.
+int cycleTrack(int trackIdx, int trackCount);
+
 // Maps a click's x position within `bar` to a 0-100 volume value,
 // clamped -- a click-to-set adaptation of JS's drag-based <input
 // type=range>, which this port has no drag-slider widget to replicate.

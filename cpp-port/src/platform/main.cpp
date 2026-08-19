@@ -251,7 +251,7 @@ void seedForceDoneState(LoopState& S) {
 void handleMenuClick(LoopState& S, int x, int y) {
     const MenuRegions r = computeMenuRegions();
     if (pointInRect(x, y, r.trackBtn)) {
-        S.menu.trackIdx = (S.menu.trackIdx + 1) % (int)TRACKS.size();
+        S.menu.trackIdx = cycleTrack(S.menu.trackIdx, (int)TRACKS.size());
         S.track = Track(TRACKS[S.menu.trackIdx]);
         S.renderer.setTrack(S.track);
         // G24: the showcase car's spawn pose is derived from the track
@@ -380,7 +380,13 @@ void mainLoopTick(void* argPtr) {
         // menu rows instead -- the drive controls don't exist to hit yet
         // (no cars until Start is pressed), matching JS's own menu overlay
         // covering the driving HUD entirely.
-        if (!S.portrait && ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_LEFT) {
+        // M2: skip SDL's own synthetic touch->mouse duplicate, or every tap
+        // dispatches twice and each press-toggle below cancels itself out --
+        // see isSyntheticTouchMouse() in touch_controls.h for the full list of
+        // controls this broke. The SDL_FINGERDOWN branch further down is the
+        // one that handles real touches.
+        if (!S.portrait && ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_LEFT &&
+            !isSyntheticTouchMouse(ev.button.which)) {
             const int x = ev.button.x, y = ev.button.y;
             if (S.state.mode == "menu") {
                 handleMenuClick(S, x, y);
@@ -406,7 +412,11 @@ void mainLoopTick(void* argPtr) {
                 }
             }
         }
-        if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_LEFT) {
+        // Same filter on the release: SDL_FINGERUP below already clears these,
+        // and letting the synthetic mouse-up through would clear the held
+        // drive buttons out from under a finger that is still down.
+        if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_LEFT &&
+            !isSyntheticTouchMouse(ev.button.which)) {
             S.touchLeft = S.touchRight = S.touchGas = S.touchBrake = false;
         }
         if (!S.portrait && ev.type == SDL_FINGERDOWN) {

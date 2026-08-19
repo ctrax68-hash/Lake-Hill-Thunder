@@ -126,6 +126,14 @@ int cycleLaps(int laps) {
     return 3; // covers 20 -> 3 and any unexpected starting value
 }
 
+int cycleTrack(int trackIdx, int trackCount) {
+    if (trackCount <= 0) return 0;
+    // Also normalizes a negative or out-of-range starting value rather than
+    // propagating it, same defensive spirit as cycleLaps()'s fallthrough.
+    const int cur = (trackIdx % trackCount + trackCount) % trackCount;
+    return (cur + 1) % trackCount;
+}
+
 int volumeFromClickX(const SDL_Rect& bar, int clickX) {
     if (bar.w <= 0) return 0;
     double t = (double)(clickX - bar.x) / (double)bar.w;

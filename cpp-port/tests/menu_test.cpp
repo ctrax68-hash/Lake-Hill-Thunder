@@ -83,6 +83,61 @@ int main() {
     for (int i = 0; i < 4; ++i) laps = cycleLaps(laps);
     check(laps == 3, "cycleLaps() is not a 4-cycle back to 3");
 
+    // M2: cycleTrack() must VISIT every track, not just return to its start.
+    // The reported symptom was "only two tracks appearing, not 4" -- and a
+    // cycle-length check alone would have passed happily on that, because
+    // advancing by 2 through a 4-entry list still returns to where it began.
+    // So assert coverage, which is the property that actually broke.
+    {
+        constexpr int kTracks = 4;
+        bool seen[kTracks] = {false, false, false, false};
+        int idx = 0;
+        for (int i = 0; i < kTracks; ++i) {
+            seen[idx] = true;
+            idx = cycleTrack(idx, kTracks);
+        }
+        for (int i = 0; i < kTracks; ++i) {
+            check(seen[i], "cycleTrack() never reaches some track -- part of the roster is unselectable");
+        }
+        check(idx == 0, "cycleTrack() is not a 4-cycle back to the first track");
+        // Defensive normalization, matching cycleLaps()'s fallthrough spirit.
+        check(cycleTrack(-1, kTracks) == 0, "cycleTrack() does not normalize a negative index");
+        check(cycleTrack(99, kTracks) >= 0 && cycleTrack(99, kTracks) < kTracks,
+              "cycleTrack() does not normalize an out-of-range index");
+        check(cycleTrack(0, 0) == 0, "cycleTrack() does not survive an empty roster");
+    }
+
+    // M2: one tap must dispatch exactly one click.
+    //
+    // SDL synthesizes a mouse click from every touch, so a single tap arrives
+    // as BOTH an SDL_FINGERDOWN and an SDL_MOUSEBUTTONDOWN carrying
+    // which == SDL_TOUCH_MOUSEID. main.cpp dispatched from both, so every tap
+    // counted twice: the track selector advanced by 2 (only 2 of 4 tracks
+    // reachable), laps skipped 5 and 20, and QUALIFYING/SOUND/TILT/PIT/CAM --
+    // all plain `!x` toggles -- flipped back to their original value and
+    // looked dead. Only the idempotent controls (volume, start, held drive
+    // buttons) appeared to work.
+    //
+    // Honest limit: main.cpp's event loop has no test harness (this file's own
+    // header explains why event *delivery* can't be exercised headlessly), so
+    // this pins the predicate main.cpp now filters on, plus the tap arithmetic
+    // that predicate exists to fix -- not the wiring itself.
+    check(isSyntheticTouchMouse(SDL_TOUCH_MOUSEID), "SDL's synthetic touch-mouse id is not recognized");
+    check(!isSyntheticTouchMouse(0), "a real mouse is misfiltered as a synthetic touch-mouse");
+    {
+        // The two events one real tap produces, in the order SDL queues them.
+        const Uint32 tapEventWhich[] = {SDL_TOUCH_MOUSEID}; // + one SDL_FINGERDOWN, always dispatched
+        int dispatches = 1;                                 // the SDL_FINGERDOWN branch
+        for (Uint32 which : tapEventWhich) {
+            if (!isSyntheticTouchMouse(which)) ++dispatches;
+        }
+        check(dispatches == 1, "one tap does not dispatch exactly one click");
+
+        // A real mouse click produces only the mouse event, and must still work.
+        const Uint32 mouseWhich = 0;
+        check(!isSyntheticTouchMouse(mouseWhich), "a desktop mouse click would be dropped");
+    }
+
     // volumeFromClickX(): left edge -> 0, right edge -> 100, midpoint -> ~50,
     // clamped outside the bar in either direction.
     const SDL_Rect bar = {100, 0, 200, 16};
