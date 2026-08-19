@@ -8983,3 +8983,70 @@ lever for overall pace.
 0/24 (unchanged from baseline), Thunder Oval worst-seed damage 0.392 -> 0.668, Milltown/Cedar
 Valley/Big Sable Speedway all at or below their pre-change worst-case damage. No early-lap DNFs on
 any track.
+
+## M1 -- The formation lap drove the player's car through a keyboard-shaped pipeline
+
+Report, against the confirmed-current build: *"Car drives recklessly now before race begins."*
+Screenshots showed the 19 AI cars in a tidy single-file pace line and the player's #21 sliding
+wide onto the apron and grass, losing a position before the green flag. The user's own framing was
+the correct spec: during the pace lap the game should be steering **all** cars into line.
+
+It was not driving recklessly. It was steering-starved.
+
+`stepCar()`'s branch chain puts pace/yellow/pit ahead of the player-input branch, so the player's
+car is auto-driven by AI code for whole phases of a race -- correct and intended. The pace branch
+sets `steerIn = yawCorrected(...)`, a **continuous** yaw-rate fraction, identically for all 20
+cars. But three transformations in the shared tail were gated on `c.isPlayer`, and all three exist
+solely to make a **digital on/off key** feel good:
+
+- the 0.12-per-tick input ramp (vs the AI's 0.5) -- ~4x the tracking lag of the cars alongside,
+- L8's `steerCurveGamma` curve,
+- L15's `steerYawAuthority` lock cap.
+
+Stacked on a continuous command they compound. At pace speed (30 m/s):
+
+| pace `c.steer` | angle an AI car gets | angle the player got | delivered |
+|---|---|---|---|
+| 0.15 | 0.0390 rad | 0.00096 rad | 2.5% |
+| 0.25 | 0.0650 rad | 0.00343 rad | 5.3% |
+| 0.35 | 0.0910 rad | 0.00796 rad | 8.7% |
+
+Under 10% of the steering the pace logic asked for. The curve block's own comment already said it
+was player-gated because "the AI's `steerIn` is a continuous computed value out of
+`yawCorrected()`, not an on/off key" -- which is exactly the value it was being fed. The question
+it needed to ask was never *whose car is this*, but *where did this steerIn come from*.
+
+**Fix:** a `humanInput` flag, set true only inside the one branch that reads `PlayerInput`, now
+gates all three sites (plus the anti-spin throttle lift at the same asymmetry, previously withheld
+from the player even while the game was driving). Every auto-driven phase -- pace, caution, pit --
+is now bit-identical to an AI car; real player driving is untouched, so L8/L15/L17's tuning stands
+exactly as measured.
+
+**Why nothing caught it, and what now does.** `drivability_test` sets `mode == "pace"` but strips
+the field to the player alone *and* drives via `PlayerInput` -- which the pace branch ignores
+outright, so its careful gamma inversion never ran during the phase where the bug lived. The whole
+pace phase was untested. Added a full-field, hands-off formation guard asserting the property
+relatively (the player against the 19 cars beside it, not against a hand-picked metre bound):
+
+|  | laneErr player / ai (before) | after |
+|---|---|---|
+| Thunder Oval | 6.60m / 5.72m | **4.99m / 5.02m** |
+| Milltown Bullring | 13.90m / 10.61m | **11.05m / 10.61m** |
+| Cedar Valley | 6.86m / 7.31m | **4.51m / 4.45m** |
+| Big Sable Speedway | 6.28m / 3.77m | **2.03m / 1.97m** |
+
+Pre-green damage went 0.009/0.090/0.009/0.010 -> 0.000/0.090/0.000/0.000. **Verified the guard
+fails on the shipped code** before trusting it -- this file's own header records an earlier version
+of itself passing happily on broken code, so that check is not optional.
+
+Milltown's residual 0.090 is unchanged by the fix and the AI cars there take *more* (0.145), so it
+is a separate pre-existing formation-lap contact issue on the tightest track in the game, recorded
+here and asserted only relatively rather than laundered into a per-track threshold.
+
+**Also fixed, in my own L11 work:** `drivability_test` strips the field but `gridStart()` had left
+`gridAhead = 17`, so the pace branch's `&allCars[c.gridAhead]` indexed element 17 of a size-1
+vector -- an out-of-bounds read that the entire pace-phase target speed was then derived from. The
+branch now bounds-checks the upper end (it only ever checked `>= 0`), and the test clears
+`gridAhead` when it strips the field.
+
+Native `ctest` 33/33.

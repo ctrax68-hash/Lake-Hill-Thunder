@@ -83,6 +83,71 @@ struct RaceOutcome {
     int impacts = 0;
 };
 
+// M1 guard. The race guard below could not have caught the formation-lap bug,
+// for a structural reason worth stating: it strips the field to the player
+// alone AND its reference driver writes PlayerInput -- but stepCar()'s branch
+// chain puts the pace branch ahead of the player-input branch, so during
+// mode=="pace" every one of those inputs is ignored and the test's careful
+// gamma inversion never runs. The entire pace phase was untested.
+//
+// What shipped as a result: the pace branch hands the player's car the same
+// continuous yawCorrected() steering command it hands the AI, but the shared
+// tail then pushed it through the player's DIGITAL-KEY pipeline (the L8 curve
+// and the L15 authority cap, gated on c.isPlayer), delivering under 10% of
+// the commanded angle. The player's car understeered off the formation line
+// and ground the apron while the other 19 held station.
+//
+// The property asserted here is deliberately RELATIVE -- the player's worst
+// lane error against the worst of the 19 AI cars on the same lap. An absolute
+// metre bound would encode this track's lane geometry and this sign
+// convention; "the player holds formation about as well as the cars beside
+// it" is the actual requirement, survives a convention change, and cannot be
+// satisfied by a car that simply drives slowly.
+struct PaceOutcome {
+    double playerLaneErr = 0.0; // worst |lat - gridLane| for the player
+    double aiLaneErr = 0.0;     // worst |lat - gridLane| across all 19 AI cars
+    double playerDmg = 0.0;     // damage accrued before the green flag
+    double aiDmg = 0.0;         // worst pre-green damage across all 19 AI cars
+    int ticks = 0;
+};
+
+PaceOutcome paceFormation(int trackIdx, uint32_t seed) {
+    const Track track(TRACKS[trackIdx]);
+    Mulberry32 rng(seed), rngR(seed * 7919u + 13u);
+    RaceState state;
+    PaceCar pace;
+    std::vector<Car> cars;
+    std::vector<Car*> finishOrder;
+    gridStart(track, rng, state, pace, cars, finishOrder, nullptr);
+    state.mode = "pace";
+    state.finishLaps = state.laps;
+
+    PaceOutcome out;
+    // The human is deliberately NOT touching the controls: during the
+    // formation lap the game drives all 20 cars, and that is the whole point
+    // of the test. Any steering the player's car does here comes from the
+    // pace branch, exactly as it does for the AI.
+    PlayerInput input;
+
+    const int maxTicks = (int)(120.0 / DT); // generous; loop exits at green
+    for (int t = 0; t < maxTicks && state.mode == "pace"; ++t) {
+        tick(state, cars, pace, track, rngR, input, finishOrder);
+        ++out.ticks;
+        for (const auto& c : cars) {
+            if (c.out || c.done) continue;
+            const double err = std::fabs(c.lat - c.gridLane);
+            if (c.isPlayer) {
+                if (err > out.playerLaneErr) out.playerLaneErr = err;
+                if (c.dmg > out.playerDmg) out.playerDmg = c.dmg;
+            } else {
+                if (err > out.aiLaneErr) out.aiLaneErr = err;
+                if (c.dmg > out.aiDmg) out.aiDmg = c.dmg;
+            }
+        }
+    }
+    return out;
+}
+
 // One full race with the player's car driven through the real PlayerInput
 // path. `seed` drives both the grid RNG and the race RNG so each run is an
 // independent trajectory rather than a re-roll of the same one.
@@ -111,6 +176,13 @@ RaceOutcome raceWithDrivingPlayer(int trackIdx, double seconds, uint32_t seed) {
             if (c.isPlayer) solo.push_back(c);
         cars.swap(solo);
         finishOrder.clear();
+        // gridStart() left gridAhead pointing into the FULL field (17 for the
+        // player). Against this size-1 vector that was an out-of-bounds read
+        // in stepCar()'s pace branch, and the pace-phase target speed was
+        // derived from whatever it found. stepCar() now bounds-checks too;
+        // clearing it here states the intent directly -- solo means there is
+        // no car ahead.
+        for (auto& c : cars) c.gridAhead = -1;
     }
     Car* player = cars.empty() ? nullptr : &cars[0];
 
@@ -207,6 +279,34 @@ int main() {
     // file came to pass on broken code.
     static const uint32_t kSeeds[] = {101u, 202u, 303u, 404u, 505u, 606u};
     constexpr int kSeedCount = (int)(sizeof(kSeeds) / sizeof(kSeeds[0]));
+
+    // M1: formation lap, full field, human hands off. See PaceOutcome above.
+    for (int t = 0; t < (int)TRACKS.size(); ++t) {
+        const PaceOutcome p = paceFormation(t, kSeeds[0]);
+        std::printf("%-20s PACE ticks=%4d  laneErr player=%5.2fm ai=%5.2fm   preGreenDmg player=%.3f ai=%.3f\n",
+                    TRACKS[t].name.c_str(), p.ticks, p.playerLaneErr, p.aiLaneErr, p.playerDmg, p.aiDmg);
+
+        expect(p.ticks > 100, "the pace phase actually ran (mode stayed 'pace' long enough to measure)");
+        // The headline M1 assertion. Relative, so it measures the player's car
+        // against its own field rather than against a hand-picked metre bound
+        // -- and verified to FAIL on the shipped code, where the curve+cap ate
+        // the player's steering (Big Sable 6.28m against the AI's 3.77m,
+        // Milltown 13.90m against 10.61m). Checking a guard fails on the bug
+        // it targets is not optional here: this file's own header records the
+        // earlier version of itself passing happily on broken code.
+        expect(p.playerLaneErr <= p.aiLaneErr * 1.5 + 0.5,
+               "the player's car holds formation about as well as the AI cars beside it");
+        // Wall damage is live during the pace lap (flag=="green"), so a car
+        // that cannot hold its lane grinds the apron before the race starts.
+        // Relative for the same reason as the lane check: Milltown Bullring
+        // hands out ~0.09 of pre-green damage to cars in the pack, identically
+        // before and after the M1 fix, so it is a separate pre-existing issue
+        // on the tightest track in the game and NOT something this guard
+        // should launder into a magic per-track threshold. What must hold is
+        // that the player is not singled out.
+        expect(p.playerDmg <= p.aiDmg + 0.02,
+               "the player takes no more pre-green damage than the AI cars around it");
+    }
 
     int totalRaces = 0, totalDnf = 0;
     for (int t = 0; t < (int)TRACKS.size(); ++t) {

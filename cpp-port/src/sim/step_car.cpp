@@ -32,6 +32,36 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
     // have no reason to resolve sensibly).
     bool freeSpin = false;
 
+    // M1: true only when the human is ACTUALLY driving this tick -- i.e. the
+    // `else if (c.isPlayer)` branch below is the one that ran and read
+    // PlayerInput. This is NOT the same question as `c.isPlayer`, and
+    // conflating the two was a real, shipped bug.
+    //
+    // The branch chain below puts pace/yellow/pit/spin/DNF ahead of the
+    // player-input branch, so the player's own car is auto-driven by AI code
+    // for whole phases of a race -- correctly, and by design (during the
+    // formation lap every car, the player's included, is placed in line by
+    // the game). But three transformations further down were gated on
+    // `c.isPlayer` because they exist to make a DIGITAL ON/OFF KEY feel good:
+    // the slow input ramp, the steerCurveGamma curve, and the
+    // steerYawAuthority lock cap. Applied to an AI branch's continuous
+    // yawCorrected() output they are simply wrong -- and they compound: at
+    // pace speed they delivered under 10% of the steer angle the pace logic
+    // asked for (0.0080 rad against the 0.0910 an AI car gets for the same
+    // command), so the player's car understeered off the racing line and
+    // ground down the apron through the entire formation lap while the other
+    // 19 held station. Reported as "car drives recklessly before race
+    // begins"; it was the opposite of reckless, it was steering-starved.
+    //
+    // Gating on "a human is driving" instead of "this is the human's car"
+    // makes every auto-driven phase behave bit-identically to an AI car,
+    // while leaving real player driving exactly as L8/L15/L17 tuned it.
+    // tests/drivability_test.cpp had already discovered this same
+    // linear-vs-curved mismatch from the outside and worked around it by
+    // inverting the curve in the test itself; the game code never got the
+    // corresponding fix.
+    bool humanInput = false;
+
     // Regression-pass fix (see CarConstants::yawCorrGain in car.h): every
     // non-player steerIn formula below was written treating its raw value as
     // a directly-realized yaw-rate fraction (matching the old kinematic
@@ -242,7 +272,14 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         // index.html:837-858: formation -- hold grid lane, match pace speed,
         // keep gap to the car ahead.
         double vT = state.paceV;
-        const Car* ahead = c.gridAhead >= 0 ? &allCars[c.gridAhead] : nullptr;
+        // M1: upper bound checked too, not just >= 0. gridAhead is an index
+        // into the field as it stood at gridStart(); any caller holding a
+        // smaller field than that (tests/drivability_test.cpp strips the
+        // 20-car field to the player alone, leaving gridAhead == 17 against a
+        // size-1 vector) otherwise reads out of bounds here, and the whole
+        // pace-phase target speed is then derived from that garbage.
+        const Car* ahead =
+            (c.gridAhead >= 0 && c.gridAhead < (int)allCars.size()) ? &allCars[c.gridAhead] : nullptr;
         if (ahead) {
             double ds = ahead->s - c.s;
             if (ds < -track.total() / 2) ds += track.total();
@@ -280,6 +317,11 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         }
     } else if (c.isPlayer) {
         // index.html:859-864
+        // M1: the ONLY branch that reads PlayerInput, and therefore the only
+        // one whose steerIn is a digital key press rather than a computed
+        // continuous value. The player-feel transformations in the shared
+        // tail below key off this flag, not off c.isPlayer.
+        humanInput = true;
         thr = input.gas ? 1 : 0;
         brk = input.brake ? 1 : 0;
         steerIn = (input.left ? -1 : 0) + (input.right ? 1 : 0);
@@ -379,7 +421,12 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
     // yaw-rate-error feedback's job (CarConstants::yawCorrGain) to correct
     // the spin, and reducing steering authority on top of that made overall
     // damage worse, not better, when tried.
-    if (!freeSpin && !c.isPlayer && std::abs(c.r) > 1.2) {
+    // M1: gated on humanInput, not c.isPlayer -- a human keeps the right to
+    // hold the throttle through a slide, but the player's car while the GAME
+    // is driving it (pace/caution/pit) gets the same spin recovery every AI
+    // car gets. Withholding it there just meant the auto-driver was denied a
+    // tool it was written to rely on.
+    if (!freeSpin && !humanInput && std::abs(c.r) > 1.2) {
         const double lift = std::max(0.0, 1.0 - (std::abs(c.r) - 1.2) / 2.0);
         thr *= lift;
         if (lift < 1.0) brk = std::max(brk, 0.3);
@@ -420,7 +467,13 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
     // the player can no longer wind on lock fast enough to catch a slide.
     // The AI's own 0.5 is untouched: its steerIn is a continuous computed
     // value, not a digital key, so it has no tap-harshness problem to fix.
-    c.steer += (steerIn - c.steer) * (c.isPlayer ? 0.12 : 0.5);
+    //
+    // M1: that last sentence is exactly why this is gated on humanInput and
+    // not on c.isPlayer. When an AI branch drives the player's car (pace,
+    // caution, pit) its steerIn is likewise a continuous computed value, so
+    // it needs the AI's 0.5 too -- at 0.12 the player's car tracked the
+    // formation-lap steering command with ~4x the lag of the cars around it.
+    c.steer += (steerIn - c.steer) * (humanInput ? 0.12 : 0.5);
 
     ProjectResult proj = track.project(c.x, c.y);
     c.s = proj.s;
@@ -604,8 +657,17 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         // yawCorrected(), not an on/off key, so it has no resolution problem
         // to solve, and curving it would move every AI racing line and lap
         // time for nothing.
+        //
+        // M1: gated on humanInput rather than c.isPlayer, because that
+        // "continuous computed value out of yawCorrected()" is precisely what
+        // the pace/caution/pit branches feed in for the PLAYER's car too. The
+        // curve and the cap below then compounded on a value that needed
+        // neither, delivering under 10% of the commanded angle at pace speed
+        // and steering the player's car off the formation line. Whether the
+        // curve applies must follow where steerIn CAME FROM, not whose car
+        // it is.
         double steerAngle = c.steer * CAR.maxSteerAngle;
-        if (c.isPlayer) {
+        if (humanInput) {
             // L15: cap full lock by constant yaw AUTHORITY before applying
             // L8's curve. Full lock is 15 deg, but the tightest corner needs
             // 2.47 deg at racing speed -- so holding the key used to command
