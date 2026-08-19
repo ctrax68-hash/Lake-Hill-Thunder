@@ -44,9 +44,22 @@ int main() {
     check(r.bB.x < r.bG.x, "bB is not left of bG");
     check(r.bB.y + r.bB.h == r.bG.y + r.bG.h, "bB/bG do not share the same bottom edge");
 
-    // bP sits directly above bB, same x, with a gap in between (index.html:194-197).
-    check(r.bP.x == r.bB.x, "bP is not aligned with bB's x");
+    // bP sits above bB (index.html:194-197), right edges aligned so the two
+    // still read as one control column.
+    check(r.bP.x + r.bP.w == r.bB.x + r.bB.w, "bP/bB right edges are not aligned");
     check(r.bP.y + r.bP.h < r.bB.y, "bP does not sit above bB with a gap");
+
+    // N3: bP is the ONLY way a player can enter pit mode (race.cpp's AI pit
+    // strategy skips the player), and doing so hands the car to the pit
+    // branch, which auto-drives it at 22 m/s / 49 mph. It used to sit 8 px
+    // above BRAKE at identical width -- less than a thumb's contact patch
+    // between "slow down" and "give up the next lap" -- and was survivable
+    // only while the button was inert on touch, which it stopped being once
+    // the M2 dispatch fix landed. Assert real separation so this cannot
+    // silently regress to shoulder-to-shoulder again.
+    const int pitBrakeGap = r.bB.y - (r.bP.y + r.bP.h);
+    check(pitBrakeGap >= 24, "bP is too close to bB -- a thumb aiming at BRAKE can commit to a pit stop");
+    check(r.bP.w < r.bB.w, "bP is not narrower than bB, so its edge has no second visual cue");
 
     // The steer pair (bottom-left) and the gas/brake pair (bottom-right)
     // must not overlap for a reasonably wide window.

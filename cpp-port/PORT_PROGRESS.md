@@ -9099,3 +9099,55 @@ the tap arithmetic (one tap == one dispatch) against the filter predicate, with 
 in the test that this covers the predicate and not main.cpp's wiring.
 
 Native `ctest` 33/33.
+
+## N3 -- An accidental PIT tap cost the rest of the race, and M2 is what made it reachable
+
+Report: *"If car crashes it will not accelerate again past 50mph."*
+
+It is not the crash. It is the PIT button, and the number is exact: `stepCar()`'s pit branch runs
+`vT = 22` m/s, which is **49.2 mph**.
+
+Three facts compose into a trap:
+
+1. **The player is the only car this can happen to by accident.** `race.cpp:448`'s AI pit-strategy
+   block opens with `if (c.isPlayer || ...) continue;`, so nothing in the simulation ever sets the
+   player's `pitReq`. The button (`main.cpp`'s `togglePlayerPit()`) is the sole entry point.
+2. **The pit branch outranks the player.** It sits before `else if (c.isPlayer)` in `stepCar()`'s
+   chain, so once `c.pit` is nonzero the car is auto-driven and speed-limited until the stop
+   completes -- `PlayerInput` is not read at all. If the car entered pit mode having already
+   passed its own stall, `ds` wraps large-positive and it drives a **full lap at 49 mph** to come
+   back around.
+3. **It was uncancellable.** `togglePlayerPit()` guarded on `player->pit == 0`, so the moment
+   `pitReq` was promoted to `c.pit`, no press could undo it.
+
+And the geometry made the mis-tap likely: `bP` was the same width and column as `bB` (BRAKE),
+separated by `kCtlPitGap = 8` **pixels** -- less than a thumb's contact patch, between "slow down"
+and "surrender the next lap". That was survivable for exactly as long as the button did nothing,
+which on touch was true until **M2 fixed the double-dispatch in the immediately preceding commit**.
+So the trap is mine, and it is one commit old.
+
+**Fixes, all three parts:**
+- `togglePlayerPit()` now cancels: a second press while still driving in (`pit == 1`) clears
+  `c.pit`/`pitReq` and hands the car back. Deliberately NOT allowed for a drive-through penalty
+  (`dtPending`, enters as `pit == 4` -- a penalty must not be dismissable) or once service has
+  started (`pit == 2` -- the car is stopped with its wheels off).
+- `kCtlPitGap` 8 -> 40 px and `bP` narrowed to 72 (vs BRAKE's 88), right edges still aligned so the
+  column reads as one group. `touch_buttons.cpp` draws straight from these regions, so the visible
+  rect follows and cannot drift from the hit rect.
+- HUD names the state on the flag row, in a distinct orange so it never reads as a flag:
+  "PIT ROAD - 49 MPH (PIT AGAIN TO CANCEL)", plus "PIT REQUESTED (PIT AGAIN TO CANCEL)" while
+  armed but not yet committed -- which is what makes an accidental tap recoverable *before* it
+  costs anything. Nothing on screen previously said any of this; the player just experienced a car
+  that would not accelerate.
+
+`touch_controls_test` now asserts the separation directly (>= 24 px gap, and `bP` narrower than
+`bB`) so this cannot regress to shoulder-to-shoulder. Native `ctest` 33/33.
+
+**Not fixed here, still open:** the two other reports from the same round. "Pulls hard right into
+corners" is narrowed but unsolved -- tilt steer (user confirms OFF), `dmgPull`, wear and setup
+knobs are all ruled out, and measured turn-in shows 2.1x-4.6x authority margin with ~10 m of ramp
+delay, which is real but does not obviously account for the complaint. `collide()` was checked and
+exonerated: the player is always the higher-indexed car `b`, so `a.isPlayer ? 1 : 2` never applies
+to it (L10's dead-code suspicion is correct), and the effect favours the player anyway. Next step
+there is a corner-entry measurement, not another tuning guess -- four steering passes in this
+project have shipped on plausible reasoning and made things worse.

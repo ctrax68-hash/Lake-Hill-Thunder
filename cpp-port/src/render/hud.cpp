@@ -21,7 +21,10 @@ namespace {
 // dbgTextPrintf's _attr byte: top 4 bits background, bottom 4 foreground,
 // standard VGA 16-color text-mode palette (bgfx.h's own doc comment) --
 // not the JS THEME's actual RGB values, since this palette is fixed.
-constexpr uint8_t kBlack = 0, kGreen = 2, kYellow = 14, kWhite = 15;
+// N3 adds kOrange (VGA attr 6, brown/orange) for the pit-road banner -- a
+// distinct colour from the green/yellow flag states sharing this row, so
+// "you are on pit road" never reads as a flag condition.
+constexpr uint8_t kBlack = 0, kGreen = 2, kOrange = 6, kYellow = 14, kWhite = 15;
 
 constexpr uint8_t attr(uint8_t fg, uint8_t bg) {
     return (uint8_t)((bg << 4) | fg);
@@ -144,6 +147,26 @@ void drawHud(const RaceState& state, const std::vector<Car>& cars, std::vector<P
     const bool yellow = state.flag == "yellow";
     bgfx::dbgTextPrintf(1, kRowFlag, attr(yellow ? kBlack : kWhite, yellow ? kYellow : kGreen),
                         yellow ? "CAUTION" : "GREEN  ");
+
+    // N3: while c.pit is nonzero the pit branch in stepCar() owns the car --
+    // it steers itself down pit road and is speed-limited to 22 m/s (49 mph).
+    // Nothing on screen used to say so, so a player who had tapped PIT (which
+    // sits just above BRAKE) experienced it as the car mysteriously refusing
+    // to accelerate past 50 and pulling toward the infield, with no way to
+    // tell whether the game was broken or they had done something. Reported
+    // as exactly that. The state is now named, and so is the way out.
+    if (player->pit > 0) {
+        const char* pitTxt = player->pit == 2       ? "PIT STALL - SERVICING"
+                             : player->dtPending    ? "DRIVE-THROUGH PENALTY - 49 MPH"
+                             : player->pit == 1     ? "PIT ROAD - 49 MPH  (PIT AGAIN TO CANCEL)"
+                                                    : "PIT ROAD - 49 MPH";
+        bgfx::dbgTextPrintf(10, kRowFlag, attr(kBlack, kOrange), "%s", pitTxt);
+    } else if (player->pitReq) {
+        // Armed but not yet committed -- stepCar() promotes this to c.pit at
+        // the frontstretch. Surfacing it here is what makes an accidental tap
+        // recoverable BEFORE it costs anything.
+        bgfx::dbgTextPrintf(10, kRowFlag, attr(kBlack, kOrange), "PIT REQUESTED (PIT AGAIN TO CANCEL)");
+    }
 
     // Phase 4e (PORT_PROGRESS.md): index.html:3999-4020's segmented TIRE/
     // FUEL/CAR status strip -- the first HUD feature needing real quad

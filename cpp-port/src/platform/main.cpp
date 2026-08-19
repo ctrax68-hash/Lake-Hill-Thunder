@@ -131,10 +131,34 @@ Car* findPlayer(std::vector<Car>& cars) {
 // threaded through PlayerInput/stepCar() at all -- the player has no other
 // way to request a pit stop (tick()'s AI pit-strategy block deliberately
 // skips the player, matching JS).
+// N3: this used to be a one-way door, and that made a single mis-tap cost the
+// rest of the race. `pit == 0` in the guard meant that once stepCar() had
+// promoted pitReq into `c.pit`, nothing the player could press would undo it:
+// the pit branch runs BEFORE the player-input branch in stepCar()'s chain, so
+// the car is auto-driven and speed-limited to vT = 22 m/s -- 49.2 mph, which
+// is exactly the reported "will not accelerate again past 50mph". If the car
+// entered pit mode having already passed its own stall, `ds` wraps
+// large-positive and it drives an ENTIRE LAP at 49 mph to come back around.
+//
+// The player is the only car this can happen to by accident: race.cpp's
+// AI pit-strategy block explicitly skips `c.isPlayer`, so this button is the
+// single entry point, and it sits 8 px above BRAKE (see touch_controls.cpp).
+// It was also inert on touch until the M2 dispatch fix, so this trap only
+// became reachable in the immediately preceding commit.
+//
+// Cancelling is allowed only while still driving IN (`pit == 1`) and only for
+// a voluntary stop. A drive-through penalty (`dtPending`, which enters as
+// `pit == 4`) must not be dismissable, and service already under way
+// (`pit == 2`) has no sensible abort -- the car is stopped with its wheels
+// off.
 void togglePlayerPit(LoopState& S) {
     Car* player = findPlayer(S.cars);
-    if (player && S.state.mode == "race" && !player->done && player->pit == 0) {
+    if (!player || S.state.mode != "race" || player->done) return;
+    if (player->pit == 0) {
         player->pitReq = !player->pitReq;
+    } else if (player->pit == 1 && !player->dtPending) {
+        player->pit = 0;
+        player->pitReq = false;
     }
 }
 
