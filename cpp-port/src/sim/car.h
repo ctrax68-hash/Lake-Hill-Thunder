@@ -262,7 +262,55 @@ struct CarConstants {
     // outcomes depending on whether steerYawAuthority was 0.8 or 0.95, on a
     // chaotic (not smooth) basis. Re-run drivability_test after touching
     // EITHER this or power/maxForce again, even if the other looks untouched.
-    double steerYawAuthority = 0.95; // rad/s at full lock; player-only
+    //
+    // N1b (0.95 -> 0.55): L17 above moved this the WRONG WAY, and this entry
+    // reverses it past its original value. Report: "sliding right, happens
+    // with cars around or without them around". *Sliding*, and reproducible
+    // SOLO -- which finally made it measurable.
+    //
+    // Driving the way a human actually does -- HOLDING the turn button through
+    // the corner, not modulating it -- the sim's own per-axle wear counters
+    // say plainly what is happening:
+    //
+    //                  wearFront  wearRear  ratio   yaw got/asked  corner v
+    //     player          0.261     0.014   18.9x      40-53%      16.1 m/s
+    //     AI              0.066     0.054    1.2x      54-71%      44   m/s
+    //
+    // The player's fronts slide NINETEEN times more than the rears. That is
+    // not a steering-response problem, it is a saturated front axle: the car
+    // plows, refuses to rotate, washes out to the outside ("sliding right" on
+    // a left oval) and scrubs itself from 40 m/s down to 16.
+    //
+    // Cause: a held button asks for far more yaw than any corner here needs.
+    // Milltown needs 0.40 rad/s, Thunder Oval 0.33, Cedar Valley 0.26, Big
+    // Sable 0.32 -- against 0.95 on tap. Demand triple the grip the front
+    // tires have and they simply let go. Crucially this is the SAME defect as
+    // "steering is a tad stiff" from the L17 round: a saturated tire stops
+    // responding to more steering, so the car feels unresponsive AND pushes
+    // wide, at the same time and for the same reason. I read that report as
+    // "not enough steering" and raised the cap. That was backwards.
+    //
+    // Why the earlier sweeps missed it: I swept this constant 0.95 -> 1.5 ->
+    // 2.5 -> 99 (cap effectively off), saw no change, and concluded the cap
+    // was irrelevant. I never swept it DOWNWARD, and every probe in that pass
+    // used a MODULATING controller rather than a held button. Two mistakes,
+    // both pointing away from the one constant that mattered.
+    //
+    // 0.55 is measured, not guessed. Held-button behaviour across all four
+    // tracks, with the speed blend in step_car.cpp:
+    //
+    //     cap    front:rear wear   corner speed   drivability
+    //     0.95        18.9x           16.1 m/s      0% DNF
+    //     0.60         9.0x           20.9          0% DNF
+    //     0.55         4.0x           23.8          0% DNF
+    //     0.50          --             --          75% DNF  <- cliff
+    //
+    // 0.50 collapses drivability_test to 75% DNF: that is the recovery-
+    // authority cliff L15 warned about in the abstract, now located exactly.
+    // 0.55 sits one step above it and still leaves 1.4x margin over the
+    // tightest corner's demand. Do not go below 0.55 without re-running that
+    // sweep -- the failure is a cliff, not a slope.
+    double steerYawAuthority = 0.55; // rad/s at full lock; player-only
     double brakeBiasFront = 0.62; // fraction of brake force applied at the front axle
 
     // Regression-pass fix: the AI's steerIn formulas (step_car.cpp) were

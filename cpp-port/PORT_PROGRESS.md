@@ -9291,3 +9291,66 @@ show, and the remaining differences between it and their session are traffic (ev
 solo), the touch controls' held-vs-tapped behaviour, and which specific corner. Needs that
 information before any further steering change -- five passes in this project have now shipped on
 plausible reasoning, and the measured record above is what they were worth.
+
+## N1b -- The steering pull, finally reproduced: the car was plowing on its front tires
+
+The previous entry closed with the pull unreproduced. One sentence from the player cracked it:
+**"Sliding right, happens with cars around or without them around."** *Sliding* rather than the
+nose pointing right means understeer, and *without cars around* means solo -- so it was
+measurable after all.
+
+Driving the way a human actually does -- **holding** the turn button through the corner, not
+modulating it, which is what every probe in the previous entry got wrong -- the sim's own per-axle
+wear counters state the problem outright:
+
+|  | wearFront | wearRear | ratio | yaw got/asked | corner speed |
+|---|---|---|---|---|---|
+| **player** | 0.261 | 0.014 | **18.9x** | 40-53% | **16.1 m/s** |
+| AI | 0.066 | 0.054 | 1.2x | 54-71% | 44 m/s |
+
+The player's front tires slide nineteen times more than the rears. The car plows, will not rotate,
+washes out to the outside -- "sliding right" on a left oval -- and scrubs itself from 40 m/s down
+to 16.
+
+**Cause: a held button asks for more yaw than any corner in the game needs.** Milltown needs
+0.40 rad/s, Thunder Oval 0.33, Cedar Valley 0.26, Big Sable 0.32 -- `steerYawAuthority` allowed
+0.95. Ask the front axle for triple the grip it has and it lets go.
+
+**This is the same defect as "steering is a tad stiff" two rounds earlier**, seen from the other
+side: a saturated tire stops responding to more steering, so the car feels unresponsive *and*
+pushes wide, simultaneously and for one reason. L17 read that as "not enough steering" and raised
+the cap 0.8 -> 0.95, making it strictly worse. This entry reverses that past its original value.
+
+**Why the earlier sweeps missed it, recorded so the mistake isn't repeated:** the previous entry
+swept this same constant 0.95 -> 1.5 -> 2.5 -> 99 (cap effectively off), saw nothing move, and
+concluded the cap was irrelevant. It was never swept **downward**, and every probe in that pass
+drove with a *modulating* controller instead of a held button. Two independent errors, both
+steering attention away from the one constant that mattered.
+
+**Fix, measured rather than guessed** -- `steerYawAuthority` 0.95 -> 0.55, plus a speed blend in
+`step_car.cpp` so the cap does not act at low speed:
+
+|  cap | front:rear wear | corner speed | drivability |
+|---|---|---|---|
+| 0.95 | 18.9x | 16.1 m/s | 0% DNF |
+| 0.60 | 9.0x | 20.9 | 0% DNF |
+| **0.55** | **4.0x** | **23.8** | **0% DNF** |
+| 0.50 | -- | -- | **75% DNF -- cliff** |
+
+0.50 collapses `drivability_test` to 75% DNF: the recovery-authority cliff L15 warned about in the
+abstract, now located exactly. 0.55 sits one step above it with 1.4x margin over the tightest
+corner. The failure is a cliff, not a slope -- do not go lower without re-running that sweep.
+
+The blend was **required, not cosmetic**: lowering the cap far enough to stop front-tire saturation
+at racing speed also stripped lock at pit-lane speed, breaking spin recovery. Full mechanical lock
+below 10 m/s, fully capped above 16, linear between. Lock is unchanged at **14.90 deg at 8 m/s**
+and goes 5.22 -> **3.02 deg at 45 m/s**.
+
+**On the test change, stated plainly:** `tire_model_test.cpp`'s `lockAt()` is a hand-written
+replica of the game's mapping, not a call into it, so it needed the same blend. That is not a
+re-baseline to bury a failure, and it was verified both ways: the updated replica **passes at the
+old 0.95 as well as the new 0.55**, and the property it guards -- full mechanical lock at low
+speed -- remains genuinely true in the real code. The 0.50 cliff was also re-confirmed to still
+fail after the change, so the guard has not been loosened.
+
+Native `ctest` 33/33.

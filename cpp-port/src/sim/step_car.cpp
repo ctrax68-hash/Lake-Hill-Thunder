@@ -699,7 +699,21 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
             const double kus = (CAR.mass / CAR.wheelBase) * (aR / CAR.cf - aF / CAR.cr);
             const double vAuth = std::max(6.0, vSafe);
             const double lockAuth = CAR.steerYawAuthority * (CAR.wheelBase + kus * vAuth * vAuth) / vAuth;
-            const double lock = std::min(CAR.maxSteerAngle, lockAuth);
+            // N1b: blend the cap in with speed instead of applying it flat.
+            // Lowering steerYawAuthority to a value that stops the front tires
+            // saturating at racing speed (see car.h) would otherwise also strip
+            // lock at PIT-LANE speed, where the cap has no business acting --
+            // spin recovery and low-speed manoeuvring need every degree of the
+            // mechanical lock, which is a property tire_model_test pins and
+            // which L15 deliberately protected. Full mechanical lock below
+            // 10 m/s, fully capped above 16, linear between:
+            //
+            //      8 m/s  14.90 deg (full lock, unchanged)
+            //     16 m/s   5.87 deg
+            //     45 m/s   3.02 deg   (was 5.22 at the old uncapped 0.95)
+            const double capBlend = std::max(0.0, std::min(1.0, (vAuth - 10.0) / 6.0));
+            const double lockBlended = CAR.maxSteerAngle + capBlend * (lockAuth - CAR.maxSteerAngle);
+            const double lock = std::min(CAR.maxSteerAngle, lockBlended);
             // L8's curve, applied to that speed-appropriate lock: fine
             // control near centre, and now a ceiling that is a hard corner
             // rather than a spin.

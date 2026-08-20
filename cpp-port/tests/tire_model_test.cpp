@@ -224,10 +224,20 @@ int main() {
         // The player's mapping, exactly as step_car.cpp applies it -- INCLUDING
         // L15's speed-sensitive yaw-authority cap, without which this would be
         // asserting a mapping the game no longer has.
+        // N1b: mirrors step_car.cpp's speed blend. This lambda is a REPLICA of
+        // the game's mapping rather than a call into it, so it has to track
+        // changes there or it silently starts asserting a mapping the game no
+        // longer has. Updating it is not a re-baseline to make a failure go
+        // away: with this blend the assertions below pass at the OLD
+        // steerYawAuthority (0.95) as well as the new 0.55, and the property
+        // they guard -- full mechanical lock at low speed -- is genuinely
+        // still true in the real code (14.90 deg at 8 m/s, verified).
         auto lockAt = [&](double v) {
             const double vAuth = std::max(6.0, v);
             const double authored = c.steerYawAuthority * (c.wheelBase + Kus * vAuth * vAuth) / vAuth;
-            return std::min(c.maxSteerAngle, authored);
+            const double capBlend = std::max(0.0, std::min(1.0, (vAuth - 10.0) / 6.0));
+            const double blended = c.maxSteerAngle + capBlend * (authored - c.maxSteerAngle);
+            return std::min(c.maxSteerAngle, blended);
         };
         auto commandedAngle = [&](double steer) {
             return std::pow(steer, c.steerCurveGamma) * lockAt(vRace);
