@@ -15,3 +15,9 @@ struct GearRpm {
 };
 
 GearRpm gearRpm(double v);
+
+// N5: the speed (m/s) of the upshift boundary at the TOP of 1-based `gear`,
+// clamped to the table's ends. Exposed so step_car.cpp's shift detection can
+// apply hysteresis around the same boundary gearRpm() uses, instead of
+// duplicating the breakpoint table and letting the two drift apart.
+double gearBreakSpeed(int gear);

@@ -9,6 +9,11 @@ namespace {
 constexpr std::array<double, 4> kGearBreaks = {14, 26, 40, 70};
 } // namespace
 
+double gearBreakSpeed(int gear) {
+    const int i = std::max(1, std::min((int)kGearBreaks.size(), gear)) - 1;
+    return kGearBreaks[(size_t)i];
+}
+
 GearRpm gearRpm(double v) {
     double lo = 0, hi = kGearBreaks[0];
     int gear = 1;

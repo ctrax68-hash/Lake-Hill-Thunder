@@ -9354,3 +9354,89 @@ speed -- remains genuinely true in the real code. The 0.50 cliff was also re-con
 fail after the change, so the guard has not been loosened.
 
 Native `ctest` 33/33.
+
+## N4/N5 -- The release dart, and a drivetrain that was hunting gears
+
+Three reports against `016effd`. The main steering fix landed ("car turns better now"); these are
+the two of the three that are diagnosed and fixed. The third is N6 below, and it is NOT fixed.
+
+### N4 -- "a slight stop of touching the turn button shoots car right"
+
+Quantified at 45 m/s: releasing for three ticks decays `c.steer` at 0.12/tick, and
+`steerCurveGamma = 2.5` turns that into a **62% loss of steer angle in 60 ms**, 27% of it in a
+single tick. The car snaps straight, and on a left oval snapping straight is a jolt to the right.
+
+| release rate | angle left after 60 ms | worst single-tick drop |
+|---|---|---|
+| 0.12 (symmetric, was) | 38% | 27% |
+| **0.06 (now)** | **63%** | **14%** |
+| 0.04 | 74% | 10% |
+
+**Fix: an asymmetric ramp** -- new player-only `steerReleaseRamp = 0.06`, applied when the input is
+returning toward centre. Reversing to the opposite lock is not a release and keeps the fast 0.12
+apply rate, so catching a slide is untouched.
+
+**Lowering `steerCurveGamma` was the other candidate and was measured and rejected**, despite
+scoring almost identically on the transient (61% at gamma 1.3). Gamma is a *steady-state* lever:
+lowering it raises the average steering a held button applies, which re-saturates the front tires
+-- the exact N1b understeer just fixed. Held-button corner speed fell 26.1 -> 20.8 m/s going from
+gamma 2.5 to 1.0. The asymmetric ramp touches only the release transient, so tap resolution,
+steady-state authority and the anti-spin cap all keep the values they were tuned to. 0.04 was left
+on the table deliberately: a wheel that unwinds far slower than it winds on starts to feel like the
+car keeps turning after you let go, which is a worse bug than the one being fixed.
+
+### N5 -- "shifting seems to struggle, cars aren't going as fast as they should"
+
+Two real defects in the shift-dip logic:
+
+1. `gearRpm()` is a pure function of instantaneous speed with hard breakpoints (14/26/40/70 m/s)
+   and **no hysteresis**, so a car whose speed sits on a boundary -- which is what happens
+   mid-corner -- flips gear back and forth.
+2. `shiftCd` counted down **only in the `else` branch**, i.e. only on ticks where the gear did not
+   change. A hunting car re-armed the 60%-power dip at least as fast as it could ever expire.
+
+Measured on Cedar Valley: **74 shifts in 120 s** (one every 1.6 s), engine held at 60% power
+**10.1% of the time**.
+
+Fixed both halves -- decrement unconditionally, and require the car to be 4% clear of the boundary
+before committing. The boundary comes from a new `gearBreakSpeed()` in `gear_rpm.h` rather than a
+second copy of the table, so it cannot drift from `gearRpm()`'s own breakpoints, and
+`gear_rpm_test` now asserts the two agree.
+
+| track | shifts | dip duty | corner mph |
+|---|---|---|---|
+| Cedar Valley | 74 -> 12 | 10.1% -> 1.6% | 88 -> 90 |
+| Thunder Oval | 34 -> 14 | 4.2% -> 1.6% | 86 -> 90 |
+| Big Sable | 11 -> 13 | 1.9% -> 1.4% | 93 -> 93 |
+
+**Worth about 2-4 mph, and that is stated plainly rather than dressed up.** Measured corner speeds
+are 86/68/88/93 mph, which for ovals this size is roughly right; the "not as fast as they should
+be" perception is only partly this bug. Loosening L12's corner-speed clamp to recover the aero
+downforce it ignores was considered and **rejected**: including aero re-opens exactly the runaway
+L12 closed, producing 150-250 mph corner limits (Big Sable at 250). Not touching that.
+
+Both new guards were verified to **fail on the old behaviour** before being trusted -- the N4
+assertions fail with the ramp put back to a symmetric 0.12.
+
+## N6 (OPEN) -- The field jam is real, reproduced, and I made it worse trying to fix it
+
+**Milltown Bullring: 2 of 20 cars moving after 600 s, vMax 6.6 m/s.** The field collapses from
+31 m/s average to 1-6 m/s within 100 seconds and never recovers, with 5-11 overlapping collision
+pairs persisting. Cars occupy 608 m of the 848 m lap, so it is clusters rather than one ball.
+
+Cedar Valley's freeze from the previous round **is genuinely fixed** (0 DNF, 20 running, all
+moving). But `c09e5ab`'s `c.v > 2.0` floor only converted the hard freeze into a **crawl**, and the
+jam has simply surfaced on the shortest track instead.
+
+**An attempted fix measured worse and is not shipped.** The trigger `c.v > blocker->v - 0.5` means
+"I am not much slower than them", which is true for cars running together at matched speed -- so
+the whole pack brakes at 0.7 and collapses. Replacing it with a genuine closing-rate test plus
+proportional braking made things worse: Thunder Oval moving cars 16 -> 4, Cedar Valley 20 -> 16
+with 3 new DNFs. Braking less simply means they run into each other more. Recorded so it is not
+retried from the same reasoning.
+
+This needs its own round with a jam-specific instrument, not another tuning guess. Top open item.
+
+Native `ctest` 33/33. Note on every attrition figure here: single seed, and this simulator is
+chaotic -- differences of 1-2 DNFs between runs are noise, only the large effects (74 -> 12 shifts,
+2/20 moving) are signal.

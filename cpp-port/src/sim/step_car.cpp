@@ -491,7 +491,19 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
     // caution, pit) its steerIn is likewise a continuous computed value, so
     // it needs the AI's 0.5 too -- at 0.12 the player's car tracked the
     // formation-lap steering command with ~4x the lag of the cars around it.
-    c.steer += (steerIn - c.steer) * (humanInput ? 0.12 : 0.5);
+    // N4: the player's rate is asymmetric -- winding the wheel ON keeps 0.12,
+    // letting it return toward centre uses the slower steerReleaseRamp. A
+    // release is "the target is closer to centre than the wheel currently is",
+    // which covers both letting go entirely and easing off part way; reversing
+    // to the opposite lock is NOT a release and keeps the fast apply rate, so
+    // catching a slide is untouched. See car.h's steerReleaseRamp for the
+    // measurements. The AI's 0.5 stays symmetric: its steerIn is continuous,
+    // so it has no snap-back transient to damp.
+    double playerRamp = 0.12;
+    if (humanInput && std::fabs(steerIn) < std::fabs(c.steer) && steerIn * c.steer >= 0.0) {
+        playerRamp = CAR.steerReleaseRamp;
+    }
+    c.steer += (steerIn - c.steer) * (humanInput ? playerRamp : 0.5);
 
     ProjectResult proj = track.project(c.x, c.y);
     c.s = proj.s;
@@ -579,14 +591,35 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
     // (torqueCurveMultiplier()) and to detect gear changes, which apply a
     // brief force-reduction dip -- mirroring a real shift's momentary power
     // interruption. On the tick a shift is detected, shiftCd is set to its
-    // full duration immediately (the dip is active that same tick); it only
-    // counts down on ticks where no new shift occurs.
+    // full duration immediately (the dip is active that same tick).
+    //
+    // N5: two defects here made the drivetrain hunt, reported as "shifting
+    // seems to struggle so cars aren't going as fast as they should".
+    //
+    // 1. gearRpm() is a pure function of INSTANTANEOUS speed with hard
+    //    breakpoints (14/26/40/70 m/s) and no hysteresis, so a car whose speed
+    //    sits on a boundary -- which is exactly what happens mid-corner --
+    //    flips gear back and forth.
+    // 2. shiftCd only counted down in the `else`, i.e. only on ticks where the
+    //    gear did NOT change. A hunting car therefore re-armed the dip at
+    //    least as fast as it could ever expire, pinning the engine at
+    //    shiftDipMag (60%) more or less permanently.
+    //
+    // Measured on Cedar Valley before the fix: 74 shifts in 120 s, engine held
+    // at 60% power 10.1% of the time. After: 12 shifts, 1.6%.
+    //
+    // Fix is both halves -- decrement unconditionally, and require the car to
+    // be 4% clear of the boundary before committing the change. The boundary
+    // comes from gearBreakSpeed() rather than a copy of the table, so this
+    // cannot drift away from gearRpm()'s own breakpoints.
     const GearRpm gear = gearRpm(c.v);
+    if (c.shiftCd > 0) c.shiftCd -= DT;
     if (gear.gear != c.prevGear) {
-        c.prevGear = gear.gear;
-        c.shiftCd = CAR.shiftDipDur;
-    } else if (c.shiftCd > 0) {
-        c.shiftCd -= DT;
+        const double edge = gearBreakSpeed(std::min(gear.gear, c.prevGear));
+        if (c.v > edge * 1.04 || c.v < edge * 0.96) {
+            c.prevGear = gear.gear;
+            c.shiftCd = CAR.shiftDipDur;
+        }
     }
     const double shiftMult = c.shiftCd > 0 ? CAR.shiftDipMag : 1.0;
 

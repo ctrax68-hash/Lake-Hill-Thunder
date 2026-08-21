@@ -205,6 +205,35 @@ struct CarConstants {
     // otherwise and was noise -- see tests/drivability_test.cpp's header.
     double steerCurveGamma = 2.5; // player-only; see step_car.cpp's use site
 
+    // N4: rate the player's wheel returns TOWARD CENTRE, against the 0.12
+    // apply rate. Player-only, and it exists because release and apply are not
+    // symmetric problems.
+    //
+    // Reported: "a slight stop of touching the turn button shoots car right."
+    // Measured at 45 m/s -- releasing for three ticks decays c.steer by
+    // 0.12/tick, and steerCurveGamma = 2.5 turns that into a **62% loss of
+    // steer angle in 60 ms**, 27% of it in a single tick. The car snaps
+    // straight, and on a left oval snapping straight reads as a jolt right:
+    //
+    //     release rate   angle left after 60ms   worst single-tick drop
+    //         0.12 (was)          38%                     27%
+    //         0.06 (now)          63%                     14%
+    //         0.04                74%                     10%
+    //
+    // Deliberately NOT fixed by lowering steerCurveGamma, which was the other
+    // candidate and measured almost identically on the transient (61% at 1.3).
+    // Gamma is a steady-state lever: lowering it raises the average steering a
+    // held button applies, which re-saturates the front tires -- exactly the
+    // N1b understeer that was just fixed. Measured, held-button: corner speed
+    // fell 26.1 -> 20.8 m/s going from gamma 2.5 to 1.0. An asymmetric ramp
+    // touches ONLY the release transient, so tap resolution, steady-state
+    // authority and the anti-spin cap all keep the values they were tuned to.
+    //
+    // 0.04 was left on the table on purpose: a wheel that unwinds much slower
+    // than it winds on starts to feel like the car keeps turning after you let
+    // go, and that is a worse bug than the one being fixed.
+    double steerReleaseRamp = 0.06; // player-only; see step_car.cpp's use site
+
     // L15 (NT2003/2004 fidelity pass): maximum steady-state yaw rate, rad/s,
     // that FULL player input is allowed to command -- at any speed.
     //

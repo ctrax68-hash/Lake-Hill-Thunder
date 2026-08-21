@@ -280,6 +280,33 @@ int main() {
                "at low speed the full mechanical lock is still available");
         expect(lockAt(vRace) < c.maxSteerAngle,
                "at racing speed the yaw-authority cap is what binds, not the mechanical lock");
+
+        // N4: releasing the button must unwind the wheel GENTLY. Reported as
+        // "a slight stop of touching the turn button shoots car right": with a
+        // symmetric 0.12 rate the gamma curve turned a 60 ms blip into a 62%
+        // loss of steer angle, so the car snapped straight -- a jolt toward the
+        // outside of a left corner.
+        //
+        // Replicates step_car.cpp's ramp, same replica convention as lockAt()
+        // above (and the same obligation to track changes there).
+        auto angleAfterRelease = [&](int ticks, double rate) {
+            double steer = 1.0;
+            for (int i = 0; i < ticks; ++i) steer += (0.0 - steer) * rate;
+            return std::pow(std::fabs(steer), c.steerCurveGamma) * lockAt(vRace);
+        };
+        const double full = std::pow(1.0, c.steerCurveGamma) * lockAt(vRace);
+        const double kept = angleAfterRelease(3, c.steerReleaseRamp) / full;
+        expect(kept > 0.55, "a brief release keeps most of the steering instead of snapping straight");
+        // ...and the release must genuinely be slower than the apply rate,
+        // which is the whole mechanism. Guards against someone "simplifying"
+        // it back to symmetric.
+        expect(c.steerReleaseRamp < 0.12, "the wheel unwinds slower than it winds on");
+        expect(kept > angleAfterRelease(3, 0.12) / full,
+               "the asymmetric ramp actually retains more steering than the old symmetric one");
+        // But not so slow the car keeps turning after you let go: a full
+        // second of release must have essentially returned to centre.
+        expect(angleAfterRelease(50, c.steerReleaseRamp) / full < 0.05,
+               "releasing for a full second still returns the wheel to centre");
     }
 
     // The actual "can a player drive this?" check lives in its own test,

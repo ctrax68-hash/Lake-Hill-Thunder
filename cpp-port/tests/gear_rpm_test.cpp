@@ -41,6 +41,35 @@ int main() {
     // fallback keeps every speed past 70 in the same top-gear bracket).
     checkGearRpm(100.0, 4, 1.0, "v=100 (beyond the last breakpoint, still gear 4/clamped rpm)");
 
+    // N5: gearBreakSpeed() is the single source of truth step_car.cpp's shift
+    // hysteresis reads, instead of keeping its own copy of the breakpoints.
+    // Assert it agrees with gearRpm()'s own boundaries -- if the table ever
+    // moves, this fails rather than letting the two silently disagree.
+    struct { int gear; double want; } kEdges[] = {{1, 14.0}, {2, 26.0}, {3, 40.0}, {4, 70.0}};
+    for (const auto& e : kEdges) {
+        if (gearBreakSpeed(e.gear) != e.want) {
+            std::printf("gear_rpm_test: FAILED -- gearBreakSpeed(%d) = %.1f, expected %.1f\n",
+                        e.gear, gearBreakSpeed(e.gear), e.want);
+            ok = false;
+        }
+        // The boundary speed must actually be the top of that gear, and a hair
+        // past it must be the next one -- which is the property the hysteresis
+        // band is centred on.
+        if (gearRpm(e.want).gear != e.gear) {
+            std::printf("gear_rpm_test: FAILED -- v=%.1f is not the top of gear %d\n", e.want, e.gear);
+            ok = false;
+        }
+        if (e.gear < 4 && gearRpm(e.want + 0.01).gear != e.gear + 1) {
+            std::printf("gear_rpm_test: FAILED -- just past %.1f is not gear %d\n", e.want, e.gear + 1);
+            ok = false;
+        }
+    }
+    // Out-of-range indices clamp rather than reading off the end of the table.
+    if (gearBreakSpeed(0) != 14.0 || gearBreakSpeed(99) != 70.0) {
+        std::printf("gear_rpm_test: FAILED -- gearBreakSpeed() does not clamp out-of-range gears\n");
+        ok = false;
+    }
+
     if (ok) {
         std::printf("gear_rpm_test: all gear/RPM values match expectations.\n");
         return 0;
