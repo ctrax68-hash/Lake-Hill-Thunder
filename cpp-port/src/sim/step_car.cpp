@@ -746,7 +746,15 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
             //     45 m/s   3.02 deg   (was 5.22 at the old uncapped 0.95)
             const double capBlend = std::max(0.0, std::min(1.0, (vAuth - 10.0) / 6.0));
             const double lockBlended = CAR.maxSteerAngle + capBlend * (lockAuth - CAR.maxSteerAngle);
-            const double lock = std::min(CAR.maxSteerAngle, lockBlended);
+            // N7: never less than the tightest corner in the game actually
+            // needs at this speed. The constant-yaw cap above scales as 1/v
+            // while a corner's demand scales as v/R, so without this the car
+            // becomes physically unable to turn in above cap*R -- which is
+            // reachable at the start of a race. See car.h's
+            // steerCornerFloorMargin for the ceiling table and the crossover.
+            const double lockFloor = CAR.steerCornerFloorMargin *
+                                     (CAR.wheelBase + kus * vAuth * vAuth) / CAR.steerTightestCornerR;
+            const double lock = std::min(CAR.maxSteerAngle, std::max(lockBlended, lockFloor));
             // L8's curve, applied to that speed-appropriate lock: fine
             // control near centre, and now a ceiling that is a hard corner
             // rather than a spin.

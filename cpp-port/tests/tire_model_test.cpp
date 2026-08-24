@@ -237,7 +237,10 @@ int main() {
             const double authored = c.steerYawAuthority * (c.wheelBase + Kus * vAuth * vAuth) / vAuth;
             const double capBlend = std::max(0.0, std::min(1.0, (vAuth - 10.0) / 6.0));
             const double blended = c.maxSteerAngle + capBlend * (authored - c.maxSteerAngle);
-            return std::min(c.maxSteerAngle, blended);
+            // N7: floor at the tightest corner's requirement.
+            const double floorAng = c.steerCornerFloorMargin *
+                                    (c.wheelBase + Kus * vAuth * vAuth) / c.steerTightestCornerR;
+            return std::min(c.maxSteerAngle, std::max(blended, floorAng));
         };
         auto commandedAngle = [&](double steer) {
             return std::pow(steer, c.steerCurveGamma) * lockAt(vRace);
@@ -307,6 +310,41 @@ int main() {
         // second of release must have essentially returned to centre.
         expect(angleAfterRelease(50, c.steerReleaseRamp) / full < 0.05,
                "releasing for a full second still returns the wheel to centre");
+
+        // N7: THE assertion whose absence let a car ship that could not turn
+        // into turn 1. Every check above tests that full lock is not too MUCH;
+        // none tested that it is ever ENOUGH. A constant yaw cap scales as 1/v
+        // while a corner's demand scales as v/R, so the two cross and the car
+        // silently becomes unable to make the corner at all -- at cap*R, which
+        // for Thunder Oval is 77 m/s and reachable straight off the green flag.
+        //
+        // Swept across the whole speed range the car can actually reach, not
+        // just the one racing speed the other checks use -- the failure only
+        // appears at the top end, which is exactly why a single-speed check
+        // missed it.
+        {
+            const double rTightest = c.steerTightestCornerR;
+            double worstMargin = 1e9;
+            double worstV = 0;
+            for (double v = 20.0; v <= 85.0; v += 1.0) {
+                const double needed = (c.wheelBase + Kus * v * v) / rTightest;
+                const double margin = lockAt(v) / needed;
+                if (margin < worstMargin) {
+                    worstMargin = margin;
+                    worstV = v;
+                }
+            }
+            expect(worstMargin > 1.0,
+                   "full lock can always out-turn the tightest corner, at every speed the car reaches");
+            // And with real margin, not just barely -- 1.10x steady-state was
+            // measured to be insufficient once yaw inertia and the input ramp
+            // are included, so a bound of 1.0 alone would not have caught it.
+            expect(worstMargin > 1.15,
+                   "...with enough margin left for yaw inertia and the input ramp");
+            if (worstMargin <= 1.15) {
+                std::fprintf(stderr, "  worst margin %.2fx at %.0f m/s\n", worstMargin, worstV);
+            }
+        }
     }
 
     // The actual "can a player drive this?" check lives in its own test,

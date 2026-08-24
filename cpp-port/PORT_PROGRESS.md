@@ -9440,3 +9440,53 @@ This needs its own round with a jam-specific instrument, not another tuning gues
 Native `ctest` 33/33. Note on every attrition figure here: single seed, and this simulator is
 chaotic -- differences of 1-2 DNFs between runs are noise, only the large effects (74 -> 12 shifts,
 2/20 moving) are signal.
+
+## N7 -- Turn 1 was unmakeable at start-of-race speed, and the cap was the wrong SHAPE
+
+> "Playing first track car is refusing to turn left in first turn at start of race"
+
+My regression, from N1b, and the third time this constant has needed correcting. The mistake is
+structural rather than a bad number, which is why tuning it three times did not settle it.
+
+`steerYawAuthority` caps the player's yaw at a **constant** 0.55 rad/s. The yaw a corner demands is
+**v/R**, which **grows with speed**. A constant ceiling and a rising demand must cross, and above
+`cap * R` the corner is unmakeable at full lock:
+
+| track | R | cannot turn above |
+|---|---|---|
+| **Thunder Oval** (the first track) | 140 m | 77 m/s (**172 mph**) |
+| Milltown | 100 m | 55 m/s (123 mph) |
+| Cedar Valley | 190 m | 104 m/s |
+| Big Sable | 240 m | 132 m/s |
+
+The start of a race is exactly where a player reaches it: flat out from pace speed down Thunder
+Oval's ~392 m front straight at ~5 m/s^2 puts the car into turn 1 at **~70 m/s (156 mph)**, where
+the steady-state margin is **1.10x** -- not enough once yaw inertia and the 0.12/tick ramp are
+included. Reproduced in the sim on the reported track, flat out holding LEFT into turn 1:
+
+| entry | before | after |
+|---|---|---|
+| 55 m/s | made it | made it |
+| 60 m/s | made it | made it |
+| **65 m/s** | ***into the wall*** | **made it** |
+
+**Fix:** floor the lock at what the tightest corner in the game needs at the current speed --
+`steerCornerFloorMargin (1.25) * (wheelBase + Kus*v^2) / steerTightestCornerR (100 m)` -- so the cap
+goes on limiting *excess* steering without ever withholding steering the track demands.
+
+The floor and the constant-yaw cap cross at **44 m/s**, which is what keeps this from re-opening
+N1b's plowing fix: below the crossover the cap still binds and behaviour is unchanged. Measured on
+the held-button plow probe, which runs at ~21 m/s: front:rear wear 14.2x -> 14.7x, corner speed
+21.1 -> 20.9 m/s. Unchanged, as designed.
+
+**Milltown still cannot be taken above ~55 m/s, and that is correct** -- there the car is ~12% past
+what the tires can hold even with aero downforce. This floor fixes authority, not grip.
+
+**The test gap that let this ship, now closed.** Every steering assertion in `tire_model_test`
+checked that full lock was not too MUCH; none checked it was ever ENOUGH, and all of them ran at a
+single racing speed while this failure only appears at the top end. The new guard sweeps 20-85 m/s
+and asserts full lock always out-turns the tightest corner with real margin. Verified it **fails on
+the shipped code**: worst margin **0.65x at 85 m/s** -- the car could generate barely two-thirds of
+the steering the corner required.
+
+Native `ctest` 33/33.

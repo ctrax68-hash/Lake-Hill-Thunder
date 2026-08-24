@@ -340,6 +340,43 @@ struct CarConstants {
     // tightest corner's demand. Do not go below 0.55 without re-running that
     // sweep -- the failure is a cliff, not a slope.
     double steerYawAuthority = 0.55; // rad/s at full lock; player-only
+
+    // N7: a floor under the lock, as a multiple of what the TIGHTEST corner in
+    // the game needs at the current speed. This exists because the cap above
+    // is the wrong SHAPE, not the wrong number -- and that is worth stating
+    // plainly, since this constant has now needed correcting three times.
+    //
+    // steerYawAuthority caps yaw at a CONSTANT 0.55 rad/s. The yaw a corner
+    // demands is v/R, which GROWS with speed. So there is a speed above which
+    // the corner is simply unmakeable at full lock, at exactly cap * R:
+    //
+    //     Thunder Oval   R=140m  -> cannot turn above  77 m/s (172 mph)
+    //     Milltown       R=100m  -> cannot turn above  55 m/s (123 mph)
+    //     Cedar Valley   R=190m  -> cannot turn above 104 m/s
+    //     Big Sable      R=240m  -> cannot turn above 132 m/s
+    //
+    // The start of a race is exactly where a player reaches it: accelerating
+    // flat out from pace speed down Thunder Oval's ~392 m front straight puts
+    // the car into turn 1 at ~70 m/s (156 mph), where the steady-state margin
+    // is 1.10x -- and 1.10x steady-state is not enough once yaw inertia and the
+    // input ramp are accounted for. Reported as "car is refusing to turn left
+    // in first turn at start of race", and reproduced: flat out holding LEFT,
+    // turn 1 entry at 65 m/s put the car into the wall.
+    //
+    // Flooring the lock at the tightest corner's own requirement lets the cap
+    // go on limiting EXCESS steering (which is what saturates the front tires,
+    // see steerYawAuthority's own note) without ever withholding steering the
+    // track actually demands. The two cross at 44 m/s: below that the constant
+    // cap still binds and N1b's anti-plow behaviour is untouched -- measured,
+    // held-button front:rear wear 14.2x -> 14.7x and corner speed 21.1 -> 20.9
+    // m/s, i.e. unchanged -- and above it the floor scales with speed.
+    //
+    // Milltown still cannot be taken above ~55 m/s, and that is CORRECT: there
+    // the car is ~12% past what the tires can hold even with aero downforce,
+    // and no amount of steering angle saves that. This floor fixes authority,
+    // not grip.
+    double steerCornerFloorMargin = 1.25; // multiple of the tightest corner's need
+    double steerTightestCornerR = 100.0;  // m -- Milltown Bullring, tightest in the game
     double brakeBiasFront = 0.62; // fraction of brake force applied at the front axle
 
     // Regression-pass fix: the AI's steerIn formulas (step_car.cpp) were
