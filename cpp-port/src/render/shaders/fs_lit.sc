@@ -1,4 +1,4 @@
-$input v_color0, v_normal
+$input v_color0, v_normal, v_worldPos
 
 // Phase 5a (PORT_PROGRESS.md): hemisphere-ambient + directional-diffuse
 // shading -- a direct port of JS's two-light model (one THREE.HemisphereLight
@@ -26,11 +26,13 @@ $input v_color0, v_normal
 
 #include <bgfx_shader.sh>
 #include <shaderlib.sh>
+#include "atmos.sh"
 
 uniform vec4 u_sunDir;     // xyz: unit direction TOWARD the sun
 uniform vec4 u_sunColor;   // rgb: sun color * intensity
 uniform vec4 u_hemiSky;    // rgb: hemisphere sky color * intensity
 uniform vec4 u_hemiGround; // rgb: hemisphere ground color * intensity
+uniform vec4 u_camPos;
 
 void main()
 {
@@ -38,7 +40,8 @@ void main()
 	float hemiT = clamp(n.y * 0.5 + 0.5, 0.0, 1.0);
 	vec3 ambient = mix(u_hemiGround.rgb, u_hemiSky.rgb, hemiT);
 	float ndotl = max(dot(n, u_sunDir.xyz), 0.0);
-	vec3 lightAmt = ambient + u_sunColor.rgb * ndotl;
+	vec3 lightAmt = lhtExpose(ambient + u_sunColor.rgb * ndotl);
 	vec3 lit = v_color0.rgb * lightAmt;
+	lit = lhtHaze(lit, v_worldPos, u_camPos.xyz);
 	gl_FragColor = vec4(lit, v_color0.a);
 }

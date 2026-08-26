@@ -214,6 +214,12 @@ private:
     // the field). Set per-car in submitWorld()'s draw loop, same pattern as
     // SkinnedMesh::setBoneMatrices() being called right before each draw.
     bgfx::UniformHandle uEmissive_ = BGFX_INVALID_HANDLE;
+    // G25: atmosphere. u_atmos = (fogDensity, exposure, 0, 0); u_fogColor.rgb
+    // is the haze colour, matched per track to the sky gradient so distance
+    // fades INTO the sky rather than toward an unrelated grey. See
+    // shaders/atmos.sh for why both exist.
+    bgfx::UniformHandle uAtmos_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle uFogColor_ = BGFX_INVALID_HANDLE;
 
     // Phase 5b (PORT_PROGRESS.md): the resolved ENV_PRESETS values for the
     // current track (env_presets.h), computed once in setTrack() rather
@@ -223,6 +229,9 @@ private:
     float sunColor_[4] = {0, 0, 0, 0};
     float hemiSky_[4] = {0, 0, 0, 0};
     float hemiGround_[4] = {0, 0, 0, 0};
+    // G25: resolved per track in setTrack(), same as the light values above.
+    float atmos_[4] = {0.0f, 1.0f, 0.0f, 0.0f};
+    float fogColor_[4] = {0.7f, 0.76f, 0.84f, 1.0f};
 
     // Phase 5b: a large flat ground plane colored by theme.grass -- the
     // first real use of per-track color data, and something for the new

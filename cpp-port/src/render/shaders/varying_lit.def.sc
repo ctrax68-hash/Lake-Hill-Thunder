@@ -1,5 +1,9 @@
 vec4 v_color0    : COLOR0    = vec4(1.0, 0.0, 0.0, 1.0);
 vec3 v_normal    : NORMAL    = vec3(0.0, 1.0, 0.0);
+// G25: world position for distance fog. Every draw in this renderer uses an
+// identity model transform (positions are baked world-space per-vertex), so
+// a_position passes straight through -- see vs_lit.sc's own note.
+vec3 v_worldPos  : TEXCOORD1 = vec3(0.0, 0.0, 0.0);
 
 vec3 a_position  : POSITION;
 vec3 a_normal    : NORMAL;

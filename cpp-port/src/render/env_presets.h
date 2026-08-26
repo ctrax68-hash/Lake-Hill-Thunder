@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <string>
@@ -48,6 +49,34 @@ inline const EnvPreset& resolveEnvPreset(const std::string& name) {
     if (name == "hazy-noon") return kEnvHazyNoon;
     if (name == "dusk-lights") return kEnvDuskLights;
     return kEnvNoonGrass;
+}
+
+// G25: the light multiplier this preset produces on a FLAT-UP surface --
+// `luminance(hemiSky) + luminance(sunColor) * sin(elevation)`, i.e. exactly
+// what fs_lit.sc computes for a normal of (0,1,0). This is the number that
+// makes the track read bright and flat: the JS-inherited intensities put
+// noon-grass at ~3.4x, so 0.25-albedo asphalt arrives near 0.86 before
+// tonemapping.
+inline double envFlatUpMultiplier(const EnvPreset& preset) {
+    auto lum = [](const std::array<double, 3>& c, double k) {
+        return (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) * k;
+    };
+    const double sinEl = std::max(0.0, std::sin(preset.elevationDeg * M_PI / 180.0));
+    return lum(preset.hemiSky, preset.hemiIntensity) + lum(preset.sunColor, preset.sunIntensity) * sinEl;
+}
+
+// G25: exposure for a preset, normalising its flat-up multiplier toward
+// `target` -- but ONLY DOWNWARD, which is the whole point.
+//
+// Normalising every preset up AND down to one target would defeat the purpose
+// of having presets: dusk-lights sits at 0.45 by design, and "correcting" it to
+// 1.35 would turn dusk into midday. Clamping at 1.0 means overexposed presets
+// (noon-grass 3.43, hazy-noon 3.31) get tamed while presets that are already
+// reasonable (sunset 1.21) or deliberately dark (dusk-lights) are left alone.
+inline double envExposure(const EnvPreset& preset, double target) {
+    const double flatUp = envFlatUpMultiplier(preset);
+    if (flatUp <= 1e-6) return 1.0;
+    return std::min(1.0, target / flatUp);
 }
 
 // Unit direction TOWARD the sun, matching THREE.DirectionalLight's own

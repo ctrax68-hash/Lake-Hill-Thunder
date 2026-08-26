@@ -82,8 +82,38 @@ int main() {
             expectTrue(label, resolved[i] != resolved[j]);
         }
 
+    // G25: exposure normalisation. The lighting model's flat-up multiplier is
+    // what made the track read bright and flat; envExposure() tames it, but
+    // must only ever normalise DOWNWARD.
+    {
+        // Measured values these assertions are pinned to.
+        expectTrue("noon-grass is overexposed (>3x)", envFlatUpMultiplier(kEnvNoonGrass) > 3.0);
+        expectTrue("hazy-noon is overexposed (>3x)", envFlatUpMultiplier(kEnvHazyNoon) > 3.0);
+        expectTrue("sunset is already near 1x", envFlatUpMultiplier(kEnvSunset) > 1.0 &&
+                                                   envFlatUpMultiplier(kEnvSunset) < 1.5);
+        expectTrue("dusk-lights is deliberately dark (<0.6x)", envFlatUpMultiplier(kEnvDuskLights) < 0.6);
+
+        constexpr double kTarget = 1.35;
+        // The overexposed presets get pulled to the target.
+        for (const EnvPreset* p : {&kEnvNoonGrass, &kEnvHazyNoon}) {
+            const double corrected = envFlatUpMultiplier(*p) * envExposure(*p, kTarget);
+            expectTrue("an overexposed preset lands on the target", std::fabs(corrected - kTarget) < 1e-6);
+        }
+        // THE assertion that matters: a dark preset is never brightened. Naive
+        // normalisation would scale dusk-lights by ~2.5x and turn Big Sable's
+        // dusk into midday, which is the opposite of what presets are for.
+        expectTrue("dusk-lights is not brightened", envExposure(kEnvDuskLights, kTarget) == 1.0);
+        for (const EnvPreset* p : {&kEnvNoonGrass, &kEnvHazyNoon, &kEnvSunset, &kEnvDuskLights}) {
+            expectTrue("exposure never exceeds 1.0 for any preset", envExposure(*p, kTarget) <= 1.0);
+            expectTrue("exposure is always positive", envExposure(*p, kTarget) > 0.0);
+        }
+        // Every track in the game uses a different preset, so all four paths
+        // above are live -- not hypothetical.
+        expectTrue("Big Sable really does use the dark preset", resolved[3] == &kEnvDuskLights);
+    }
+
     if (g_failures == 0) {
-        std::printf("env_presets_test: az/el conversion, fallback, and per-track resolution all match.\n");
+        std::printf("env_presets_test: az/el conversion, fallback, per-track resolution and exposure all match.\n");
         return 0;
     }
     std::fprintf(stderr, "env_presets_test: %d MISMATCHES.\n", g_failures);

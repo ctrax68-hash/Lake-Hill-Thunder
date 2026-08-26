@@ -131,6 +131,10 @@ bool skipCarDraws() {
 EM_JS(int, lhtSkipPostFxFlag, (), {
     return /[?&]skipPostFx=1(&|$)/.test(location.search) ? 1 : 0;
 });
+// G25: see showStats() below.
+EM_JS(int, lhtStatsFlag, (), {
+    return /[?&]stats=1(&|$)/.test(location.search) ? 1 : 0;
+});
 #endif
 
 bool skipPostFx() {
@@ -140,6 +144,27 @@ bool skipPostFx() {
     static const bool skip = std::getenv("LHT_SKIP_POSTFX") != nullptr;
 #endif
     return skip;
+}
+
+// G25: ?stats=1 / LHT_STATS turns on bgfx's own profiler overlay.
+//
+// This project had NO frame-time instrumentation of any kind -- no
+// getStats(), no FPS counter, no draw-call or texture-memory accounting --
+// which meant every judgement about whether the renderer could afford
+// something was a guess. The graphics work planned on top of this adds
+// geometry to a mobile WebGL2 target that already submits the entire world
+// TWICE per frame (the rear-view mirror re-renders it) with no culling or
+// LOD, and whose liveries are 2048x2048 per car. Measuring had to come
+// first; BGFX_DEBUG_STATS reports exactly the numbers that matter here
+// (CPU/GPU frame time, draw calls, triangles, texture memory) and costs
+// nothing when it is off.
+bool showStats() {
+#ifdef __EMSCRIPTEN__
+    static const bool on = lhtStatsFlag() != 0;
+#else
+    static const bool on = std::getenv("LHT_STATS") != nullptr;
+#endif
+    return on;
 }
 
 // Builds a full RGBA8 box-filter mip chain (level 0 through 1x1) from a
@@ -459,7 +484,12 @@ bool Renderer::init(void* nativeDisplayHandle, void* nativeWindowHandle, int wid
     // Phase 4a (PORT_PROGRESS.md): enables bgfx's built-in debug-text
     // overlay, used by hud.cpp's drawHud() as a stand-in for a custom font
     // atlas -- this port has no other text-rendering capability yet.
-    bgfx::setDebug(BGFX_DEBUG_TEXT);
+    // G25: BGFX_DEBUG_STATS adds bgfx's profiler overlay (frame time, draw
+    // calls, triangles, texture memory) on top of the text layer the HUD
+    // already uses. Opt-in via ?stats=1 (LHT_STATS natively) -- see
+    // showStats() for why this project needed measurement before adding
+    // any more geometry.
+    bgfx::setDebug(BGFX_DEBUG_TEXT | (showStats() ? BGFX_DEBUG_STATS : 0));
 
     layout_.begin()
         .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
@@ -492,6 +522,8 @@ bool Renderer::init(void* nativeDisplayHandle, void* nativeWindowHandle, int wid
     uHemiGround_ = bgfx::createUniform("u_hemiGround", bgfx::UniformType::Vec4);
     uCamPos_ = bgfx::createUniform("u_camPos", bgfx::UniformType::Vec4);
     uEmissive_ = bgfx::createUniform("u_emissive", bgfx::UniformType::Vec4);
+    uAtmos_ = bgfx::createUniform("u_atmos", bgfx::UniformType::Vec4);
+    uFogColor_ = bgfx::createUniform("u_fogColor", bgfx::UniformType::Vec4);
 
     // Phase 5c (PORT_PROGRESS.md): sky program for the fullscreen textured
     // background quad.
@@ -723,6 +755,52 @@ void Renderer::setTrack(const Track& track) {
         hemiGround_[1] = (float)(preset.hemiGround[1] * preset.hemiIntensity);
         hemiGround_[2] = (float)(preset.hemiGround[2] * preset.hemiIntensity);
         hemiGround_[3] = 0.0f;
+
+        // G25: exposure + haze, resolved per track alongside the lights.
+        //
+        // EXPOSURE. `texel * (ambient + sun*ndotl)` with the JS-inherited
+        // intensities lands at 3.43x on a flat-up surface under noon-grass, so
+        // 0.25-albedo asphalt arrives near 0.86 before tonemapping. That is the
+        // "reads bright and flat" residue L3 measured and deliberately left for
+        // its own pass. Measured flat-up multiplier per preset:
+        //
+        //     noon-grass   3.43     sunset       1.21
+        //     hazy-noon    3.31     dusk-lights  0.45
+        //
+        // Normalising every preset to one target would destroy the point of
+        // having presets -- it would brighten dusk-lights by 2.5x into daylight.
+        // So this only ever normalises DOWNWARD: presets that blow out get
+        // tamed, presets that are already reasonable or deliberately dark are
+        // left exactly as they were. noon-grass/hazy-noon get ~0.34, sunset a
+        // near-no-op 0.95, dusk-lights exactly 1.0.
+        {
+            // Target chosen by measurement, not taste: with the noon preset the
+            // track surface reads 142/255 before this change and 79 at a 1.15
+            // target, 89 at 1.35, 97 at 1.55. Real asphalt under overcast sits
+            // around 64-90, so 1.35 lands at the top of the believable range --
+            // deliberately the brighter end of it, because this is played on a
+            // phone that may be outdoors.
+            constexpr double kTargetFlatUp = 1.35;
+            const double exposure = envExposure(preset, kTargetFlatUp);
+
+            // HAZE. Density chosen so distance reads without swallowing the
+            // track: ~55% at 400 m, ~80% at 800 m. Tracks here are 848-2600 m
+            // round, so the far side of the circuit sits in real atmosphere
+            // while the racing surface immediately ahead stays clean.
+            const double density = track.stadium().env.preset == "hazy-noon" ? 0.0024 : 0.0016;
+            atmos_[0] = (float)density;
+            atmos_[1] = (float)exposure;
+            atmos_[2] = 0.0f;
+            atmos_[3] = 0.0f;
+
+            // Haze colour is the preset's own sky tint lifted toward white, so
+            // distance fades INTO the sky rather than toward an unrelated grey.
+            // Uses the un-intensified colour: this is a colour, not a light.
+            for (int i = 0; i < 3; ++i) {
+                fogColor_[i] = (float)(preset.hemiSky[i] * 0.65 + 0.35);
+            }
+            fogColor_[3] = 1.0f;
+        }
 
         // Phase 5c (PORT_PROGRESS.md): rebuild the sky background texture
         // for this track (sky_texture.h's buildSkyPixels(), a port of
@@ -1270,6 +1348,10 @@ void Renderer::submitWorld(bgfx::ViewId viewId, const float view[16], const floa
     bgfx::setUniform(uSunColor_, sunColor_);
     bgfx::setUniform(uHemiSky_, hemiSky_);
     bgfx::setUniform(uHemiGround_, hemiGround_);
+    // G25: atmosphere, alongside the lights for the same reason -- each view
+    // carries its own camera position, and haze is measured from it.
+    bgfx::setUniform(uAtmos_, atmos_);
+    bgfx::setUniform(uFogColor_, fogColor_);
 
     float identity[16];
     bx::mtxIdentity(identity);

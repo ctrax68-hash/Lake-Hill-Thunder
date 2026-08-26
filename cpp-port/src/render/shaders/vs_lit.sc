@@ -1,5 +1,5 @@
 $input a_position, a_normal, a_color0
-$output v_color0, v_normal
+$output v_color0, v_normal, v_worldPos
 
 // Phase 5a (PORT_PROGRESS.md): the first lit shader in this port -- a
 // simple hemisphere-ambient + directional-diffuse model (see fs_lit.sc),
@@ -17,4 +17,5 @@ void main()
 	gl_Position = mul(u_modelViewProj, vec4(a_position, 1.0) );
 	v_normal = a_normal;
 	v_color0 = a_color0;
+	v_worldPos = a_position;
 }

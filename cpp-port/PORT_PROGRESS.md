@@ -9490,3 +9490,69 @@ the shipped code**: worst margin **0.65x at 85 m/s** -- the car could generate b
 the steering the corner required.
 
 Native `ctest` 33/33.
+
+## G25 -- Exposure and atmosphere: the track finally reads like asphalt
+
+First slice of the graphics pass against the user's reference footage (three phone recordings of
+NASCAR Thunder). Frames were extracted and studied directly rather than worked from memory. The
+biggest single difference in those frames is not geometry -- it is that the reference is *lit*,
+with soft overcast light and strong atmospheric perspective, while this build was blown out and
+had no depth cue of any kind.
+
+**Exposure.** `texel * (ambient + sun*ndotl)` with the JS-inherited intensities lands at **3.43x**
+on a flat-up surface under noon-grass, so 0.25-albedo asphalt arrived near 0.86 before tonemapping.
+L3 measured this, named it, and deliberately deferred it as needing "its own change with its own
+before/after pass". This is that pass.
+
+Rather than rewriting four preset tables, `envExposure()` (env_presets.h, so it is a pure testable
+function rather than buried in `setTrack()`) scales the light amount once. Crucially it normalises
+**only downward**:
+
+| preset | flat-up multiplier | exposure applied |
+|---|---|---|
+| noon-grass | 3.43 | 0.394 |
+| hazy-noon | 3.31 | 0.408 |
+| sunset | 1.21 | 1.0 (untouched) |
+| dusk-lights | 0.45 | 1.0 (untouched) |
+
+Normalising in both directions would have scaled dusk-lights by ~2.5x and turned Big Sable's dusk
+into midday -- the opposite of what presets exist for. **All four tracks use different presets**, so
+every one of those rows is live, not hypothetical, and `env_presets_test` now asserts it.
+
+**Atmosphere.** There was no fog of any kind, which is why everything sat at full contrast to the
+horizon and read papery. Added exponential distance haze (`shaders/atmos.sh`, shared by all three
+lit shaders so the copies cannot drift), coloured per track from the preset's own sky tint lifted
+toward white, so distance fades *into* the sky rather than toward an unrelated grey. Density gives
+~55% at 400 m and ~80% at 800 m; tracks are 848-2600 m round, so the far side of the circuit sits in
+real atmosphere while the surface immediately ahead stays clean.
+
+`v_worldPos` was added to the lit varyings for this -- free, since every draw uses an identity model
+transform and `a_position` is already world space.
+
+**Measured, captured under xvfb at 1280x720 on all four tracks:**
+
+| | track-surface luminance |
+|---|---|
+| before | 142.1 / 255 |
+| after | 89.4 / 255 |
+
+Far-horizon band 167.5 -> 132.3 (the haze). Contrast within the track area rose as the mean fell,
+i.e. it got darker *and* gained detail rather than just being dimmed. Per track after the change:
+Thunder Oval 89.4, Milltown 103.3, Cedar Valley 126.7, Big Sable 66.1 -- distinct moods preserved.
+
+The 1.35 target was picked by sweep, not taste: 1.15 gave 79, 1.35 gave 89, 1.55 gave 97, and real
+asphalt under overcast sits around 64-90. Chose the top of that range deliberately, because this is
+played on a phone that may be outdoors.
+
+**Instrumentation, which this project had none of.** No `getStats()`, no FPS counter, no draw-call
+or texture accounting existed anywhere -- so every judgement about what the renderer could afford
+was a guess. `?stats=1` (or `LHT_STATS`) now enables bgfx's profiler overlay. This matters before
+the geometry slices land: the renderer already submits the entire world **twice** per frame (the
+rear-view mirror re-renders it) with no culling or LOD, and liveries are 2048x2048 per car.
+
+**Not done in this slice, deliberately:** backface culling. `skinned_mesh.cpp` documents a real
+reason for its absence ("rather than guessing this pipeline's winding-order convention"), and
+enabling it blind can silently delete geometry. It needs its own visual check and belongs with the
+first geometry slice, not bundled into a lighting change.
+
+Native `ctest` 33/33.

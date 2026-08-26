@@ -60,6 +60,7 @@ $input v_normal, v_texcoord0, v_worldPos
 // hard per-facet banding the old geometry would have shown.
 
 #include <bgfx_shader.sh>
+#include "atmos.sh"
 
 uniform vec4 u_sunDir;
 uniform vec4 u_sunColor;
@@ -81,7 +82,7 @@ void main()
 	vec3 ambient = mix(u_hemiGround.rgb, u_hemiSky.rgb, hemiT);
 	float ndotl = max(dot(n, lightDir), 0.0);
 	vec3 texel = texture2D(s_texColor, v_texcoord0).rgb;
-	vec3 diffuse = texel * (ambient + u_sunColor.rgb * ndotl);
+	vec3 diffuse = texel * lhtExpose(ambient + u_sunColor.rgb * ndotl);
 
 	// I4 (car visual fidelity plan): retuned from 60/0.35. H1 already made
 	// this safe to tighten again -- the body has had continuous per-vertex
@@ -162,5 +163,8 @@ void main()
 	float chromeSpec = pow(ndoth, 300.0) * rimMatch;
 
 	vec3 rgb = mix(diffuse, envColor, reflectMix) + u_sunColor.rgb * (spec + chromeSpec) + emissive;
+	// Haze last, after specular: it sits between eye and surface, so it must
+	// dim the highlights too rather than being added underneath them.
+	rgb = lhtHaze(rgb, v_worldPos, u_camPos.xyz);
 	gl_FragColor = vec4(rgb, 1.0);
 }
