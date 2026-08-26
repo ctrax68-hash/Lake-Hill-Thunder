@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../render/font_atlas.h"
 #include "../render/vertex.h"
 
 #include <SDL_rect.h>
@@ -72,6 +73,27 @@ int cycleTrack(int trackIdx, int trackCount);
 // type=range>, which this port has no drag-slider widget to replicate.
 int volumeFromClickX(const SDL_Rect& bar, int clickX);
 
+// G26: where the menu's title band puts the game name and the build stamp.
+//
+// Split out of drawMenu() for the same reason computeMenuRegions() is:
+// drawMenu() calls bgfx::dbgTextPrintf() for the bar labels, which asserts
+// outright without a live bgfx context, so it cannot be called from a test
+// at all. The header's placement, though, is exactly the kind of arithmetic
+// that goes wrong quietly -- the first version of it drew the title straight
+// through the build stamp -- so it lives here, pure and checkable.
+//
+// `stamp` is the full string to be drawn (LHT_BUILD_STAMP with its prefix),
+// passed in because its width depends on the build hash and timestamp and
+// therefore cannot be known at authoring time. All coordinates are pixels;
+// `baseline` is the text baseline both strings sit on.
+struct MenuHeaderLayout {
+    float titleSize, stampSize;
+    float titleX, stampX;
+    float baseline;
+    float bandWidth, bandHeight;
+};
+MenuHeaderLayout computeMenuHeader(const std::string& title, const std::string& stamp);
+
 // Draws the menu (title, track/laps/qualifying/sound/tilt rows, volume
 // bar, start prompt) via bgfx::dbgTextPrintf() for labels plus beveled
 // quad panels behind each row (G24, NT2003 presentation plan) -- matching
@@ -81,5 +103,12 @@ int volumeFromClickX(const SDL_Rect& bar, int clickX);
 // same contract as drawHud()). `uiOut` is the frame's UI-quad vertex list
 // (Renderer::renderFrame()'s `uiVerts`, same one drawHud()/drawResults()
 // already append into).
+//
+// G26: `textOut`, when non-null, is the frame's font-atlas text-vertex list
+// (Renderer::renderFrame()'s `textVerts`). Optional rather than required
+// because the atlas decode can fail at startup, and a menu that falls back
+// to the debug font is a far better outcome than one with no title at all --
+// the renderer passes null in exactly that case.
 void drawMenu(const MenuSelection& sel, int laps, bool tilt, const std::string& trackName,
-              std::vector<PosColorVertex>& uiOut);
+              std::vector<PosColorVertex>& uiOut,
+              std::vector<PosColorUvVertex>* textOut = nullptr);

@@ -68,6 +68,22 @@ SDL_Rect rowRect(int row, int cols) {
 // dbgTextPrintf's _attr byte, same VGA text-mode palette as hud.cpp.
 constexpr uint8_t kBlack = 0, kGreen = 2, kYellow = 14, kWhite = 15, kGrey = 7;
 
+// L13 (NT2003/2004 fidelity pass): the running build's identity, on screen.
+// This exists because several rounds of real, verified gameplay fixes
+// appeared to change nothing for the player, and neither of us could tell
+// whether a given build had actually reached the browser -- the service
+// worker had been serving a permanently stale cached copy (see web/sw.js.in's
+// header). A build stamp makes "is this the new build?" answerable at a
+// glance instead of by inference, which is worth far more than the two lines
+// it costs. LHT_BUILD_STAMP is defined by CMakeLists.txt; the fallback keeps
+// non-CMake/IDE builds compiling.
+//
+// Hoisted to file scope by G26, which added a second use inside drawMenu()
+// (the font-rendered stamp) above the point this used to be defined at.
+#ifndef LHT_BUILD_STAMP
+#define LHT_BUILD_STAMP "dev"
+#endif
+
 constexpr uint8_t attr(uint8_t fg, uint8_t bg) {
     return (uint8_t)((bg << 4) | fg);
 }
@@ -141,8 +157,44 @@ int volumeFromClickX(const SDL_Rect& bar, int clickX) {
     return (int)std::lround(t * 100.0);
 }
 
+MenuHeaderLayout computeMenuHeader(const std::string& title, const std::string& stamp) {
+    MenuHeaderLayout h;
+
+    // The header band is rows 0-1 (32px) -- the two rows above the checker
+    // accent, unchanged, so none of computeMenuRegions()' click rects move.
+    // 24px leaves the cap height inside that band with a little air; 34px
+    // was tried first and overran both the band and the stamp, which is
+    // what the first screenshot of this feature showed.
+    h.titleSize = 24.0f;
+    h.stampSize = 11.0f;
+    h.titleX = kCol * kCellW;
+    h.bandHeight = (float)(kRowTitle + 1) * kCellH;
+
+    // Anchored to the BOTTOM of the band, not derived from the ascent.
+    // Deriving it put the baseline at 38.5px, four pixels into the checker
+    // accent that starts at 32, and the band sliced through the lettering.
+    // Sitting the baseline just above the accent is also simply how a title
+    // bar reads: text resting on the rule, not floating in the middle of it.
+    // Neither string has a descender, so this tail clearance is enough.
+    h.baseline = h.bandHeight - 5.0f;
+
+    // The band is sized to its CONTENT, not to the bar column. The stamp is
+    // a build hash plus a timestamp, so its width is not knowable at
+    // authoring time -- deriving the width from the measured strings is what
+    // makes an overlap impossible for any stamp, rather than merely unlikely
+    // for today's. This is the whole reason a proportional font needs a
+    // measure(); the dbgText version could only start at a whole 8px cell
+    // and hope.
+    const float stampW = font::measure(stamp, h.stampSize);
+    const float gap = kCellW * 2.0f, pad = kCellW;
+    h.bandWidth = std::max((float)((kRowColsWide + 2) * kCellW),
+                           h.titleX + font::measure(title, h.titleSize) + gap + stampW + pad);
+    h.stampX = h.bandWidth - pad - stampW;
+    return h;
+}
+
 void drawMenu(const MenuSelection& sel, int laps, bool tilt, const std::string& trackName,
-              std::vector<PosColorVertex>& uiOut) {
+              std::vector<PosColorVertex>& uiOut, std::vector<PosColorUvVertex>* textOut) {
     // Backdrop: a dark panel behind the whole bar stack, separating it from
     // the showcase car/track rendering behind it -- the reference's menu
     // sits over a glamour shot the same way. Sized to the bar column plus a
@@ -153,26 +205,41 @@ void drawMenu(const MenuSelection& sel, int laps, bool tilt, const std::string& 
     const float backdropH = (float)(kRowStart + kBarRowsTall + 1) * kCellH;
     pushQuad(uiOut, 0.0f, 0.0f, backdropW, backdropH, packColor(Theme::kBlack, 0.55f));
 
-    bgfx::dbgTextPrintf(kCol, kRowTitle, attr(kYellow, kBlack), "LAKE HILL THUNDER");
+    // G26: the title band can be wider than the bar column, since it is
+    // sized to the measured title + build stamp (see below). Tracked here so
+    // the checker accent spans the same width and the two read as one header.
+    float headerWidth = backdropW;
 
-    // L13 (NT2003/2004 fidelity pass): the running build's identity, on
-    // screen. This exists because several rounds of real, verified gameplay
-    // fixes appeared to change nothing for the player, and neither of us
-    // could tell whether a given build had actually reached the browser --
-    // the service worker had been serving a permanently stale cached copy
-    // (see web/sw.js.in's header). A build stamp makes "is this the new
-    // build?" answerable at a glance instead of by inference, which is worth
-    // far more than the two lines it costs. LHT_BUILD_STAMP is defined by
-    // CMakeLists.txt; the fallback keeps non-CMake/IDE builds compiling.
-#ifndef LHT_BUILD_STAMP
-#define LHT_BUILD_STAMP "dev"
-#endif
-    bgfx::dbgTextPrintf(kCol + 19, kRowTitle, attr(kGrey, kBlack), "build %s", LHT_BUILD_STAMP);
+    // G26 (graphics pass): the first text in this game drawn with a real
+    // font. The title and build stamp are the demo on purpose -- they are
+    // the two strings a player sees before touching anything, so "did the
+    // font system land?" is answerable at a glance, the same reasoning that
+    // put the build stamp on screen in the first place (L13, below).
+    //
+    // The dbgText path is kept as a fallback rather than deleted: textOut is
+    // null whenever the atlas failed to decode, and a menu with no title at
+    // all would be a far worse failure than a menu with an ugly one. G27
+    // retires dbgText from the gameplay UI once every call site has moved.
+    if (textOut) {
+        const std::string title = "LAKE HILL THUNDER";
+        const std::string stamp = std::string("build ") + LHT_BUILD_STAMP;
+        const MenuHeaderLayout h = computeMenuHeader(title, stamp);
+
+        pushQuad(uiOut, 0.0f, 0.0f, h.bandWidth, h.bandHeight, packColor(Theme::kBlack, 0.55f));
+        font::pushTextShadowed(*textOut, h.titleX, h.baseline, title, h.titleSize,
+                               packColor(Theme::kYellow), packColor(Theme::kBlack, 0.75f), 2.0f);
+        font::pushTextShadowed(*textOut, h.stampX, h.baseline, stamp, h.stampSize,
+                               packColor(Theme::kGraycool), packColor(Theme::kBlack, 0.75f), 1.0f);
+        headerWidth = h.bandWidth;
+    } else {
+        bgfx::dbgTextPrintf(kCol, kRowTitle, attr(kYellow, kBlack), "LAKE HILL THUNDER");
+        bgfx::dbgTextPrintf(kCol + 19, kRowTitle, attr(kGrey, kBlack), "build %s", LHT_BUILD_STAMP);
+    }
 
     // Checkered accent band between the title and the first bar -- a
     // generic racing motif, not a reproduction of any real logo/lockup.
     const float checkerY = (kRowTitle + 1) * kCellH;
-    pushCheckerBand(uiOut, 0.0f, checkerY, backdropW, kCellH, 20, packColor(Theme::kWhite, 0.85f),
+    pushCheckerBand(uiOut, 0.0f, checkerY, headerWidth, kCellH, 20, packColor(Theme::kWhite, 0.85f),
                     packColor(Theme::kSteel, 0.85f));
 
     drawBar(kRowTrack, kRowColsWide, kWhite, Theme::kSteel, Theme::kGraycool, Theme::kBlack,

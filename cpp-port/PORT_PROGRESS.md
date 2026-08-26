@@ -9556,3 +9556,106 @@ enabling it blind can silently delete geometry. It needs its own visual check an
 first geometry slice, not bundled into a lighting change.
 
 Native `ctest` 33/33.
+
+## G26 -- A real font: the port stops drawing text in a terminal
+
+Every string this game has ever displayed -- HUD, menu, results, pit setup, touch-button labels,
+spotter calls, all 35 call sites -- went through `bgfx::dbgTextPrintf()`: a fixed 8x16 monospace
+cell grid with a 16-colour VGA attribute byte. No sub-cell positioning, no scaling, no per-pixel
+colour, no proportional metrics. That is not a stylistic gap, it is a hard ceiling, and the
+codebase has been working around it for a long time:
+
+- `ui_draw.h`'s seven-segment digit rasteriser exists *only* because dbgText could not draw a
+  large number. It knows `0-9 : . - /` and nothing else.
+- Sponsor wordmarks, pit-stall signage and pylon text have each been deferred with the same note
+  about needing a font first.
+
+So the whole UI half of the graphics round was gated here. This slice is that gate, and nothing
+more: it builds the font system and proves it on two strings. Rebuilding the HUD on it is G27.
+
+### What was built
+
+**`tools/gen_font_atlas.py` -> `src/render/font_atlas_data.h`** (generated, committed). Bakes
+DejaVu Sans Bold at 48px, ASCII 32-126, shelf-packed with a 2px gutter into a 512x512 8-bit
+coverage mask, embedded as PNG bytes (19,109 of them). Baked offline, in the same
+generated-asset pattern as `gen_car_rig.py` -> `car_rig_data.h`: there is no font rasteriser in
+the shipping build, and adding one to a WASM target to do work that never changes would be silly.
+PNG rather than raw pixels because the raw mask is 256 KB, which as a C array is over a megabyte
+of source -- and the decoder was already here (`texture_import.h`'s stb_image path, used for glTF
+base-colour textures).
+
+48px is chosen so the largest thing the reference HUD needs (its big position numeral, ~60px on a
+phone) is only modestly upscaled, while everything else scales *down*, which is where bilinear
+filtering behaves.
+
+**`src/render/font_atlas.h/.cpp`** -- pure layout: glyph lookup, `measure()`, and emitting textured
+quads. Never touches bgfx, matching how `atlas_texture.h`/`sky_texture.h`/`livery.h` all produce
+pixels and let `renderer.cpp` own the upload.
+
+**`vs_text.sc`/`fs_text.sc`** -- the fragment shader treats the sampled value purely as an alpha
+multiplier and takes its colour entirely from the per-vertex tint. That is what lets one atlas
+serve white HUD text, a coloured car-number chip and a drop shadow without three copies of it.
+
+**A new vertex type, deliberately.** `PosColorUvVertex` is its own layout and its own program
+rather than a UV added to `PosColorVertex` -- that struct is shared with all the world geometry,
+so widening it would grow every vertex in the game to buy something only text uses.
+
+The atlas texture is bilinear with no mips: glyphs draw at arbitrary fractional sizes, and
+nearest-neighbour makes small text crawl -- but a mip chain over a shelf-packed atlas averages
+across the gutters and bleeds neighbouring glyphs together at exactly the small sizes G27's ticker
+will use.
+
+### Where it is visible
+
+The menu title and build stamp, drawn with the real font, shadowed. Chosen because they are the
+two strings a player sees before touching anything, so "did the font land?" is answerable at a
+glance -- the same reasoning that put the build stamp on screen in the first place (L13).
+
+The dbgText path is **kept as a fallback**, not deleted: `textOut` is null when the atlas fails to
+decode, and a menu with an ugly title beats a menu with no title. G27 retires dbgText from the
+gameplay UI once every call site has moved.
+
+### Two layout bugs, both caught by screenshots rather than by reasoning
+
+The first version drew the title at 34px in a 32px band, and `measure()` said the title alone was
+299px against a 336px backdrop with a 164px build stamp also on that line. It overran the band and
+drew straight through the stamp. The second version fixed the width but derived the baseline from
+the ascent, putting it at 38.5px -- four pixels into the checker accent that starts at 32, so the
+band sliced through the lettering.
+
+Both fixes are structural rather than a nudged constant: the header band is now sized to its
+*measured content*, and the baseline is anchored to the band's bottom edge. The stamp's width
+depends on the build hash and timestamp, so it is not knowable at authoring time -- deriving the
+band width from the strings is what makes an overlap impossible for *any* stamp rather than merely
+unlikely for today's. That is the whole reason a proportional font needs a `measure()`; dbgText
+could only ever start at a whole 8px cell and hope.
+
+The layout arithmetic was split into `computeMenuHeader()` for the same reason
+`computeMenuRegions()` exists: `drawMenu()` calls `dbgTextPrintf()`, which **asserts outright**
+without a live bgfx context, so it cannot be called from a test at all. Discovered by writing the
+test and watching it abort.
+
+### Verification, including what failed first
+
+Native `ctest` **34/34** (`font_atlas_test` is new).
+
+`font_atlas_test` pins the baked table's invariants (every glyph packed inside the atlas, advances
+positive, space inkless), `measure()` agreeing with the geometry `pushText()` actually emits,
+baseline positioning, scaling, out-of-range bytes skipped rather than indexed, and the embedded
+PNG round-tripping.
+
+**Every new guard was mutation-tested, and one of them failed that check.** Three deliberate
+breakages were introduced: a pen that never advances, UVs overshooting the glyph rect, and a
+shadow drawn over the text instead of under it. Two were caught. **The UV guard was not** -- it
+only asserted UVs land within `[0,1]`, and an interior glyph can be badly wrong while still
+satisfying that. It was rewritten to check each glyph's UVs against its own packed rect, which
+does catch it. The menu-header guards were likewise verified against the two real layout bugs
+above; all five fail on the original arithmetic.
+
+This is the third time this project has written a guard that passed on broken code. The rule
+stands: a test that has not been seen to fail is not evidence.
+
+### Not done here
+
+Every other `dbgTextPrintf` call site. The HUD, results, pit setup and touch labels are unchanged
+and still in the debug font -- that is G27, and it is the point of this one.

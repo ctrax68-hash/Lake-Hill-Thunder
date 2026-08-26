@@ -3,6 +3,7 @@
 #include "car_rig_data.h"
 #include "color.h"
 #include "env_presets.h"
+#include "font_atlas.h"
 #include "hud.h"
 #include "livery.h"
 #include "particle_texture.h"
@@ -625,10 +626,45 @@ bool Renderer::init(void* nativeDisplayHandle, void* nativeWindowHandle, int wid
                                   bgfx::copy(spritePixels.data(), (uint32_t)spritePixels.size()));
     }
 
+    // G26 (graphics pass): the UI font atlas. Decoded once here from the
+    // PNG baked into font_atlas_data.h -- the same "no runtime asset files"
+    // convention as the livery/sky/atlas/particle textures above.
+    //
+    // Bilinear, no mips. Bilinear because glyphs are drawn at arbitrary
+    // fractional sizes and nearest-neighbour makes small text crawl; no mips
+    // because a mip chain over a shelf-packed atlas averages across the
+    // gutters and bleeds neighbouring glyphs together at exactly the small
+    // sizes the ticker will use. The 2px gutter in the bake handles the
+    // bilinear case on its own.
+    textLayout_.begin()
+        .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
+        .add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true)
+        .add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
+        .end();
+    bgfx::ShaderHandle vshText = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "vs_text");
+    bgfx::ShaderHandle fshText = bgfx::createEmbeddedShader(s_embeddedShaders, rendererType, "fs_text");
+    textProgram_ = bgfx::createProgram(vshText, fshText, true);
+    uTextTexColor_ = bgfx::createUniform("s_texColor", bgfx::UniformType::Sampler);
+    {
+        const font::AtlasImage atlas = font::decodeAtlas();
+        if (atlas.ok) {
+            fontTexture_ = bgfx::createTexture2D(
+                (uint16_t)atlas.width, (uint16_t)atlas.height, false, 1, bgfx::TextureFormat::RGBA8,
+                BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP,
+                bgfx::copy(atlas.rgba8.data(), (uint32_t)atlas.rgba8.size()));
+        } else {
+            // Not fatal: every text call site still has its dbgText path, so
+            // a failed decode costs the new typography, not the game. Said
+            // out loud rather than failing silently, because "the HUD went
+            // back to the terminal font" is otherwise a baffling symptom.
+            std::fprintf(stderr, "font atlas decode failed -- UI text falls back to debug text\n");
+        }
+    }
+
     return bgfx::isValid(program_) && bgfx::isValid(litProgram_) && bgfx::isValid(skyProgram_) &&
            bgfx::isValid(texturedLitProgram_) && bgfx::isValid(bloomBrightProgram_) &&
            bgfx::isValid(bloomBlurProgram_) && bgfx::isValid(gradeTonemapProgram_) && bgfx::isValid(sceneFb_) &&
-           bgfx::isValid(particleProgram_);
+           bgfx::isValid(particleProgram_) && bgfx::isValid(textProgram_);
 }
 
 void Renderer::createPostFxTargets(int width, int height) {
@@ -722,6 +758,9 @@ void Renderer::shutdown() {
     if (bgfx::isValid(particleProgram_)) bgfx::destroy(particleProgram_);
     if (bgfx::isValid(uParticleTexColor_)) bgfx::destroy(uParticleTexColor_);
     if (bgfx::isValid(particleTexture_)) bgfx::destroy(particleTexture_);
+    if (bgfx::isValid(textProgram_)) bgfx::destroy(textProgram_);       // G26
+    if (bgfx::isValid(uTextTexColor_)) bgfx::destroy(uTextTexColor_);   // G26
+    if (bgfx::isValid(fontTexture_)) bgfx::destroy(fontTexture_);       // G26
     bgfx::shutdown();
     delete callback_;
     callback_ = nullptr;
@@ -2175,6 +2214,10 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     // hud.cpp for exactly what's ported vs. deferred.
     bgfx::dbgTextClear();
     std::vector<PosColorVertex> uiVerts;
+    // G26: the text pass, built alongside uiVerts and submitted after it so
+    // glyphs land over the panels they label. Separate list rather than a
+    // second pass over uiVerts because it needs its own layout and program.
+    std::vector<PosColorUvVertex> textVerts;
     if (showResults && finishOrder) {
         // Phase 4h (PORT_PROGRESS.md): results replaces the HUD entirely,
         // same "mode-exclusive branches" precedent as the menu branch below.
@@ -2188,7 +2231,8 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         // for mode=="menu" (hud.cpp:21), so both can unconditionally run here
         // without stepping on each other's dbgText rows.
         if (raceState.mode == "menu" && menu && menuTrackName) {
-            drawMenu(*menu, raceState.laps, raceState.tilt, *menuTrackName, uiVerts);
+            drawMenu(*menu, raceState.laps, raceState.tilt, *menuTrackName, uiVerts,
+                     bgfx::isValid(fontTexture_) ? &textVerts : nullptr);
         }
         // P4 (NT2003 engine-feel plan, pit adjustments): drawn on top of
         // the ordinary HUD (not mode-exclusive, unlike menu/results above)
@@ -2222,7 +2266,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     // mode=="menu", where drawHud() early-returns before adding anything)
     // -- same "nothing submitted this frame -> nothing drawn" precedent the
     // world view's own `if (!cars.empty())` guard above relies on.
-    if (!uiVerts.empty() || mirrorReady) {
+    if (!uiVerts.empty() || !textVerts.empty() || mirrorReady) {
         const bgfx::ViewId kUiView = 6;
         bgfx::setViewFrameBuffer(kUiView, BGFX_INVALID_HANDLE);
         bgfx::setViewRect(kUiView, 0, 0, (uint16_t)width_, (uint16_t)height_);
@@ -2309,6 +2353,28 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             // variant later.
             bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_BLEND_ALPHA);
             bgfx::submit(kUiView, program_);
+        }
+
+        // ---- G26: the text pass ------------------------------------------
+        //
+        // Last in a Sequential view, so glyphs draw over the panels and
+        // chips that label them. Alpha-blended by necessity, not by choice:
+        // fs_text turns the atlas's coverage mask into the fragment's alpha,
+        // so without blending every glyph would be a hard-edged white box.
+        //
+        // Depth is neither written nor tested, matching the flat UI pass --
+        // this view is pure painter's algorithm.
+        const uint32_t textVertCount = (uint32_t)textVerts.size();
+        if (textVertCount > 0 && bgfx::isValid(fontTexture_) &&
+            bgfx::getAvailTransientVertexBuffer(textVertCount, textLayout_) >= textVertCount) {
+            bgfx::TransientVertexBuffer ttvb;
+            bgfx::allocTransientVertexBuffer(&ttvb, textVertCount, textLayout_);
+            std::memcpy(ttvb.data, textVerts.data(), textVertCount * sizeof(PosColorUvVertex));
+            bgfx::setTransform(identity);
+            bgfx::setVertexBuffer(0, &ttvb, 0, textVertCount);
+            bgfx::setTexture(0, uTextTexColor_, fontTexture_);
+            bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_BLEND_ALPHA);
+            bgfx::submit(kUiView, textProgram_);
         }
     }
 

@@ -10,8 +10,12 @@
 #include "../src/ui/menu.h"
 #include "../src/ui/touch_controls.h" // pointInRect() -- shared with main.cpp's own handleMenuClick()
 
+#include "../src/render/color.h" // G26: packColor/Theme, to tell title from stamp
+
+#include <algorithm>
 #include <cstdio>
 #include <initializer_list>
+#include <vector>
 
 namespace {
 
@@ -147,6 +151,43 @@ int main() {
     check(mid >= 45 && mid <= 55, "volumeFromClickX at midpoint is not ~50");
     check(volumeFromClickX(bar, 0) == 0, "volumeFromClickX left of the bar is not clamped to 0");
     check(volumeFromClickX(bar, 1000) == 100, "volumeFromClickX right of the bar is not clamped to 100");
+
+    // ---- G26: the menu header's title/stamp layout ----
+    //
+    // drawMenu() itself still cannot be called here (dbgTextPrintf asserts
+    // without a live bgfx context -- see this file's header), which is why
+    // the header arithmetic was split into computeMenuHeader(). The property
+    // that matters is the one that actually broke: at the size first chosen,
+    // "LAKE HILL THUNDER" ran straight through the build stamp.
+    {
+        const std::string title = "LAKE HILL THUNDER";
+        const MenuHeaderLayout h = computeMenuHeader(title, "build 0123abc 01-01 00:00");
+
+        check(h.titleSize > 0.0f && h.stampSize > 0.0f, "menu header has a zero text size");
+        check(h.baseline > 0.0f && h.baseline < h.bandHeight,
+              "menu header baseline falls outside its own band");
+
+        // Sits above the checker accent rather than through it -- the accent
+        // starts at the band's bottom edge, and a baseline derived from the
+        // ascent (the first version) landed below that.
+        check(h.baseline <= h.bandHeight - 2.0f, "menu title baseline collides with the accent band");
+
+        const float titleRight = h.titleX + font::measure(title, h.titleSize);
+        check(h.stampX > titleRight, "the build stamp overlaps the menu title");
+        check(h.stampX + font::measure("build 0123abc 01-01 00:00", h.stampSize) <= h.bandWidth,
+              "the build stamp runs past the header band");
+
+        // A long stamp must widen the band rather than collide -- the stamp's
+        // width depends on the build hash and timestamp, so this cannot be a
+        // fixed pixel number, only a property.
+        const std::string longStamp = "build 0123abcdef0123abcdef 2099-12-31 23:59:59";
+        const MenuHeaderLayout wide = computeMenuHeader(title, longStamp);
+        check(wide.bandWidth > h.bandWidth, "a longer build stamp does not widen the header band");
+        check(wide.stampX > wide.titleX + font::measure(title, wide.titleSize),
+              "a long build stamp overlaps the menu title");
+        check(wide.stampX + font::measure(longStamp, wide.stampSize) <= wide.bandWidth,
+              "a long build stamp runs past the header band");
+    }
 
     if (ok) {
         std::printf("menu_test: region layout and value math match expectations.\n");

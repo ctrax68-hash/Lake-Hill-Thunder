@@ -177,7 +177,8 @@ if(EMSCRIPTEN)
      OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/fs_grade_tonemap.sc.bin.h
      OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_skinned.sc.bin.h
      OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_car.sc.bin.h
-     OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_particle.sc.bin.h)
+     OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_particle.sc.bin.h
+     OR NOT EXISTS ${LHT_NATIVE_GENERATED_SHADERS}/essl/vs_text.sc.bin.h)
     message(FATAL_ERROR
       "Phase 7 web build reuses the native build's already-compiled shader "
       "headers (see this file's own comment) instead of cross-compiling "
@@ -190,8 +191,8 @@ if(EMSCRIPTEN)
       "vs_skinned (reusing fs_textured_lit as its fragment stage), G2 "
       "(NASCAR Thunder 2003 graphics overhaul) added vs_car/fs_car, and H4 "
       "(NT2003 engine-feel plan, particle system) added vs_particle/"
-      "fs_particle, so a stale native build missing any of those will also "
-      "hit this guard).")
+      "fs_particle, and G26 (font atlas) added vs_text/fs_text, so a stale "
+      "native build missing any of those will also hit this guard).")
   endif()
   set(LHT_GENERATED_SHADERS_DIR ${LHT_NATIVE_GENERATED_SHADERS})
   add_custom_target(lht_shaders) # nothing to build, just a no-op dependency target
@@ -369,12 +370,38 @@ else()
     AS_HEADERS
     OUT_FILES_VAR LHT_FS_PARTICLE_OUTPUTS
   )
+  # G26 (graphics pass, font atlas): vs_text/fs_text -- proportional text as
+  # UV'd quads in the UI ortho view, replacing bgfx's 8x16 debug-text overlay.
+  # Own varying def (Position+TexCoord0+Color0) because the UI's existing
+  # PosColorVertex has no UV, and widening it would grow every world vertex
+  # in the game to buy something only text uses. fs_text reads the atlas as
+  # coverage-only and tints per-vertex, so one program covers every colour
+  # and size the HUD needs.
+  bgfx_compile_shaders(
+    TYPE VERTEX
+    SHADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/vs_text.sc
+    VARYING_DEF ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/varying_text.def.sc
+    OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders
+    INCLUDE_DIRS ${LHT_SHADER_INCLUDE_DIRS}
+    AS_HEADERS
+    OUT_FILES_VAR LHT_VS_TEXT_OUTPUTS
+  )
+  bgfx_compile_shaders(
+    TYPE FRAGMENT
+    SHADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/fs_text.sc
+    VARYING_DEF ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/varying_text.def.sc
+    OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders
+    INCLUDE_DIRS ${LHT_SHADER_INCLUDE_DIRS}
+    AS_HEADERS
+    OUT_FILES_VAR LHT_FS_TEXT_OUTPUTS
+  )
   add_custom_target(lht_shaders DEPENDS ${LHT_VS_FLAT_OUTPUTS} ${LHT_FS_FLAT_OUTPUTS}
     ${LHT_VS_LIT_OUTPUTS} ${LHT_FS_LIT_OUTPUTS} ${LHT_VS_SKY_OUTPUTS} ${LHT_FS_SKY_OUTPUTS}
     ${LHT_VS_TEXTURED_LIT_OUTPUTS} ${LHT_FS_TEXTURED_LIT_OUTPUTS}
     ${LHT_FS_BLOOM_BRIGHT_OUTPUTS} ${LHT_FS_BLOOM_BLUR_OUTPUTS} ${LHT_FS_GRADE_TONEMAP_OUTPUTS}
     ${LHT_VS_SKINNED_OUTPUTS} ${LHT_VS_CAR_OUTPUTS} ${LHT_FS_CAR_OUTPUTS}
-    ${LHT_VS_PARTICLE_OUTPUTS} ${LHT_FS_PARTICLE_OUTPUTS})
+    ${LHT_VS_PARTICLE_OUTPUTS} ${LHT_FS_PARTICLE_OUTPUTS}
+    ${LHT_VS_TEXT_OUTPUTS} ${LHT_FS_TEXT_OUTPUTS})
   set(LHT_GENERATED_SHADERS_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders)
 endif()
 
@@ -392,6 +419,7 @@ add_executable(lht_port
   src/render/atlas_texture.cpp
   src/render/digit_mesh.cpp
   src/render/fmt_time.cpp
+  src/render/font_atlas.cpp
   src/render/gap_time.cpp
   src/render/gauge_cluster.cpp
   src/render/hill_silhouette.cpp
@@ -672,8 +700,13 @@ add_test(NAME touch_controls_test COMMAND touch_controls_test)
 # G24: menu.cpp now also calls ui_draw.h's pushQuad()/pushBevelPanel() for
 # its beveled bars, so this target needs ui_draw.cpp linked too (same
 # precedent as leaderboard_test/results_test below).
-add_executable(menu_test tests/menu_test.cpp src/ui/menu.cpp src/render/ui_draw.cpp)
+# G26 added font_atlas.cpp (+ texture_import.cpp for its atlas decode) to
+# this link: drawMenu() now draws its title and build stamp with the real
+# font when the caller supplies a text buffer.
+add_executable(menu_test tests/menu_test.cpp src/ui/menu.cpp src/render/ui_draw.cpp
+  src/render/font_atlas.cpp src/render/texture_import.cpp)
 target_link_libraries(menu_test PRIVATE SDL2::SDL2 bgfx)
+target_include_directories(menu_test PRIVATE ${LHT_STB_INCLUDE_DIR})
 target_include_directories(menu_test PRIVATE
   third_party/bgfx.cmake/bgfx/include
   third_party/bgfx.cmake/bx/include
@@ -768,6 +801,18 @@ add_test(NAME proximity_test COMMAND proximity_test)
 add_executable(particles_test tests/particles_test.cpp src/render/particles.cpp
   src/sim/track.cpp src/render/track_surface.cpp)
 add_test(NAME particles_test COMMAND particles_test)
+
+# G26 (graphics pass): font_atlas_test pins the baked atlas's own
+# self-consistency (every glyph in bounds, advances positive, the space
+# glyph inkless) and the layout math built on it -- measure() agreeing with
+# what pushText() actually emits, baseline positioning, out-of-range bytes
+# skipped rather than indexing off the table. Needs stb_image (via
+# texture_import.cpp) for the decodeAtlas() round-trip; entirely bgfx-free,
+# since font_atlas.cpp is pure layout by design.
+add_executable(font_atlas_test tests/font_atlas_test.cpp src/render/font_atlas.cpp
+  src/render/texture_import.cpp)
+target_include_directories(font_atlas_test PRIVATE ${LHT_STB_INCLUDE_DIR})
+add_test(NAME font_atlas_test COMMAND font_atlas_test)
 
 add_executable(determinism_test tests/determinism_test.cpp tests/determinism/trace.cpp)
 add_test(NAME determinism_test COMMAND determinism_test)

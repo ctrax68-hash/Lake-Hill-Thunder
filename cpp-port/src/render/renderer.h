@@ -15,6 +15,7 @@
 // suite (helmet/tower/blimp/victory/pit/caution-cam) remains deliberately
 // out of scope for Phase 5, deferred to a future session.
 
+#include "font_atlas.h"
 #include "mesh_import.h"
 #include "particles.h"
 #include "skinned_mesh.h"
@@ -379,6 +380,23 @@ private:
     bgfx::ProgramHandle particleProgram_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uParticleTexColor_ = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle particleTexture_ = BGFX_INVALID_HANDLE;
+
+    // G26 (graphics pass): the UI font. font_atlas.h bakes glyph quads into
+    // a PosColorUvVertex list; this is the GPU side of that -- one atlas
+    // texture, one program, drawn in the same pixel-space ortho UI view as
+    // every other 2D primitive, LAST so text lands over the panels.
+    //
+    // A separate layout and program rather than widening the existing UI
+    // vertex: PosColorVertex is shared with all the world geometry, so
+    // adding a UV to it would grow every vertex in the game to buy something
+    // only text uses. The atlas is RGBA8 rather than R8 because the decode
+    // path (texture_import.h) produces RGBA8 and the GLES2/WebGL target this
+    // ships to has no dependable single-channel swizzle; fs_text reads .r
+    // and ignores the rest, so the extra channels cost memory, not clarity.
+    bgfx::VertexLayout textLayout_;
+    bgfx::ProgramHandle textProgram_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle uTextTexColor_ = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle fontTexture_ = BGFX_INVALID_HANDLE;
 
     // G23: one car's fully-resolved draw state for this frame -- model
     // matrix, bone palette and livery texture. Built ONCE per frame, then

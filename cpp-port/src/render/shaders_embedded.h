@@ -99,6 +99,16 @@
 #include "essl/vs_particle.sc.bin.h"
 #include "essl/fs_particle.sc.bin.h"
 
+// G26 (graphics pass): vs_text/fs_text, proportional UI text drawn as UV'd
+// quads from font_atlas.h's baked glyph atlas -- the replacement for bgfx's
+// 8x16 debug-text overlay.
+#include "spirv/vs_text.sc.bin.h"
+#include "spirv/fs_text.sc.bin.h"
+#include "glsl/vs_text.sc.bin.h"
+#include "glsl/fs_text.sc.bin.h"
+#include "essl/vs_text.sc.bin.h"
+#include "essl/fs_text.sc.bin.h"
+
 static const bgfx::EmbeddedShader s_embeddedShaders[] = {
     BGFX_EMBEDDED_SHADER(vs_flat),
     BGFX_EMBEDDED_SHADER(fs_flat),
@@ -116,5 +126,7 @@ static const bgfx::EmbeddedShader s_embeddedShaders[] = {
     BGFX_EMBEDDED_SHADER(fs_car),
     BGFX_EMBEDDED_SHADER(vs_particle),
     BGFX_EMBEDDED_SHADER(fs_particle),
+    BGFX_EMBEDDED_SHADER(vs_text),
+    BGFX_EMBEDDED_SHADER(fs_text),
     BGFX_EMBEDDED_SHADER_END()
 };
