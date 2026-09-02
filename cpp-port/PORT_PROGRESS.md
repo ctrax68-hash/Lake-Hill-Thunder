@@ -9906,7 +9906,10 @@ work; the checks now run after the force-race block.
 
 ### Verification
 
-`ctest` **36/36**. `stadium_mesh_test` gains guards for G28's and G29's props,
+`ctest` **35/35** -- unchanged, because these are new assertions inside the
+existing `stadium_mesh_test`, not a new test executable. (An earlier draft of
+this entry said 36/36, which was simply wrong: adding guards to a test does
+not add a test.) `stadium_mesh_test` gains guards for G28's and G29's props,
 pinning the property that matters for scenery: not what it looks like (a
 screenshot shows that) but that none of it intrudes on the racing surface or
 floats -- geometry that drifts into the track is invisible in a still and
