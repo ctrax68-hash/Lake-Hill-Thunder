@@ -32,6 +32,15 @@ constexpr float kSteel[3] = {0x2A / 255.0f, 0x2A / 255.0f, 0x2A / 255.0f};
 constexpr float kOrange[3] = {0xFF / 255.0f, 0x7A / 255.0f, 0x00 / 255.0f};
 constexpr float kRed[3] = {0xD6 / 255.0f, 0x28 / 255.0f, 0x28 / 255.0f};
 constexpr float kGraycool[3] = {0xC8 / 255.0f, 0xC8 / 255.0f, 0xC8 / 255.0f};
+
+// G27: NOT from index.html's THEME table -- the green flag had no entry
+// there because JS renders that state with a CSS class, and this port had
+// been borrowing dbgText's VGA palette green (attribute 2) for it. Once the
+// flag chip became a real quad rather than a text-cell background, it needed
+// a real colour. Picked to sit alongside the existing entries in weight
+// rather than sampled from anything: a flag green dark enough that the black
+// caption on it stays legible.
+constexpr float kGreen[3] = {0x18 / 255.0f, 0xA8 / 255.0f, 0x34 / 255.0f};
 } // namespace Theme
 
 inline uint32_t packColor(const float rgb[3], float a = 1.0f) {

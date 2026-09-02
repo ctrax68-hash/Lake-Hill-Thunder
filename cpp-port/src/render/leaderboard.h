@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../sim/car.h"
+#include "font_atlas.h"
 #include "vertex.h"
 
 #include <string>
@@ -40,9 +41,14 @@ struct LeaderboardBox {
 };
 
 // Draws the header banner (CAUTION/LAKE HILL 400) and each row (rank +
-// color chip + "#num tag") via bgfx::dbgTextPrintf() + ui_draw.h's
-// pushQuad()/pushLineSegment(), matching hud.cpp's own dbgText approach
-// and VGA-palette conventions. `flagYellow` selects the header banner
-// text (index.html:3944).
+// color chip + "#num" + tag). `flagYellow` selects the header banner text
+// (index.html:3944).
+//
+// G27: text goes into `textOut` in the real UI font. Two things that were
+// impossible under dbgText and are done properly now: the header banner and
+// the player-row highlight are real quads spanning the panel rather than
+// per-glyph background attributes, and the rank and tag columns are
+// right-aligned -- with a proportional font "1" and "18" are different
+// widths, so left-aligning would leave the list ragged.
 void drawLeaderboard(const LeaderboardBox& box, const std::vector<LeaderboardRow>& rows, bool flagYellow,
-                      std::vector<PosColorVertex>& uiOut);
+                     std::vector<PosColorVertex>& uiOut, std::vector<PosColorUvVertex>& textOut);

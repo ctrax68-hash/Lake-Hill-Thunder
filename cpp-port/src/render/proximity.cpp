@@ -1,22 +1,10 @@
 #include "proximity.h"
 #include "color.h"
+#include "hud_text.h"
 #include "ui_draw.h"
-
-#include <bgfx/bgfx.h>
 
 #include <algorithm>
 #include <cmath>
-
-namespace {
-
-constexpr float kCellW = 8.0f, kCellH = 16.0f; // dbgText's fixed glyph cell
-constexpr uint8_t kWhite = 15, kBlack = 0;     // dbgText VGA palette, matching hud.cpp
-
-uint8_t attr(uint8_t fg, uint8_t bg) {
-    return (uint8_t)((bg << 4) | fg);
-}
-
-} // namespace
 
 std::vector<ProximityCar> buildProximityList(const std::vector<Car>& cars, const Car& player,
                                               double trackTotal, double sRange, std::size_t maxCars) {
@@ -50,8 +38,8 @@ std::vector<ProximityCar> buildProximityList(const std::vector<Car>& cars, const
     return out;
 }
 
-void drawProximity(const ProximityBox& box, int captionRow, const std::vector<ProximityCar>& near,
-                    std::vector<PosColorVertex>& uiOut) {
+void drawProximity(const ProximityBox& box, const std::vector<ProximityCar>& near,
+                   std::vector<PosColorVertex>& uiOut, std::vector<PosColorUvVertex>& textOut) {
     pushBevelPanel(uiOut, box.x, box.y, box.w, box.h, packColor(Theme::kBlack, 0.62f),
                    packColor(Theme::kGraycool, 0.5f), packColor(Theme::kSteel, 0.95f));
 
@@ -66,22 +54,25 @@ void drawProximity(const ProximityBox& box, int captionRow, const std::vector<Pr
     // car number printed beside it (leaderboard.cpp's idiom -- a number
     // painted into the chip would vanish against half the liveries).
     //
-    // Cars ahead print on `captionRow`, cars behind on the row below, so the
-    // strip carries the along-track relationship as well as the lateral one.
-    // Chip geometry is placed from the dbgText row rather than from the
-    // panel rect, so a chip is always vertically centred on the number it
-    // belongs to -- the two coordinate systems agree by construction.
+    // Cars ahead sit on the upper line, cars behind on the lower, so the strip
+    // carries the along-track relationship as well as the lateral one. G27
+    // places both from the panel rect: the two lines used to be dbgText rows,
+    // which meant the chips had to be positioned off that same text grid to
+    // stay aligned with their numbers. With the number free to sit at any
+    // pixel, the chip and its label are simply centred on one line together.
     constexpr float kChipW = 10.0f, kChipH = 14.0f;
+    constexpr float kLineH = 18.0f;
+    const float lineTop = box.y + (box.h - kLineH * 2.0f) / 2.0f;
     const float slotW = box.w / (float)near.size();
     for (std::size_t i = 0; i < near.size(); ++i) {
         const ProximityCar& p = near[i];
         const bool ahead = p.dS >= 0.0;
-        const int row = captionRow + (ahead ? 0 : 1);
+        const float rowY = lineTop + (ahead ? 0.0f : kLineH);
         const float slotX = box.x + slotW * (float)i;
         const float chipX = slotX + 6.0f;
-        const float chipY = (float)row * kCellH + (kCellH - kChipH) / 2.0f;
-        pushQuad(uiOut, chipX, chipY, kChipW, kChipH,
+        pushQuad(uiOut, chipX, rowY + (kLineH - kChipH) / 2.0f, kChipW, kChipH,
                  packColor((float)p.col[0], (float)p.col[1], (float)p.col[2]));
-        bgfx::dbgTextPrintf((int)((chipX + kChipW + 3.0f) / kCellW), row, attr(kWhite, kBlack), "%d", p.num);
+        hudtext::draw(textOut, chipX + kChipW + 4.0f, rowY + 13.0f, std::to_string(p.num),
+                      hudtext::kBody, packColor(Theme::kWhite));
     }
 }

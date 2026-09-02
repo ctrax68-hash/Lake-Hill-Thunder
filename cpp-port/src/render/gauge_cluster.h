@@ -1,5 +1,6 @@
 #pragma once
 
+#include "font_atlas.h"
 #include "vertex.h"
 
 #include <vector>
@@ -38,10 +39,13 @@ struct GaugeBox {
 // gauge_cluster.cpp's own comment for why the raw number made the game read
 // as half pace.
 //
-// `captionRow` is the dbgText row the "GEAR" caption prints on; "SPD"
-// follows three rows below (the MPH readout) and "DRAFT" six. The caller owns it, for the same
-// reason status_bars.cpp's base row is caller-supplied -- dbgText can only
-// be addressed in whole 8x16 cells, so only the caller knows which rows its
-// own layout has left free.
-void drawGaugeCluster(const GaugeBox& box, int captionRow, double rpm, int gear, double speed,
-                       double draftF, std::vector<PosColorVertex>& uiOut);
+// G27: captions go into `textOut` (the frame's font-atlas text list) at real
+// pixel positions derived from `box`, replacing the `captionRow` this used to
+// take. That parameter existed only because dbgText could be addressed in
+// whole 8x16 cells and nothing finer, which forced every caller to reason in
+// text rows about geometry it had already placed in pixels -- the two
+// coordinate systems then had to be kept in agreement by hand. With a real
+// font the captions are simply placed inside the panel, so the whole class of
+// drift goes away and the caller no longer supplies a row at all.
+void drawGaugeCluster(const GaugeBox& box, double rpm, int gear, double speed, double draftF,
+                      std::vector<PosColorVertex>& uiOut, std::vector<PosColorUvVertex>& textOut);

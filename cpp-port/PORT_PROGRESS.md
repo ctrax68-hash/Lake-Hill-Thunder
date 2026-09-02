@@ -9659,3 +9659,107 @@ stands: a test that has not been seen to fail is not evidence.
 
 Every other `dbgTextPrintf` call site. The HUD, results, pit setup and touch labels are unchanged
 and still in the debug font -- that is G27, and it is the point of this one.
+
+## G27 -- The HUD rebuilt on the font, and a broadcast ticker
+
+G26 built the font. This spends it: every piece of gameplay UI is now set in a
+real proportional typeface, and `bgfx::dbgTextPrintf()` is gone from the HUD
+and all five of its sub-drawers.
+
+Converted: `hud.cpp`, `gauge_cluster.cpp`, `leaderboard.cpp`, `proximity.cpp`,
+`status_bars.cpp`, `touch_buttons.cpp`. New: `hud_text.h` (the HUD's shared
+typographic vocabulary) and `ticker.h/.cpp` (the broadcast strip).
+
+### The `captionRow` parameter is gone, and that is the real change
+
+Five of these functions took a dbgText row from their caller -- `captionRow`,
+`baseRow`. That parameter existed for one reason: dbgText could be addressed
+in whole 8x16 cells and nothing finer, so every module had to reason in text
+rows about geometry it had already placed in pixels, and keep the two
+coordinate systems in agreement by hand. `hud.cpp`'s own comment described
+this: panels were placed on multiples of `kCellH` "that way a label always
+lands inside the plate that frames it ... instead of drifting by up to a cell".
+
+With a real font, captions are simply placed inside their panels. The row
+parameters are deleted, the snapping is gone, and the whole class of drift with
+them. The 16px pitch survives only where it is genuinely load-bearing (modules
+measure against each other through it -- the leaderboard's height against the
+status strip, for one), documented as such.
+
+### Things that were impossible before, done properly now
+
+- **Position numeral with a superscript ordinal** -- "20th" over "OF 20", the
+  reference's signature element and the most-read number on the screen. An
+  ordinal needs *letters*; `ui_draw.h`'s seven-segment rasteriser knows
+  `0-9 : . - /`, so this readout was literally unreachable until G26. It was
+  previously a segmented run the same size as the lap counter beside it, with a
+  "POS" caption to explain which was which.
+- **Real banners and highlights.** The flag chip, the leaderboard header and
+  the player's row were dbgText background *attributes* -- one cell per glyph,
+  which is why the green flag was written `"GREEN  "` with padding spaces. They
+  are quads sized to their content now.
+- **Right-aligned columns.** With a proportional font "1" and "18" are
+  different widths, so the leaderboard's rank and gap columns are right-aligned
+  and line up down the list like a timing tower.
+- **Genuinely centred button labels.** `touch_buttons.cpp` used to snap labels
+  to the nearest cell; its comment said exact centring "isn't possible". It is
+  now. These are the only text a thumb aims at while the car is moving, and the
+  one place the old approximation actually cost something.
+- **Spotter calls as centre-screen outlined type**, not a line of terminal text
+  in the corner. A spotter call is the game shouting at the player mid-corner;
+  printed small in a corner it was routinely missed, which is most of why it
+  never felt like a spotter.
+
+### The ticker
+
+A strip across the top scrolling continuously through the whole field --
+position, colour chip, number, driver name, last lap time. The leaderboard
+shows the top five plus the player; in a twenty-car field that leaves fourteen
+drivers the player never sees, and this is how a broadcast covers them without
+giving them permanent screen area.
+
+It could not have been built before G26 either: a scrolling strip must know how
+wide its content is to wrap seamlessly, and a strip stepping eight pixels at a
+time reads as stuttering, not scrolling. It owns the top 24px, so the minimap,
+CAM button, flag chip and position panel all shifted down to clear it.
+
+### A test that checked only itself
+
+`ticker_test` pins the wrap, because that is the one property a screenshot
+cannot show: a period disagreeing with the content width looks perfect in any
+single frame and jumps once per cycle -- about once a minute on a full field,
+exactly the interval nobody can reproduce on demand.
+
+**The first version of that test was worthless, and a mutation proved it.**
+It asserted that the image at `t` and at `t + content/rate` match -- deriving
+the expected period *from the function under test*. With `tickerContentWidth()`
+deliberately broken to omit the inter-entry gap, the code's wrap and the test's
+expected period were wrong by the same amount and agreed with each other
+perfectly. It passed.
+
+Replaced with a property that shares nothing with the scroll: within a **single
+frame**, the drawn strip must repeat every `tickerContentWidth` pixels. That
+ties the advertised width to the distance the drawing actually advances, with
+only the pixels in common. It fails on the broken version.
+
+A third mutation -- removing the `fmod` that wraps the scroll offset -- passed,
+and correctly so: the drawing is already periodic in x with that exact period,
+so an unwrapped offset lands on the same image. The `fmod` stays for long-run
+float precision, and `ticker.cpp` now says plainly that no test covers that.
+
+### Verification
+
+Native `ctest` **35/35** (`ticker_test` is new). Screenshots on Thunder Oval
+and Cedar Valley, captured the same way as G25/G26's.
+
+Two layout faults were found by looking at the captures, not by reasoning: the
+gauge cluster's GEAR/MPH values were squat and clipped by the panel bevel
+(fixed by putting caption and value on one baseline, which the narrow column
+wanted anyway), and the first capture had every readout stacked under its
+caption in a column too narrow for it.
+
+### Not done here
+
+`results.cpp` and `pit_setup.cpp` still use dbgText -- the results screen and
+the pit-adjustment overlay. Neither is on screen while driving, which is why
+they are not in this slice, but they are the last two and should follow.

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../sim/car.h"
+#include "font_atlas.h"
 #include "vertex.h"
 
 #include <vector>
@@ -23,4 +24,9 @@
 // tight indicator, then FUEL/CAR unchanged. Callers that reserved exactly 3
 // rows below `baseRow` (this port has one: hud.cpp's leaderboard-placement
 // math) need 5 now.
-void drawStatusBars(const Car& player, int baseRow, std::vector<PosColorVertex>& uiOut);
+// G27: `topY` is the pixel top of the first bar row, replacing the dbgText
+// `baseRow` this used to take, and the labels go into `textOut` in the real
+// UI font. The row pitch stays 16px -- hud.cpp measures its leaderboard
+// placement against the bottom of this strip, so the spacing is load-bearing.
+void drawStatusBars(const Car& player, float topY, std::vector<PosColorVertex>& uiOut,
+                    std::vector<PosColorUvVertex>& textOut);

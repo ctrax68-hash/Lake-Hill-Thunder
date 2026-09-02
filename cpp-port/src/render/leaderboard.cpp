@@ -1,9 +1,8 @@
 #include "leaderboard.h"
 #include "color.h"
 #include "gap_time.h"
+#include "hud_text.h"
 #include "ui_draw.h"
-
-#include <bgfx/bgfx.h>
 
 #include <algorithm>
 #include <cmath>
@@ -22,14 +21,16 @@ std::string truncate9(const std::string& s) {
     return s.size() <= 9 ? s : s.substr(0, 9);
 }
 
-// dbgTextPrintf's _attr byte, same VGA text-mode palette as hud.cpp's own
-// constants (this file doesn't share hud.cpp's anonymous-namespace copy,
-// same duplication precedent as status_bars.cpp).
-constexpr uint8_t kBlack = 0, kYellow = 14, kWhite = 15;
-
-uint8_t attr(uint8_t fg, uint8_t bg) {
-    return (uint8_t)((bg << 4) | fg);
-}
+// G27: the row grid, in pixels. The 16px pitch is kept from the dbgText era
+// because hud.cpp sizes this panel as `16 + 16 * rows` and decides how many
+// rows fit against the lap-time plate below -- the pitch is load-bearing
+// outside this file.
+constexpr float kRowH = 16.0f;
+constexpr float kHeaderH = 16.0f;
+constexpr float kPadX = 6.0f;
+constexpr float kRankW = 22.0f;  // right-aligned two-digit rank
+constexpr float kChipW = 8.0f, kChipH = 10.0f;
+constexpr float kNumW = 34.0f;   // "#12"
 
 } // namespace
 
@@ -99,33 +100,49 @@ std::vector<LeaderboardRow> buildLeaderboardRows(const std::vector<const Car*>& 
 }
 
 void drawLeaderboard(const LeaderboardBox& box, const std::vector<LeaderboardRow>& rows, bool flagYellow,
-                      std::vector<PosColorVertex>& uiOut) {
+                     std::vector<PosColorVertex>& uiOut, std::vector<PosColorUvVertex>& textOut) {
     if (rows.empty()) return;
 
-    constexpr float kCellW = 8.0f, kCellH = 16.0f;
-    const int col = (int)(box.x / kCellW);
-    const int headerRow = (int)(box.y / kCellH);
-
-    // index.html:3941-3944's yellow header banner.
-    bgfx::dbgTextPrintf(col, headerRow, attr(kBlack, kYellow), "%s", flagYellow ? "CAUTION" : "LAKE HILL 400");
+    // index.html:3941-3944's yellow header banner. dbgText could only invert a
+    // cell's background attribute to get this; with a real font the banner is
+    // an actual quad, so it spans the panel rather than just the glyphs.
+    pushQuad(uiOut, box.x, box.y, box.w, kHeaderH, packColor(Theme::kYellow, 0.92f));
+    font::pushText(textOut, box.x + kPadX, box.y + 12.0f,
+                   flagYellow ? "CAUTION" : "LAKE HILL 400", hudtext::kCaption,
+                   packColor(Theme::kBlack));
 
     for (size_t r = 0; r < rows.size(); ++r) {
-        const int row = headerRow + 1 + (int)r;
         const LeaderboardRow& lr = rows[r];
+        const float rowY = box.y + kHeaderH + (float)r * kRowH;
+        const float baseline = rowY + 12.0f;
 
         if (lr.dividerBefore) {
             // index.html:3951-3954's thin divider above the pinned row.
-            const float y = (float)row * kCellH;
-            pushLineSegment(uiOut, box.x, y, box.x + box.w, y, 1.0f, packColor(Theme::kSteel));
+            pushLineSegment(uiOut, box.x, rowY, box.x + box.w, rowY, 1.0f, packColor(Theme::kSteel));
         }
 
-        const uint8_t textAttr = lr.isPlayerRow ? attr(kBlack, kYellow) : attr(kWhite, kBlack);
-        bgfx::dbgTextPrintf(col, row, textAttr, "%2d", lr.rank);
+        // The player's row was a colour-attribute inversion before; now it is
+        // a real highlight behind the whole row, which is what makes it findable
+        // at a glance in a list of six.
+        if (lr.isPlayerRow) {
+            pushQuad(uiOut, box.x, rowY, box.w, kRowH, packColor(Theme::kYellow, 0.85f));
+        }
+        const uint32_t fg = lr.isPlayerRow ? packColor(Theme::kBlack) : packColor(Theme::kWhite);
 
-        const float chipX = (float)(col + 3) * kCellW;
-        const float chipY = (float)row * kCellH + 3.0f;
-        pushQuad(uiOut, chipX, chipY, 8.0f, 10.0f, packColor((float)lr.col[0], (float)lr.col[1], (float)lr.col[2]));
+        // Right-aligned rank: a proportional font makes "1" and "18" different
+        // widths, so left-aligning them would leave the numbers ragged.
+        hudtext::drawRight(textOut, box.x + kPadX + kRankW, baseline, std::to_string(lr.rank),
+                           hudtext::kBody, fg);
 
-        bgfx::dbgTextPrintf(col + 6, row, textAttr, "#%-3d %s", lr.carNum, lr.tag.c_str());
+        const float chipX = box.x + kPadX + kRankW + 8.0f;
+        pushQuad(uiOut, chipX, rowY + 3.0f, kChipW, kChipH,
+                 packColor((float)lr.col[0], (float)lr.col[1], (float)lr.col[2]));
+
+        const float numX = chipX + kChipW + 6.0f;
+        hudtext::draw(textOut, numX, baseline, "#" + std::to_string(lr.carNum), hudtext::kBody, fg);
+        // The tag (name or gap, alternating -- see buildLeaderboardRows) is
+        // right-aligned to the panel edge, so the gap column lines up down the
+        // list the way a broadcast timing tower does.
+        hudtext::drawRight(textOut, box.x + box.w - kPadX, baseline, lr.tag, hudtext::kBody, fg);
     }
 }

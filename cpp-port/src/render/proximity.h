@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../sim/car.h"
+#include "font_atlas.h"
 #include "vertex.h"
 
 #include <cstddef>
@@ -50,12 +51,14 @@ struct ProximityBox {
 
 // Draws the strip: a beveled plate, a centre tick marking the player's own
 // lane, and one colour chip per nearby car with its number beside it. The
-// number goes through bgfx::dbgTextPrintf() rather than being drawn into the
-// chip, matching leaderboard.cpp's "colour chip + text" idiom -- a number
-// painted inside the chip would be unreadable against half the field's
-// liveries.
+// number sits beside the chip rather than inside it, matching
+// leaderboard.cpp's "colour chip + text" idiom -- a number painted inside
+// would be unreadable against half the field's liveries.
 //
-// `captionRow` is the dbgText row the numbers print on; the caller owns it
-// for the same reason status_bars.cpp's base row is caller-supplied.
-void drawProximity(const ProximityBox& box, int captionRow, const std::vector<ProximityCar>& near,
-                    std::vector<PosColorVertex>& uiOut);
+// G27: numbers go into `textOut` in the real UI font, and the two lines
+// (ahead / behind) are placed from the panel rect. The `captionRow` this used
+// to take existed only so the chips could be aligned to the dbgText grid the
+// numbers were stuck on; with the text free to sit at any pixel, the chip and
+// its label are simply centred on one line together.
+void drawProximity(const ProximityBox& box, const std::vector<ProximityCar>& near,
+                   std::vector<PosColorVertex>& uiOut, std::vector<PosColorUvVertex>& textOut);

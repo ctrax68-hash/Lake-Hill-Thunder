@@ -1,8 +1,7 @@
 #include "status_bars.h"
 #include "color.h"
+#include "hud_text.h"
 #include "ui_draw.h"
-
-#include <bgfx/bgfx.h>
 
 #include <cmath>
 
@@ -15,22 +14,22 @@ namespace {
 // these belong. Never rendered in the same frame as menu.cpp's rows
 // (drawHud()/drawMenu() are mutually exclusive by RaceState::mode), so no
 // cross-module row conflict either way.
-constexpr float kCellW = 8.0f, kCellH = 16.0f;
-constexpr float kBarX = 6.0f * kCellW; // clears the "TIRE "/"FUEL "/"CAR  " label
+// G27: rows are pixel offsets now, not dbgText cells. kRowH keeps the 16px
+// pitch the dbgText grid imposed, because hud.cpp's leaderboard placement is
+// measured against the bottom of this strip -- changing the spacing here
+// would silently move that too.
+constexpr float kRowH = 16.0f;
+constexpr float kLabelX = 8.0f;
+constexpr float kBarX = 56.0f; // clears the widest label ("TIR-F") at kCaption
 constexpr float kBarW = 200.0f;
 constexpr float kBarH = 10.0f;
 constexpr int kBarSegN = 6; // index.html:4016's drawSegBar(..., 6, ...)
 
-constexpr uint8_t kWhite = 15, kBlack = 0; // dbgText VGA palette, matching hud.cpp's own constants
-
-uint8_t attr(uint8_t fg, uint8_t bg) {
-    return (uint8_t)((bg << 4) | fg);
-}
-
-void drawOneBar(int row, const char* label, double frac, const float* filledRgb,
-                std::vector<PosColorVertex>& uiOut) {
-    bgfx::dbgTextPrintf(1, row, attr(kWhite, kBlack), "%s", label);
-    const float y = (float)row * kCellH + (kCellH - kBarH) / 2.0f;
+void drawOneBar(float rowY, const char* label, double frac, const float* filledRgb,
+                std::vector<PosColorVertex>& uiOut, std::vector<PosColorUvVertex>& textOut) {
+    hudtext::draw(textOut, kLabelX, rowY + 12.0f, label, hudtext::kCaption,
+                  packColor(Theme::kWhite));
+    const float y = rowY + (kRowH - kBarH) / 2.0f;
     const uint32_t filledAbgr = packColor(filledRgb);
     const uint32_t emptyAbgr = packColor(Theme::kSteel); // index.html:3871's THEME.steel for unfilled segments
     pushSegBar(uiOut, kBarX, y, kBarW, kBarH, frac, kBarSegN, filledAbgr, emptyAbgr);
@@ -42,18 +41,23 @@ void drawOneBar(int row, const char* label, double frac, const float* filledRgb,
 // extremes, so the discrete-segment bar this file uses everywhere else
 // doesn't fit. `balance` is in [-1, 1]: negative = loose (rear worn more),
 // positive = tight (front worn more), 0 = even. Single-letter "L"/"T"
-// dbgText captions bracket the track rather than full words -- this HUD's
-// own established abbreviation convention (TIRE/FUEL/CAR, seven-segment
-// digits instead of a real font), and there's no room for more within the
-// same column budget the other bars already fit their label in.
-void drawBalanceBar(int row, double balance, std::vector<PosColorVertex>& uiOut) {
-    bgfx::dbgTextPrintf(1, row, attr(kWhite, kBlack), "BAL");
-    const int leftCol = (int)(kBarX / kCellW) - 1;
-    const int rightCol = (int)((kBarX + kBarW) / kCellW);
-    bgfx::dbgTextPrintf(leftCol, row, attr(kWhite, kBlack), "L");
-    bgfx::dbgTextPrintf(rightCol, row, attr(kWhite, kBlack), "T");
+// Single-letter captions bracket the track rather than full words -- this
+// HUD's own established abbreviation convention, and there is no room for
+// more within the same label budget the other bars fit into. (Written when
+// this was dbgText and there was no real font to set them in; G27 gave it
+// one, but the abbreviation is still the right call at this size.)
+void drawBalanceBar(float rowY, double balance, std::vector<PosColorVertex>& uiOut,
+                    std::vector<PosColorUvVertex>& textOut) {
+    const float baseline = rowY + 12.0f;
+    hudtext::draw(textOut, kLabelX, baseline, "BAL", hudtext::kCaption, packColor(Theme::kWhite));
+    // L and T bracket the track. With a real font these can finally be placed
+    // against the bar's actual pixel edges instead of the nearest 8px cell.
+    hudtext::drawRight(textOut, kBarX - 4.0f, baseline, "L", hudtext::kCaption,
+                       packColor(Theme::kGraycool));
+    hudtext::draw(textOut, kBarX + kBarW + 4.0f, baseline, "T", hudtext::kCaption,
+                  packColor(Theme::kGraycool));
 
-    const float y = (float)row * kCellH + (kCellH - kBarH) / 2.0f;
+    const float y = rowY + (kRowH - kBarH) / 2.0f;
     pushQuad(uiOut, kBarX, y, kBarW, kBarH, packColor(Theme::kSteel));
     constexpr float kNotchW = 2.0f;
     pushQuad(uiOut, kBarX + kBarW / 2.0f - kNotchW / 2.0f, y, kNotchW, kBarH, packColor(Theme::kGraycool));
@@ -70,7 +74,8 @@ void drawBalanceBar(int row, double balance, std::vector<PosColorVertex>& uiOut)
 
 } // namespace
 
-void drawStatusBars(const Car& player, int baseRow, std::vector<PosColorVertex>& uiOut) {
+void drawStatusBars(const Car& player, float topY, std::vector<PosColorVertex>& uiOut,
+                    std::vector<PosColorUvVertex>& textOut) {
     // index.html:4005-4009's exact color thresholds and dOK inversion (the
     // bars show "how much is left," not the raw wear/damage values).
     //
@@ -87,13 +92,16 @@ void drawStatusBars(const Car& player, int baseRow, std::vector<PosColorVertex>&
     const double dOK = 1.0 - player.dmg;
     const double balance = player.wearFront - player.wearRear;
 
-    drawOneBar(baseRow, "TIR-F", wrFront,
-               wrFront > 0.5 ? Theme::kYellow : wrFront > 0.25 ? Theme::kOrange : Theme::kRed, uiOut);
-    drawOneBar(baseRow + 1, "TIR-R", wrRear,
-               wrRear > 0.5 ? Theme::kYellow : wrRear > 0.25 ? Theme::kOrange : Theme::kRed, uiOut);
-    drawBalanceBar(baseRow + 2, balance, uiOut);
-    drawOneBar(baseRow + 3, "FUEL", player.fuel,
-               player.fuel > 0.3 ? Theme::kBlue : player.fuel > 0.12 ? Theme::kOrange : Theme::kRed, uiOut);
-    drawOneBar(baseRow + 4, "CAR ", dOK,
-               dOK > 0.6 ? Theme::kBlue : dOK > 0.3 ? Theme::kOrange : Theme::kRed, uiOut);
+    drawOneBar(topY, "TIR-F", wrFront,
+               wrFront > 0.5 ? Theme::kYellow : wrFront > 0.25 ? Theme::kOrange : Theme::kRed, uiOut,
+               textOut);
+    drawOneBar(topY + kRowH, "TIR-R", wrRear,
+               wrRear > 0.5 ? Theme::kYellow : wrRear > 0.25 ? Theme::kOrange : Theme::kRed, uiOut,
+               textOut);
+    drawBalanceBar(topY + kRowH * 2.0f, balance, uiOut, textOut);
+    drawOneBar(topY + kRowH * 3.0f, "FUEL", player.fuel,
+               player.fuel > 0.3 ? Theme::kBlue : player.fuel > 0.12 ? Theme::kOrange : Theme::kRed,
+               uiOut, textOut);
+    drawOneBar(topY + kRowH * 4.0f, "CAR", dOK,
+               dOK > 0.6 ? Theme::kBlue : dOK > 0.3 ? Theme::kOrange : Theme::kRed, uiOut, textOut);
 }

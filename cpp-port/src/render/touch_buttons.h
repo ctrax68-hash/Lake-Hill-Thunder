@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../ui/touch_controls.h"
+#include "font_atlas.h"
 #include "vertex.h"
 
 #include <vector>
@@ -19,4 +20,9 @@
 // sub-module uses (hud.h's own doc comment) -- Renderer submits it as the
 // pixel-space UI-overlay view after drawHud() returns, so this needs no
 // bgfx dependency of its own beyond dbgTextPrintf for the labels.
-void drawTouchButtons(const TouchRegions& regions, std::vector<PosColorVertex>& uiOut);
+// G27: labels go into `textOut` in the real UI font, and are genuinely
+// centred in their buttons rather than snapped to the nearest 8x16 dbgText
+// cell -- these are the one piece of text a thumb aims at while the car is
+// moving, so the old approximation actually cost something here.
+void drawTouchButtons(const TouchRegions& regions, std::vector<PosColorVertex>& uiOut,
+                      std::vector<PosColorUvVertex>& textOut);

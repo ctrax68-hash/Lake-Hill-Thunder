@@ -1,8 +1,7 @@
 #include "gauge_cluster.h"
 #include "color.h"
+#include "hud_text.h"
 #include "ui_draw.h"
-
-#include <bgfx/bgfx.h>
 
 #include <algorithm>
 #include <cmath>
@@ -11,14 +10,19 @@
 
 namespace {
 
-constexpr float kCellW = 8.0f, kCellH = 16.0f;
-constexpr uint8_t kWhite = 15, kBlack = 0; // dbgText VGA palette, matching hud.cpp
-
-uint8_t attr(uint8_t fg, uint8_t bg) {
-    return (uint8_t)((bg << 4) | fg);
-}
-
-int colAt(float x) { return (int)(x / kCellW); }
+// G27: the readout column's three rows, as offsets from the panel's top.
+// These used to be dbgText rows supplied by the caller; they are now simply
+// where the three readouts sit inside the panel, which is what they always
+// meant.
+//
+// Caption and value share a baseline -- caption left, value right -- rather
+// than the value sitting under its caption. The column is narrow (the dial
+// takes most of the panel), and stacking them made the digits both squat and
+// clipped by the panel's own bevel, which the first capture of this showed.
+// Side by side, the digits get the height they need and the caption fills
+// space that was otherwise empty.
+constexpr float kRow0 = 14.0f, kRowStep = 40.0f;
+constexpr float kDigitW = 14.0f, kDigitH = 24.0f, kDigitGap = 3.0f;
 
 constexpr float kPi = 3.14159265358979323846f;
 constexpr float kDeg = kPi / 180.0f;
@@ -42,8 +46,8 @@ float sweepAngle(double frac) {
 
 } // namespace
 
-void drawGaugeCluster(const GaugeBox& box, int captionRow, double rpm, int gear, double speed,
-                       double draftF, std::vector<PosColorVertex>& uiOut) {
+void drawGaugeCluster(const GaugeBox& box, double rpm, int gear, double speed, double draftF,
+                      std::vector<PosColorVertex>& uiOut, std::vector<PosColorUvVertex>& textOut) {
     const uint32_t segOff = packColor(Theme::kSteel, 0.55f);
 
     pushBevelPanel(uiOut, box.x, box.y, box.w, box.h, packColor(Theme::kBlack, 0.62f),
@@ -95,13 +99,14 @@ void drawGaugeCluster(const GaugeBox& box, int captionRow, double rpm, int gear,
     // --- readout column ---------------------------------------------------
     // To the right of the dial, where the needle can never cross it.
     const float colX = cx + r + 14.0f;
-    const float rightX = box.x + box.w - 12.0f;
+    const float rightX = box.x + box.w - 16.0f;
 
-    bgfx::dbgTextPrintf(colAt(colX), captionRow, attr(kWhite, kBlack), "GEAR");
+    const float row0 = box.y + kRow0;
+    hudtext::caption(textOut, colX, row0 + 5.0f, "GEAR");
     {
         const std::string txt = std::to_string(std::max(1, gear));
-        const float w = measureSevenSegText(20.0f, 4.0f, txt);
-        pushSevenSegText(uiOut, rightX - w, (float)captionRow * kCellH + 18.0f, 20.0f, 30.0f, 4.0f, txt,
+        const float w = measureSevenSegText(kDigitW, kDigitGap, txt);
+        pushSevenSegText(uiOut, rightX - w, row0, kDigitW, kDigitH, kDigitGap, txt,
                          packColor(Theme::kWhite), segOff);
     }
 
@@ -123,13 +128,14 @@ void drawGaugeCluster(const GaugeBox& box, int captionRow, double rpm, int gear,
     // lap read as half pace. Display-only: no physics constant moves, so lap
     // times, AI behaviour and every existing test are untouched.
     constexpr double kMetresPerSecToMph = 2.2369362920544; // exact: 3600/1609.344
-    bgfx::dbgTextPrintf(colAt(colX), captionRow + 3, attr(kWhite, kBlack), "MPH");
+    const float row1 = box.y + kRow0 + kRowStep;
+    hudtext::caption(textOut, colX, row1 + 5.0f, "MPH");
     {
         char buf[8];
         std::snprintf(buf, sizeof(buf), "%d", (int)std::lround(std::max(0.0, speed) * kMetresPerSecToMph));
         const std::string txt(buf);
-        const float w = measureSevenSegText(20.0f, 4.0f, txt);
-        pushSevenSegText(uiOut, rightX - w, (float)(captionRow + 3) * kCellH + 18.0f, 20.0f, 30.0f, 4.0f, txt,
+        const float w = measureSevenSegText(kDigitW, kDigitGap, txt);
+        pushSevenSegText(uiOut, rightX - w, row1, kDigitW, kDigitH, kDigitGap, txt,
                          packColor(Theme::kWhite), segOff);
     }
 
@@ -139,9 +145,10 @@ void drawGaugeCluster(const GaugeBox& box, int captionRow, double rpm, int gear,
     // tach would be decoration, not information -- the same reasoning that
     // took SPD/GEAR *out* of the left column once this cluster showed them.
     // Draft is the one signal that had no display at all before G22.
-    bgfx::dbgTextPrintf(colAt(colX), captionRow + 6, attr(kWhite, kBlack), "DRAFT");
+    const float row2 = box.y + kRow0 + kRowStep * 2.0f;
+    hudtext::caption(textOut, colX, row2, "DRAFT");
     {
-        const float barY = (float)(captionRow + 6) * kCellH + 18.0f;
+        const float barY = row2 + 20.0f;
         const float barW = rightX - colX;
         pushSegBar(uiOut, colX, barY, barW, 10.0f, std::clamp(draftF, 0.0, 1.0), 6,
                    packColor(Theme::kBlue), packColor(Theme::kSteel));

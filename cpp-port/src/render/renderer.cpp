@@ -2225,7 +2225,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         const std::vector<const Car*> resultsOrder = buildResultsOrder(*finishOrder, order);
         drawResults(resultsOrder, uiVerts);
     } else {
-        drawHud(raceState, cars, uiVerts, minimapOutline_, minimapBoundX_, minimapBoundY_,
+        drawHud(raceState, cars, uiVerts, textVerts, minimapOutline_, minimapBoundX_, minimapBoundY_,
                 track_ ? track_->total() : 0.0, width_, height_);
         // Phase 4b (PORT_PROGRESS.md): drawHud() itself already early-returns
         // for mode=="menu" (hud.cpp:21), so both can unconditionally run here

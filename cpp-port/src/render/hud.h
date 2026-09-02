@@ -2,6 +2,7 @@
 
 #include "../sim/car.h"
 #include "../sim/race_state.h"
+#include "font_atlas.h"
 #include "vertex.h"
 
 #include <utility>
@@ -63,7 +64,12 @@
 //
 // Caller is expected to have called bgfx::setDebug(BGFX_DEBUG_TEXT) once
 // at init and bgfx::dbgTextClear() once this frame before calling this.
+// G27: `textOut` is the frame's font-atlas text list. Every caption, label
+// and readout on this HUD that is not a segmented display goes through it in
+// the real UI font -- drawHud() and all five of its sub-drawers are now free
+// of bgfx::dbgTextPrintf().
 void drawHud(const RaceState& state, const std::vector<Car>& cars, std::vector<PosColorVertex>& uiOut,
+             std::vector<PosColorUvVertex>& textOut,
              const std::vector<std::pair<float, float>>& minimapOutline, float minimapBoundX,
              float minimapBoundY, double trackTotal, int windowW, int windowH);
 

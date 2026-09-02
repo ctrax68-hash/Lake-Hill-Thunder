@@ -438,6 +438,7 @@ add_executable(lht_port
   src/render/stadium_mesh.cpp
   src/render/status_bars.cpp
   src/render/texture_import.cpp
+  src/render/ticker.cpp
   src/render/touch_buttons.cpp
   src/render/track_surface.cpp
   src/render/track_surface_texture.cpp
@@ -743,12 +744,14 @@ add_test(NAME minimap_test COMMAND minimap_test)
 # leaderboard.cpp's drawLeaderboard() calls bgfx::dbgTextPrintf(), even
 # though this test never calls that function.
 add_executable(leaderboard_test tests/leaderboard_test.cpp src/render/leaderboard.cpp
-  src/render/gap_time.cpp src/render/ui_draw.cpp)
+  src/render/gap_time.cpp src/render/ui_draw.cpp
+  src/render/font_atlas.cpp src/render/texture_import.cpp)
 target_link_libraries(leaderboard_test PRIVATE bgfx)
 target_include_directories(leaderboard_test PRIVATE
   third_party/bgfx.cmake/bgfx/include
   third_party/bgfx.cmake/bx/include
 )
+target_include_directories(leaderboard_test PRIVATE ${LHT_STB_INCLUDE_DIR})
 add_test(NAME leaderboard_test COMMAND leaderboard_test)
 
 # Phase 4h (PORT_PROGRESS.md): results_test exercises computeResultsRegions()'s
@@ -785,12 +788,14 @@ add_test(NAME pit_setup_test COMMAND pit_setup_test)
 # proximity.cpp's drawProximity() calls bgfx::dbgTextPrintf(), even though
 # this test only calls the pure selection half.
 add_executable(proximity_test tests/proximity_test.cpp src/render/proximity.cpp
-  src/render/ui_draw.cpp)
+  src/render/ui_draw.cpp
+  src/render/font_atlas.cpp src/render/texture_import.cpp)
 target_link_libraries(proximity_test PRIVATE bgfx)
 target_include_directories(proximity_test PRIVATE
   third_party/bgfx.cmake/bgfx/include
   third_party/bgfx.cmake/bx/include
 )
+target_include_directories(proximity_test PRIVATE ${LHT_STB_INCLUDE_DIR})
 add_test(NAME proximity_test COMMAND proximity_test)
 
 # H4 (NT2003 engine-feel plan): particles_test exercises particles.h's
@@ -813,6 +818,26 @@ add_executable(font_atlas_test tests/font_atlas_test.cpp src/render/font_atlas.c
   src/render/texture_import.cpp)
 target_include_directories(font_atlas_test PRIVATE ${LHT_STB_INCLUDE_DIR})
 add_test(NAME font_atlas_test COMMAND font_atlas_test)
+
+# G27 (graphics pass): ticker_test exercises the broadcast ticker's entry
+# building and, above all, its scroll/wrap arithmetic -- the one property of
+# that strip a screenshot cannot show, since a period that disagrees with the
+# content width looks perfect in any single frame and jumps once a minute.
+# Links hud.cpp for computeRaceOrder() (and therefore its whole draw closure),
+# plus font_atlas/texture_import for measurement.
+add_executable(ticker_test tests/ticker_test.cpp src/render/ticker.cpp src/render/hud.cpp
+  src/render/font_atlas.cpp src/render/texture_import.cpp src/render/ui_draw.cpp
+  src/render/fmt_time.cpp src/render/gap_time.cpp src/render/gauge_cluster.cpp
+  src/render/gear_rpm.cpp src/render/hill_silhouette.cpp src/render/leaderboard.cpp
+  src/render/minimap.cpp src/render/proximity.cpp src/render/status_bars.cpp
+  src/render/touch_buttons.cpp src/ui/touch_controls.cpp src/ui/pit_setup.cpp
+  src/sim/track.cpp)
+target_link_libraries(ticker_test PRIVATE SDL2::SDL2 bgfx)
+target_include_directories(ticker_test PRIVATE ${LHT_STB_INCLUDE_DIR}
+  third_party/bgfx.cmake/bgfx/include
+  third_party/bgfx.cmake/bx/include
+)
+add_test(NAME ticker_test COMMAND ticker_test)
 
 add_executable(determinism_test tests/determinism_test.cpp tests/determinism/trace.cpp)
 add_test(NAME determinism_test COMMAND determinism_test)

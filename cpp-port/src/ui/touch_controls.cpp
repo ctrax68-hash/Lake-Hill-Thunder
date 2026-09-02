@@ -22,6 +22,10 @@ constexpr int kCtlPitH = 44, kCtlPitGap = 40, kCtlPitW = 72;
 // button just sizes to its own text), so this is a new, reasonably-sized
 // touch target rather than a ported constant.
 constexpr int kCtlCamW = 72, kCtlCamH = 40;
+
+// G27: height of the ticker strip along the top of the screen (hud.cpp draws
+// it). Everything that used to start at the very top now clears it.
+constexpr int kTickerH = 24;
 } // namespace
 
 TouchRegions computeTouchRegions(int windowW, int windowH) {
@@ -50,7 +54,14 @@ TouchRegions computeTouchRegions(int windowW, int windowH) {
     // bC: top-right corner, away from every drive control -- matches JS's
     // own CAM button being a separate top-of-screen element, not grouped
     // with the drive controls.
-    r.bC = {windowW - kCtlGap - kCtlCamW, kCtlGap, kCtlCamW, kCtlCamH};
+    //
+    // G27: pushed below the broadcast ticker, which now owns the top strip of
+    // the screen the way the reference's does. kTickerH is duplicated here
+    // rather than included from hud.h because this header is the input-side
+    // region math -- main.cpp hit-tests against it without ever including the
+    // HUD -- and a one-way dependency from the drawing side onto the input
+    // side is the direction that has kept these two in agreement so far.
+    r.bC = {windowW - kCtlGap - kCtlCamW, kTickerH + 6, kCtlCamW, kCtlCamH};
 
     return r;
 }
