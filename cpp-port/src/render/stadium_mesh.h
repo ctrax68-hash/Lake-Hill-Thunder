@@ -153,6 +153,29 @@ std::vector<MeshVertex> buildSuiteTowerMesh(const Track& track, int frontTiers, 
 // height varying by track type).
 std::vector<MeshVertex> buildCatchFenceMesh(const Track& track, double fenceHeight);
 
+// G28 (graphics pass): the catch fence's structure -- posts marching along
+// the wall, two horizontal rails, and the curved top return that bends back
+// over the track. buildCatchFenceMesh() draws only the mesh band, which reads
+// as a fence at distance and as nothing at all up close; this is what makes it
+// legible. Kept a separate mesh so the band keeps its own texture and wrap
+// while the structure stays flat-coloured geometry.
+std::vector<MeshVertex> buildFenceStructureMesh(const Track& track, double fenceHeight);
+
+// G28: red-and-white striped barriers on the corner exits -- one of the most
+// recognisable things in the reference footage, and useful beyond decoration:
+// a striped block at a corner exit is a braking/turn-in reference that a
+// uniform grey wall does not give the player.
+std::vector<MeshVertex> buildCornerBarrierMesh(const Track& track);
+
+// G28: a sponsor arch spanning the track just past the start/finish line.
+// Returns the flat-coloured structure (legs and beam backing); the beam's
+// board is TEXTURED and is appended to `texturedOut` instead, because it
+// samples the same atlasSponsorUV() tiles the trackside boards do and so has
+// to go into the textured-lit draw rather than the flat one. Reusing those
+// tiles rather than authoring a ninth means the arch picks up any change to
+// the invented wordmark set automatically.
+std::vector<MeshVertex> buildSponsorArchMesh(const Track& track, std::vector<MeshVertex>& texturedOut);
+
 // G17 (NT2003 presentation plan): resurfacing patches on the racing
 // surface. `patches` is the track's own `Stadium::patches` -- authored
 // per-track from the start (only Cedar Valley is non-zero, at 6) but

@@ -444,6 +444,7 @@ add_executable(lht_port
   src/render/track_surface_texture.cpp
   src/render/ui_draw.cpp
   src/render/wheel_animation.cpp
+  src/render/word_blit.cpp
   src/ui/menu.cpp
   src/ui/pit_setup.cpp
   src/ui/results.cpp
@@ -593,12 +594,18 @@ add_test(NAME sky_texture_test COMMAND sky_texture_test)
 # gear_rpm.cpp: car.cpp now calls gearRpm() (drivetrain upgrade).
 add_executable(stadium_mesh_test tests/stadium_mesh_test.cpp src/sim/track.cpp src/sim/car.cpp
   src/render/track_surface.cpp src/render/stadium_mesh.cpp src/render/gear_rpm.cpp
-  src/render/atlas_texture.cpp src/render/digit_mesh.cpp)
+  src/render/atlas_texture.cpp src/render/digit_mesh.cpp
+  src/render/word_blit.cpp src/render/font_atlas.cpp src/render/texture_import.cpp)
+target_include_directories(stadium_mesh_test PRIVATE ${LHT_STB_INCLUDE_DIR})
 add_test(NAME stadium_mesh_test COMMAND stadium_mesh_test)
 
 # Phase 5e (PORT_PROGRESS.md): atlas_texture_test exercises buildAtlasPixels()'s
 # pure pixel math, bgfx-free.
-add_executable(atlas_texture_test tests/atlas_texture_test.cpp src/render/atlas_texture.cpp)
+# G28 added word_blit.cpp (+ font_atlas/texture_import behind it): the
+# sponsor boards now carry invented wordmarks rasterised into the atlas.
+add_executable(atlas_texture_test tests/atlas_texture_test.cpp src/render/atlas_texture.cpp
+  src/render/word_blit.cpp src/render/font_atlas.cpp src/render/texture_import.cpp)
+target_include_directories(atlas_texture_test PRIVATE ${LHT_STB_INCLUDE_DIR})
 add_test(NAME atlas_texture_test COMMAND atlas_texture_test)
 
 # Phase 5f (PORT_PROGRESS.md): livery_test exercises buildLiveryPixels()'s

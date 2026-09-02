@@ -66,11 +66,20 @@ struct Stadium {
     Sky sky;
     Env env;
     std::array<std::array<double, 3>, 6> crowdPalette;
-    // G10 (NASCAR-Thunder gap-analysis plan): catch-fence height above the
-    // wall, in world units. Defaulted so every existing per-track
-    // initializer (which predates this field) picks up a short-track
-    // height unchanged; only Big Sable Speedway (the superspeedway, where
-    // real catch fences run noticeably taller) overrides it.
+    // Catch-fence height above the wall, in world units.
+    //
+    // G28 raised every track to a real one. These were 1.0-2.2 m, which is
+    // roughly waist-high on a fence whose real counterparts run 4.5-6.5 m --
+    // it read as a band of texture along the top of the wall rather than as a
+    // fence, and it is one of the most prominent things in the reference
+    // footage. Two changes had to land together for this to be possible at
+    // all: the fence texture is transparent between its wires now
+    // (atlas_texture.cpp), and the mesh draws in its own alpha-blended pass
+    // (renderer.cpp). Simply raising this number beforehand would have painted
+    // an opaque grey sheet over the grandstands.
+    //
+    // The default stays low deliberately: a track that forgets to set this
+    // gets a short fence, not a wall of alpha the size of a stadium.
     double fenceHeight = 1.0;
 };
 

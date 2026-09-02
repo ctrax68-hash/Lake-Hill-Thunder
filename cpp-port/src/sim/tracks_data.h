@@ -31,7 +31,8 @@ inline const std::array<TrackSpec, 4> TRACKS = {{
      Stadium{StandTier{5, 3, 2}, 0.85, "partial", StandScale{3.2, 2.1}, 0.82, 12, 0, false, false, 0.25, 5,
              Sky{{0.78, 0.86, 0.94}, {0.20, 0.45, 0.85}, "none"}, Env{"noon-grass"},
              {{{0.75, 0.2, 0.2}, {0.2, 0.35, 0.75}, {0.85, 0.8, 0.25}, {0.8, 0.8, 0.82}, {0.25, 0.6, 0.3},
-               {0.5, 0.3, 0.6}}}}},
+               {0.5, 0.3, 0.6}}},
+             5.5}},  // G28: a real catch-fence height (see track.h)
     // MILLTOWN BULLRING (index.html:253-262)
     // G18: restyled into the reference's steep-walled coliseum bowl. At
     // 848m it is already within 1% of Bristol's half-mile and was already
@@ -48,14 +49,15 @@ inline const std::array<TrackSpec, 4> TRACKS = {{
              Sky{{0.80, 0.85, 0.92}, {0.24, 0.42, 0.80}, "none"}, Env{"hazy-noon"},
              {{{0.80, 0.22, 0.20}, {0.20, 0.35, 0.78}, {0.90, 0.82, 0.28}, {0.88, 0.88, 0.90}, {0.25, 0.58, 0.32},
                {0.55, 0.35, 0.65}}},
-             1.9}},  // G18: taller catch fence to match the taller bowl
+             4.5}},  // G28: real catch-fence height; short track, so the lowest
     // CEDAR VALLEY (index.html:263-272)
     {"CEDAR VALLEY", 190, 160, 14, 12, 500, 4, 100,
      TrackTheme{{0.16, 0.38, 0.62}, {0.20, 0.33, 0.10}},
      Stadium{StandTier{3, 2, 1}, 0.55, "partial", StandScale{3.0, 1.9}, 0.55, 6, 6, false, false, 0.18, 3,
              Sky{{0.80, 0.88, 0.90}, {0.35, 0.55, 0.80}, "hills"}, Env{"sunset"},
              {{{0.65, 0.30, 0.15}, {0.70, 0.50, 0.20}, {0.40, 0.30, 0.55}, {0.30, 0.40, 0.35}, {0.75, 0.65, 0.35},
-               {0.50, 0.20, 0.15}}}}},
+               {0.50, 0.20, 0.15}}},
+             5.0}},  // G28: real catch-fence height
     // BIG SABLE SPEEDWAY (index.html:273-282)
     {"BIG SABLE SPEEDWAY", 240, 240, 23, 23, 546, 5, 120,
      TrackTheme{{0.85, 0.12, 0.10}, {0.19, 0.34, 0.11}},
@@ -63,5 +65,5 @@ inline const std::array<TrackSpec, 4> TRACKS = {{
              Sky{{0.75, 0.83, 0.93}, {0.18, 0.40, 0.80}, "none"}, Env{"dusk-lights"},
              {{{0.85, 0.15, 0.12}, {0.10, 0.25, 0.75}, {0.95, 0.85, 0.15}, {0.90, 0.90, 0.92}, {0.15, 0.15, 0.18},
                {0.55, 0.55, 0.60}}},
-             2.2}},  // G10: taller catch fence -- this is the superspeedway
+             6.5}},  // G28: real catch-fence height; tallest, it is the superspeedway
 }};

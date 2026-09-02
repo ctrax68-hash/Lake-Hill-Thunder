@@ -378,7 +378,11 @@ std::vector<MeshVertex> buildCatchFenceMesh(const Track& track, double fenceHeig
     constexpr double kWallH = 1.35; // matches buildOuterWallMesh()'s own WALL_H
     const double wl = wallLat(track);
     const std::array<double, 4> fenceUV = atlasUV(kAtlasFence);
-    constexpr double kFenceTileLength = 5.0;
+    // G28: 11 m per tile, up from 5. The atlas band carries ~33 diamonds
+    // across its width, so 11 m puts them at roughly 33 cm horizontally --
+    // matching the ~34 cm the same band gives vertically over a real fence
+    // height. At 5 m the mesh was visibly stretched taller than it was wide.
+    constexpr double kFenceTileLength = 11.0;
     auto wrapU = [&](double s) {
         double t = std::fmod(s / kFenceTileLength, 1.0);
         if (t < 0.0) t += 1.0;
@@ -393,6 +397,163 @@ std::vector<MeshVertex> buildCatchFenceMesh(const Track& track, double fenceHeig
         // Same reversed winding as the wall face, visible from the track side.
         addQuadUV(out, f10, f11, f01, f00, {u0, vTop}, {u1, vTop}, {u1, vBottom}, {u0, vBottom});
     }
+    return out;
+}
+
+// G28 (graphics pass): the catch fence's STRUCTURE -- posts and a curved
+// top rail.
+//
+// buildCatchFenceMesh() above draws the mesh as a single textured band, which
+// is what a fence looks like from a distance and nothing like one up close:
+// the reference's fence reads as fence because you can see the posts marching
+// past and the rail curving in over the track. This adds those, leaving the
+// mesh band itself untouched -- the two are separate meshes precisely so the
+// band can keep its own texture and wrap while the structure is flat-coloured
+// geometry.
+//
+// Post spacing is real-ish (every ~12 m) rather than per-slice: the band uses
+// 460 slices around the lap, and a post on each would be a picket fence, both
+// wrong-looking and ~5500 extra boxes for no gain.
+std::vector<MeshVertex> buildFenceStructureMesh(const Track& track, double fenceHeight) {
+    std::vector<MeshVertex> out;
+    constexpr std::array<double, 3> kSteel{0.42, 0.44, 0.47};
+    constexpr std::array<double, 3> kRail{0.52, 0.54, 0.57};
+    constexpr double kWallH = 1.35;  // matches buildOuterWallMesh()'s WALL_H
+    constexpr double kPostSpacing = 12.0;
+    constexpr double kPostW = 0.18;
+    const double wl = wallLat(track);
+    const double topY = kWallH + fenceHeight;
+
+    const int posts = std::max(4, (int)(track.total() / kPostSpacing));
+    const double dS = track.total() / posts;
+    for (int i = 0; i < posts; ++i) {
+        const double sp = i * dS;
+        // A post is a thin quad rather than a box: it is seen edge-on from the
+        // car for all but a fraction of a second, and a box costs six times the
+        // triangles to look identical at that angle.
+        const Vec3 a = crossPt(track, sp - kPostW, wl, kWallH);
+        const Vec3 b = crossPt(track, sp + kPostW, wl, kWallH);
+        const Vec3 c = crossPt(track, sp + kPostW, wl, topY);
+        const Vec3 d = crossPt(track, sp - kPostW, wl, topY);
+        addQuad(out, d, c, b, a, kSteel);
+
+        // The curved top return: real catch fences bend back over the track so
+        // debris is turned down rather than launched. Two short segments read
+        // as a curve at any distance the player ever sees it from.
+        //
+        // Proportional to the fence, not fixed. Fixed offsets were tried first
+        // and looked absurd on the short track, where a 1.3 m overhang was
+        // wider than the fence was tall -- the return stuck out over the track
+        // like a wire and read as a stray line in the sky rather than as part
+        // of the fence.
+        const double lat1 = wl - fenceHeight * 0.10, lat2 = wl - fenceHeight * 0.24;
+        const double y1 = topY + fenceHeight * 0.11, y2 = topY + fenceHeight * 0.17;
+        const Vec3 e0 = crossPt(track, sp - kPostW, wl, topY);
+        const Vec3 e1 = crossPt(track, sp + kPostW, wl, topY);
+        const Vec3 f0 = crossPt(track, sp - kPostW, lat1, y1);
+        const Vec3 f1 = crossPt(track, sp + kPostW, lat1, y1);
+        const Vec3 g0 = crossPt(track, sp - kPostW, lat2, y2);
+        const Vec3 g1 = crossPt(track, sp + kPostW, lat2, y2);
+        addQuad(out, f0, f1, e1, e0, kSteel);
+        addQuad(out, g0, g1, f1, f0, kSteel);
+    }
+
+    // Horizontal rails: one along the top of the posts and one mid-height, so
+    // the fence has a line running through it rather than only vertical ticks.
+    // Rail thickness scales too, for the same reason the return does.
+    const int N = 160;
+    const double dR = track.total() / N;
+    const double railT = std::max(0.06, fenceHeight * 0.03);
+    for (double h : {topY, kWallH + fenceHeight * 0.5}) {
+        for (int i = 0; i < N; ++i) {
+            const double s0 = i * dR, s1 = (i + 1) * dR;
+            const Vec3 r0 = crossPt(track, s0, wl, h);
+            const Vec3 r1 = crossPt(track, s1, wl, h);
+            const Vec3 r2 = crossPt(track, s1, wl, h + railT);
+            const Vec3 r3 = crossPt(track, s0, wl, h + railT);
+            addQuad(out, r3, r2, r1, r0, kRail);
+        }
+    }
+    return out;
+}
+
+// G28: red-and-white striped barriers on the corner exits.
+//
+// Straight off the reference, where they are one of the most recognisable
+// things in frame -- and they earn their place beyond decoration: a striped
+// block at the exit of a corner is a braking/turn-in reference, which a
+// uniform grey wall gives the player none of.
+std::vector<MeshVertex> buildCornerBarrierMesh(const Track& track) {
+    std::vector<MeshVertex> out;
+    constexpr std::array<double, 3> kRed{0.72, 0.12, 0.12};
+    constexpr std::array<double, 3> kWhite{0.90, 0.90, 0.92};
+    constexpr double kStripeLen = 2.0, kBarrierH = 0.75, kProud = 0.03;
+    const double wl = wallLat(track) + kProud;
+
+    // Corner exits only (the last third of each corner arc), which is where
+    // the reference puts them and where a turn-in reference is useful.
+    const Seg& seg1 = track.segs()[1];
+    const Seg& seg3 = track.segs()[3];
+    for (const Seg* seg : {&seg1, &seg3}) {
+        const double s0 = seg->s0 + seg->len * 0.66;
+        const double s1 = seg->s0 + seg->len;
+        const int stripes = std::max(2, (int)((s1 - s0) / kStripeLen));
+        const double dS = (s1 - s0) / stripes;
+        for (int i = 0; i < stripes; ++i) {
+            const double a = s0 + i * dS, b = a + dS;
+            const auto& col = (i % 2 == 0) ? kRed : kWhite;
+            const Vec3 p0 = crossPt(track, a, wl, 0.0);
+            const Vec3 p1 = crossPt(track, b, wl, 0.0);
+            const Vec3 p2 = crossPt(track, b, wl, kBarrierH);
+            const Vec3 p3 = crossPt(track, a, wl, kBarrierH);
+            addQuad(out, p3, p2, p1, p0, col);
+        }
+    }
+    return out;
+}
+
+// G28: the sponsor arch spanning the track above the start/finish line.
+//
+// Two legs outside the racing surface and a beam across, carrying a board on
+// its track-facing face. The board samples the SAME sponsor-panel atlas tiles
+// the trackside boards do (atlasSponsorUV), so its wordmark is one of the
+// eight invented names rather than a ninth thing to author -- and it picks up
+// any change to those automatically.
+std::vector<MeshVertex> buildSponsorArchMesh(const Track& track, std::vector<MeshVertex>& texturedOut) {
+    std::vector<MeshVertex> out;
+    constexpr std::array<double, 3> kLeg{0.30, 0.32, 0.36};
+    constexpr double kLegW = 1.1, kClear = 11.0, kBeamH = 2.6;
+    constexpr double kArchS = 26.0; // just past the stripe, so it frames the line
+
+    // Legs stand clear of the wall on both sides. lat is signed across the
+    // track, so -lat is the infield side.
+    const double outLat = wallLat(track) + 1.5;
+    const double inLat = -(std::fabs(wallLat(track)) + 1.5);
+    for (double lat : {outLat, inLat}) {
+        const Vec3 a = crossPt(track, kArchS - kLegW, lat, 0.0);
+        const Vec3 b = crossPt(track, kArchS + kLegW, lat, 0.0);
+        const Vec3 c = crossPt(track, kArchS + kLegW, lat, kClear + kBeamH);
+        const Vec3 d = crossPt(track, kArchS - kLegW, lat, kClear + kBeamH);
+        addQuad(out, d, c, b, a, kLeg);
+        // A second face at 90 degrees, so a leg still reads as solid when the
+        // camera is square-on to the first one.
+        const Vec3 e = crossPt(track, kArchS, lat - kLegW, 0.0);
+        const Vec3 f = crossPt(track, kArchS, lat + kLegW, 0.0);
+        const Vec3 g = crossPt(track, kArchS, lat + kLegW, kClear + kBeamH);
+        const Vec3 h = crossPt(track, kArchS, lat - kLegW, kClear + kBeamH);
+        addQuad(out, h, g, f, e, kLeg);
+    }
+
+    // The beam's board, textured from the sponsor atlas. Faces the oncoming
+    // cars, which on a left-turning oval means the s-negative side.
+    const std::array<double, 4> uv = atlasSponsorUV(0);
+    const Vec3 b0 = crossPt(track, kArchS, outLat, kClear);
+    const Vec3 b1 = crossPt(track, kArchS, inLat, kClear);
+    const Vec3 b2 = crossPt(track, kArchS, inLat, kClear + kBeamH);
+    const Vec3 b3 = crossPt(track, kArchS, outLat, kClear + kBeamH);
+    addQuadUV(texturedOut, b3, b2, b1, b0, {uv[0], uv[1]}, {uv[2], uv[1]}, {uv[2], uv[3]}, {uv[0], uv[3]});
+    // Backed so the arch is not a one-sided sheet when seen from behind.
+    addQuad(out, b0, b1, b2, b3, kLeg);
     return out;
 }
 

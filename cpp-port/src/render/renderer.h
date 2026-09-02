@@ -257,6 +257,16 @@ private:
     bgfx::VertexBufferHandle stadiumTexturedVb_ = BGFX_INVALID_HANDLE;
     uint32_t stadiumTexturedVertexCount_ = 0;
 
+    // G28 (graphics pass): the catch fence, in its own buffer because it is
+    // the one piece of world geometry that must be drawn ALPHA-BLENDED. Its
+    // atlas region is transparent between the wires (atlas_texture.cpp), which
+    // is what lets the fence be its real 4.5-6.5 m height without painting a
+    // grey sheet over the grandstands behind it. Blended geometry has to come
+    // after everything opaque it sits in front of, so it cannot simply live in
+    // stadiumTexturedVb_ with the rest.
+    bgfx::VertexBufferHandle fenceVb_ = BGFX_INVALID_HANDLE;
+    uint32_t fenceVertexCount_ = 0;
+
     // G5a (NASCAR-Thunder gap-analysis plan, track surface texture): the
     // ribbon's asphalt texture (track_surface_texture.h). The ribbon itself
     // uses texturedLitLayout_/texturedLitProgram_ (above) instead of

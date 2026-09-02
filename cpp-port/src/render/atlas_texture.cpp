@@ -1,7 +1,11 @@
 #include "atlas_texture.h"
 
+#include "word_blit.h"
+
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <string>
 
 namespace {
 
@@ -13,28 +17,51 @@ class Canvas {
 public:
     explicit Canvas(int size) : size_(size), pixels_((size_t)size * size * 4, 0) {}
 
-    void fillRect(int x, int y, int w, int h, const std::array<double, 3>& color) {
+    // G28 added `alpha`. It defaults to opaque, so every existing caller is
+    // unchanged; the catch fence is the one region that needs transparency,
+    // because a fence you cannot see through is a wall.
+    void fillRect(int x, int y, int w, int h, const std::array<double, 3>& color, double alpha = 1.0) {
         const int x0 = std::max(0, x), y0 = std::max(0, y);
         const int x1 = std::min(size_, x + w), y1 = std::min(size_, y + h);
         const uint8_t r = (uint8_t)std::lround(std::clamp(color[0], 0.0, 1.0) * 255.0);
         const uint8_t g = (uint8_t)std::lround(std::clamp(color[1], 0.0, 1.0) * 255.0);
         const uint8_t b = (uint8_t)std::lround(std::clamp(color[2], 0.0, 1.0) * 255.0);
+        const uint8_t a = (uint8_t)std::lround(std::clamp(alpha, 0.0, 1.0) * 255.0);
         for (int py = y0; py < y1; ++py) {
             for (int px = x0; px < x1; ++px) {
                 const size_t idx = ((size_t)py * size_ + (size_t)px) * 4;
                 pixels_[idx] = r;
                 pixels_[idx + 1] = g;
                 pixels_[idx + 2] = b;
-                pixels_[idx + 3] = 255;
+                pixels_[idx + 3] = a;
             }
         }
     }
 
     std::vector<uint8_t> take() { return std::move(pixels_); }
 
+    // G28: raw access so word_blit.cpp can rasterise glyph coverage straight
+    // into these bytes. Canvas otherwise deals only in flat rects, and adding
+    // a text primitive to it would drag the font into every caller of this
+    // file; handing out the buffer keeps the glyph code in one place.
+    wordblit::Target target() { return {pixels_.data(), size_}; }
+
 private:
     int size_;
     std::vector<uint8_t> pixels_;
+};
+
+// G28: the trackside brand names.
+//
+// ALL INVENTED. This project's standing rule is that no real sponsor, series
+// or manufacturer name appears anywhere in the game. The reference's boards
+// are a dense ribbon of wordmarks, and what they contribute is that the world
+// does not read as empty -- invented names do that job completely, which is
+// why the rule costs nothing here. "LAKE HILL" is the track's own name, the
+// one wordmark that is not a notional sponsor.
+constexpr std::array<const char*, kAtlasSponsorCount> kSponsorNames = {
+    "APEX FUEL", "IRONCLAD", "VOLTARC",  "NORTHGATE",
+    "REDSHIFT",  "SUMMIT",   "HAMMERHEAD", "LAKE HILL",
 };
 
 // paintWallPattern() (index.html:2927-2940): a 45-degree diamond
@@ -61,12 +88,33 @@ void paintWallPattern(Canvas& c, const AtlasRegion& r, const std::array<double, 
 // paintFenceBand() (index.html:2941-2952): a crosshatch of two diagonal
 // stripe families. Computed analytically (note #2) as two mod-cell
 // distance checks instead of stroking literal diagonal line segments.
+// G28: the fence is TRANSPARENT between its wires now.
+//
+// It was painted as an opaque grey field with lighter crosshatch lines on
+// top, which was fine while the fence was a 1 m strip along the top of the
+// wall -- at that size it reads as a band of texture and occludes nothing.
+// It stops being fine the moment the fence is its real height: a 5-6 m opaque
+// panel running the whole lap paints a grey sheet straight over the crowd,
+// which is worse than having no fence at all. The reference's fence is
+// something you see the stands *through*, and that is most of what makes it
+// read as a fence rather than as a wall.
+//
+// So: the gaps get alpha 0 and only the wires are opaque. The mesh is drawn
+// in its own alpha-blended pass (renderer.cpp) rather than with the opaque
+// world.
 void paintFenceBand(Canvas& c, const AtlasRegion& r) {
-    const std::array<double, 3> base{118 / 255.0, 120 / 255.0, 124 / 255.0};
     const std::array<double, 3> line{205 / 255.0, 207 / 255.0, 210 / 255.0};
-    c.fillRect(r.x, r.y, r.w, r.h, base);
-    const double cell = r.h * 0.34;
-    const double halfW = std::max(1.0, r.h * 0.05) / 2.0;
+    c.fillRect(r.x, r.y, r.w, r.h, line, 0.0);
+    // G28: a much finer mesh. The cell was r.h*0.34 -- three diamonds over
+    // the whole band -- which was invisible while the fence was a 1 m strip
+    // and became absurd the moment it was its real height: diamonds nearly
+    // two metres across, reading as a chain-link pattern painted on a wall
+    // rather than as wire. At r.h*0.06 the band carries ~16 diamonds, which
+    // over a 5.5 m fence is roughly a 34 cm cell -- coarser than real wire,
+    // deliberately, because a true 5 cm mesh aliases into grey mush at any
+    // distance and costs the fence its shape.
+    const double cell = r.h * 0.06;
+    const double halfW = std::max(1.0, cell * 0.16);
     for (int py = r.y; py < r.y + r.h; ++py) {
         for (int px = r.x; px < r.x + r.w; ++px) {
             const double lx = px - r.x, ly = py - r.y;
@@ -74,7 +122,7 @@ void paintFenceBand(Canvas& c, const AtlasRegion& r) {
             const double d2 = std::fmod(ly + lx, cell), d2n = d2 < 0 ? d2 + cell : d2;
             const bool onLine1 = d1n < halfW || d1n > cell - halfW;
             const bool onLine2 = d2n < halfW || d2n > cell - halfW;
-            if (onLine1 || onLine2) c.fillRect(px, py, 1, 1, line);
+            if (onLine1 || onLine2) c.fillRect(px, py, 1, 1, line, 1.0);
         }
     }
 }
@@ -128,24 +176,41 @@ void paintCrewTile(Canvas& c, const AtlasRegion& r) {
     }
 }
 
-// paintSponsorTiles(): simplified -- flat alternating light/dark panels
-// with a border, no sponsor-name text (this header's own simplification
-// note #3 explains why: JS's drawWord() is a full bitmap-font renderer,
-// out of scope here).
+// paintSponsorTiles(): eight boards, each carrying an invented wordmark.
+//
+// G28 changed the tile SHAPE, which is what made the text possible. The tiles
+// used to be sliced vertically -- eight columns of 32x256 -- and a sponsor
+// panel is 8 m long by 0.8 m tall, with u along its length. That maps 32 atlas
+// pixels across 8 m and 256 down 0.8 m: an ~80:1 anisotropic stretch, on which
+// any lettering smears into stripes. Sliced horizontally instead, each tile is
+// 256x32 and lands on the board at very nearly square pixels.
+//
+// (The old vertical slicing was never wrong for what it drew -- flat
+// alternating light/dark panels look the same either way -- which is exactly
+// why the shape problem was invisible until something with structure was
+// painted into it.)
 void paintSponsorTiles(Canvas& c, const AtlasRegion& r, int count) {
-    const double tw = (double)r.w / count;
+    const double th = (double)r.h / count;
     for (int i = 0; i < count; ++i) {
-        const int tx = r.x + (int)std::lround(i * tw);
+        const int ty = r.y + (int)std::lround(i * th);
+        const int h = (int)std::lround(th);
         const bool light = (i % 2 == 0);
         const std::array<double, 3> fill = light ? std::array<double, 3>{232 / 255.0, 232 / 255.0, 236 / 255.0}
                                                   : std::array<double, 3>{18 / 255.0, 18 / 255.0, 22 / 255.0};
         const std::array<double, 3> border{10 / 255.0, 10 / 255.0, 12 / 255.0};
-        c.fillRect(tx, r.y, (int)std::lround(tw), r.h, fill);
+        c.fillRect(r.x, ty, r.w, h, fill);
         const int bw = 2;
-        c.fillRect(tx, r.y, (int)std::lround(tw), bw, border);
-        c.fillRect(tx, r.y + r.h - bw, (int)std::lround(tw), bw, border);
-        c.fillRect(tx, r.y, bw, r.h, border);
-        c.fillRect(tx + (int)std::lround(tw) - bw, r.y, bw, r.h, border);
+        c.fillRect(r.x, ty, r.w, bw, border);
+        c.fillRect(r.x, ty + h - bw, r.w, bw, border);
+        c.fillRect(r.x, ty, bw, h, border);
+        c.fillRect(r.x + r.w - bw, ty, bw, h, border);
+
+        // Ink contrasts with the board it sits on, so both halves of the
+        // alternation stay readable at distance.
+        const std::array<double, 3> ink = light ? std::array<double, 3>{16 / 255.0, 18 / 255.0, 24 / 255.0}
+                                                : std::array<double, 3>{236 / 255.0, 236 / 255.0, 240 / 255.0};
+        wordblit::drawWordCentered(c.target(), r.x + bw, ty + bw, r.w - bw * 2, h - bw * 2,
+                                   kSponsorNames[i % (int)kSponsorNames.size()], th * 0.68, ink);
     }
 }
 
@@ -158,11 +223,13 @@ std::array<double, 4> atlasUV(const AtlasRegion& r) {
 }
 
 std::array<double, 4> atlasSponsorUV(int i) {
-    const double tw = (double)kAtlasSponsor.w / kAtlasSponsorCount;
-    const double x0 = kAtlasSponsor.x + i * tw;
+    // G28: tiles are horizontal bands now, not vertical columns -- see
+    // paintSponsorTiles() for why the old shape made lettering impossible.
+    const double th = (double)kAtlasSponsor.h / kAtlasSponsorCount;
+    const double y0 = kAtlasSponsor.y + i * th;
     constexpr double kInset = 2.0;
-    return {(x0 + kInset) / kAtlasSize, (kAtlasSponsor.y + kInset) / kAtlasSize, (x0 + tw - kInset) / kAtlasSize,
-            (kAtlasSponsor.y + kAtlasSponsor.h - kInset) / kAtlasSize};
+    return {(kAtlasSponsor.x + kInset) / kAtlasSize, (y0 + kInset) / kAtlasSize,
+            (kAtlasSponsor.x + kAtlasSponsor.w - kInset) / kAtlasSize, (y0 + th - kInset) / kAtlasSize};
 }
 
 std::vector<uint8_t> buildAtlasPixels(const std::array<double, 3>& wallColor,

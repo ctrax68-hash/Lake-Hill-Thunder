@@ -740,6 +740,7 @@ void Renderer::shutdown() {
     if (bgfx::isValid(texturedLitProgram_)) bgfx::destroy(texturedLitProgram_);
     if (bgfx::isValid(atlasTexture_)) bgfx::destroy(atlasTexture_);
     if (bgfx::isValid(stadiumTexturedVb_)) bgfx::destroy(stadiumTexturedVb_);
+    if (bgfx::isValid(fenceVb_)) bgfx::destroy(fenceVb_); // G28
     for (auto& [num, tex] : carTextures_) {
         if (bgfx::isValid(tex)) bgfx::destroy(tex);
     }
@@ -1087,12 +1088,19 @@ void Renderer::setTrack(const Track& track) {
     // here, only "safe to diverge" scenery randomness).
     if (bgfx::isValid(stadiumVb_)) bgfx::destroy(stadiumVb_);
     if (bgfx::isValid(stadiumTexturedVb_)) bgfx::destroy(stadiumTexturedVb_);
+    if (bgfx::isValid(fenceVb_)) { // G28
+        bgfx::destroy(fenceVb_);
+        fenceVb_ = BGFX_INVALID_HANDLE;
+    }
     if (bgfx::isValid(atlasTexture_)) bgfx::destroy(atlasTexture_);
     {
         const Stadium& st = track.stadium();
         Mulberry32 sceneryRng(777);
         std::vector<MeshVertex> mesh;
         std::vector<MeshVertex> texturedMesh;
+        // G28: the fence's own list -- alpha-blended, so it has to be drawn
+        // after everything opaque rather than batched with it.
+        std::vector<MeshVertex> fenceMesh;
         auto append = [&](std::vector<MeshVertex>&& v) {
             mesh.insert(mesh.end(), v.begin(), v.end());
         };
@@ -1175,13 +1183,32 @@ void Renderer::setTrack(const Track& track) {
         appendTextured(buildOuterWallMesh(track));
         // G10 (NASCAR-Thunder gap-analysis plan): wire the previously-dead
         // catch-fence atlas region into real geometry.
-        appendTextured(buildCatchFenceMesh(track, st.fenceHeight));
+        // G28: the fence mesh band, now at a real height and see-through
+        // between its wires -- routed to the blended list, not the opaque one.
+        {
+            std::vector<MeshVertex> band = buildCatchFenceMesh(track, st.fenceHeight);
+            fenceMesh.insert(fenceMesh.end(), band.begin(), band.end());
+        }
+        // The fence's posts, rails and curved top return. The band is what a
+        // fence looks like from a distance; this is what makes it read as one
+        // at racing distance. Opaque, so it stays in the flat-colour list.
+        append(buildFenceStructureMesh(track, st.fenceHeight));
         // G11 (NASCAR-Thunder gap-analysis plan): thread the previously-
         // dead sponsorDensity field into panel spacing.
         appendTextured(buildSponsorPanelsMesh(track, st.sponsorDensity));
         // G12 (NASCAR-Thunder gap-analysis plan): turn-number signage at
         // each corner apex, previously bare of any signage.
         append(buildTurnSignageMesh(track));
+        // G28: striped corner-exit barriers and the sponsor arch over the
+        // start/finish. The arch splits: its legs and beam backing are flat,
+        // its board is textured from the sponsor atlas, so the builder writes
+        // into both lists.
+        append(buildCornerBarrierMesh(track));
+        {
+            std::vector<MeshVertex> archBoard;
+            append(buildSponsorArchMesh(track, archBoard));
+            appendTextured(std::move(archBoard));
+        }
         // G17 (NT2003 presentation plan): resurfacing patches, wiring the
         // previously-dead Stadium::patches. Appended before the start/finish
         // stripe so the checker always wins wherever the two overlap.
@@ -1222,6 +1249,20 @@ void Renderer::setTrack(const Track& track) {
                 texturedLitLayout_);
         }
         stadiumTexturedVertexCount_ = (uint32_t)texturedVerts.size();
+
+        // G28: the fence, same textured-lit layout, its own buffer.
+        std::vector<PosNormalUVVertex> fenceVerts;
+        fenceVerts.reserve(fenceMesh.size());
+        for (const MeshVertex& v : fenceMesh) {
+            fenceVerts.push_back({(float)v.x, (float)v.y, (float)v.z, (float)v.nx, (float)v.ny, (float)v.nz,
+                                  (float)v.u, (float)v.v});
+        }
+        if (!fenceVerts.empty()) {
+            fenceVb_ = bgfx::createVertexBuffer(
+                bgfx::copy(fenceVerts.data(), (uint32_t)(fenceVerts.size() * sizeof(PosNormalUVVertex))),
+                texturedLitLayout_);
+        }
+        fenceVertexCount_ = (uint32_t)fenceVerts.size();
 
         Mulberry32 atlasRng(777);
         const std::vector<uint8_t> atlasPixels =
@@ -1438,6 +1479,28 @@ void Renderer::submitWorld(bgfx::ViewId viewId, const float view[16], const floa
         bgfx::setVertexBuffer(0, stadiumTexturedVb_, 0, stadiumTexturedVertexCount_);
         bgfx::setTexture(0, uSkyTexColor_, atlasTexture_);
         bgfx::setState(state);
+        bgfx::submit(viewId, texturedLitProgram_);
+    }
+
+    // G28 (graphics pass): the catch fence, alpha-blended.
+    //
+    // Drawn after every opaque world layer above so it composites over the
+    // stands, wall and track rather than being occluded by draw order, and
+    // BEFORE the cars and shadows below so a car on the far side of the track
+    // is seen through the fence -- which is the whole point of the fence being
+    // transparent at all.
+    //
+    // Depth-tested but NOT depth-writing, the same treatment the contact
+    // shadows below get: the fence's transparent gaps must not punch
+    // fence-shaped holes in the depth buffer that later draws then fail
+    // against. Without that, every car behind the fence disappears wherever a
+    // wire crosses it.
+    if (fenceVertexCount_ > 0 && bgfx::isValid(fenceVb_) && bgfx::isValid(atlasTexture_)) {
+        bgfx::setTransform(identity);
+        bgfx::setVertexBuffer(0, fenceVb_, 0, fenceVertexCount_);
+        bgfx::setTexture(0, uSkyTexColor_, atlasTexture_);
+        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_DEPTH_TEST_LESS |
+                       BGFX_STATE_BLEND_ALPHA);
         bgfx::submit(viewId, texturedLitProgram_);
     }
 

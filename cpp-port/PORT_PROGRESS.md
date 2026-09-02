@@ -9763,3 +9763,104 @@ caption in a column too narrow for it.
 `results.cpp` and `pit_setup.cpp` still use dbgText -- the results screen and
 the pit-adjustment overlay. Neither is on screen while driving, which is why
 they are not in this slice, but they are the last two and should follow.
+
+## G28 -- Trackside: a real catch fence, invented wordmarks, barriers, an arch
+
+The user's ask named "track details" first. This is that slice.
+
+### Invented wordmarks on the sponsor boards
+
+`atlas_texture.h` has carried a note since Phase 5e that sponsor-name text was
+out of scope because "JS's drawWord() is a full bitmap-font renderer";
+`stadium_mesh.h` repeats it for the turn signage, which fell back to LED digits
+for want of letters. G26 built the font; this spends it.
+
+New `word_blit.h/.cpp` rasterises the baked glyph coverage into a CPU pixel
+buffer -- the bake-time counterpart to `font_atlas.h`'s GPU quads, needed
+because the boards are part of the procedurally-painted world atlas, not
+separate geometry. Eight boards now read **APEX FUEL, IRONCLAD, VOLTARC,
+NORTHGATE, REDSHIFT, SUMMIT, HAMMERHEAD, LAKE HILL**. Every one invented, per
+the project rule; what the reference's boards actually contribute is that the
+world does not read as empty, and invented names do that job completely.
+
+**The tile shape had to change first, and that is the interesting part.** The
+sponsor region was sliced into eight 32x256 vertical columns. A sponsor panel
+is 8 m long by 0.8 m tall with u along its length, so that mapped 32 atlas
+pixels across 8 m and 256 down 0.8 m -- an ~80:1 anisotropic stretch on which
+any lettering smears into stripes. Sliced horizontally instead, each tile is
+256x32 and lands at very nearly square pixels. The old slicing was never
+*wrong* for flat alternating panels, which look identical either way -- which
+is exactly why the problem was invisible until something with structure was
+painted into it.
+
+### The catch fence, which was the real find
+
+The fence was **1.0 m** on three tracks and 2.2 m on the superspeedway --
+waist-high against real counterparts of 4.5-6.5 m. It read as a band of
+texture along the top of the wall, and it is one of the most prominent things
+in the reference footage. It is now 4.5-6.5 m per track.
+
+Raising the number alone would have made things much worse, and two other
+changes had to land with it:
+
+1. **The fence texture is transparent between its wires.** It was an opaque
+   grey field with lighter crosshatch on top. At 1 m that is fine; at 5.5 m it
+   paints a grey sheet straight over the grandstands -- verified by doing
+   exactly that and looking at it. Gaps are alpha 0 now, wires opaque.
+2. **`fs_textured_lit` passes texture alpha through** instead of hardcoding
+   `1.0`, and the fence draws in its own alpha-blended pass after the opaque
+   world but before the cars, depth-tested and NOT depth-writing -- otherwise
+   the transparent gaps punch fence-shaped holes that later draws fail
+   against, and every car behind the fence vanishes wherever a wire crosses.
+   Safe for the shader's other callers: the asphalt writes alpha 255
+   unconditionally and every other atlas region is filled opaque, and they all
+   draw with blending off, where output alpha is ignored anyway.
+
+The mesh scale needed fixing too: the crosshatch cell was `r.h*0.34`, i.e.
+three diamonds across the whole band, which at real fence height meant
+diamonds nearly two metres across -- chain-link painted on a wall rather than
+wire. Now ~16 diamonds, about a 34 cm cell. Deliberately coarser than real
+wire, because true 5 cm mesh aliases into grey mush at any distance.
+
+Plus the structure the band never had: posts every 12 m, two horizontal rails,
+and the curved top return that bends back over the track.
+
+### Also: corner barriers and a sponsor arch
+
+Red-and-white striped barriers on the corner exits -- straight off the
+reference, and useful beyond decoration, since a striped block at a corner
+exit is a turn-in reference a uniform grey wall does not give. And a sponsor
+arch over the start/finish, its board sampling the same eight invented
+wordmarks rather than authoring a ninth.
+
+### Two mistakes worth recording
+
+**A stray black diagonal appeared in the sky.** I first blamed the arch,
+A/B'd it out, and the line stayed -- so I blamed the far-side rails, then the
+banking. It was the fence's *curved top return*, which I had built with fixed
+offsets: a 1.3 m overhang on a 1.0 m fence, sticking out over the track like a
+wire. Now proportional to fence height. The lesson is the one this project
+keeps relearning: I diagnosed by reasoning about the picture three times and
+got it wrong each time; the A/B that isolated it took two minutes.
+
+**I nearly recorded a false finding.** `grep fenceHeight src/sim/tracks_data.h`
+returns nothing, and I was about to write up that the header's claim about Big
+Sable overriding it was a lie. It isn't -- the initializer is positional, and
+the override is a bare trailing `2.2`. Checked before writing.
+
+Separately, an early "the arch renders nothing" conclusion was also wrong: my
+detector thresholded on raw magenta while lighting and exposure scale colour
+by ~0.39x, and haze washes distant geometry toward the fog colour. Re-measured
+at the grid, the arch is 1316 pixels.
+
+### Verification
+
+`ctest` **35/35**. All three new meshes confirmed on screen by flag-colouring
+them and counting pixels, not by squinting: barriers 383 px, arch 1316 px,
+fence self-evident. Wordmarks verified by dumping the baked atlas directly.
+
+### Not done here
+
+The jumbotron with a live feed, the treeline/horizon billboards, and the
+infield and pit work (G29). Backface culling is still off, and now matters
+more: the fence structure and arch add double-rasterised geometry.

@@ -26,7 +26,18 @@ void main()
 	vec3 ambient = mix(u_hemiGround.rgb, u_hemiSky.rgb, hemiT);
 	float ndotl = max(dot(n, u_sunDir.xyz), 0.0);
 	vec3 lightAmt = lhtExpose(ambient + u_sunColor.rgb * ndotl);
-	vec3 texel = texture2D(s_texColor, v_texcoord0).rgb;
-	vec3 lit = lhtHaze(texel * lightAmt, v_worldPos, u_camPos.xyz);
-	gl_FragColor = vec4(lit, 1.0);
+	// G28: alpha comes from the texture now, instead of being hardcoded to
+	// 1.0. This is what lets the catch fence be see-through between its
+	// wires -- at its real 4.5-6.5 m height an opaque fence paints a grey
+	// sheet over the grandstands, which is worse than having no fence.
+	//
+	// Safe for every other caller of this shader: the ribbon's asphalt
+	// texture writes alpha 255 unconditionally (track_surface_texture.cpp),
+	// and every region of the world atlas except the fence band is filled
+	// opaque (atlas_texture.cpp). Only the fence is submitted with alpha
+	// blending enabled at all; the rest draw with blending off, where the
+	// output alpha is ignored regardless.
+	vec4 texel = texture2D(s_texColor, v_texcoord0);
+	vec3 lit = lhtHaze(texel.rgb * lightAmt, v_worldPos, u_camPos.xyz);
+	gl_FragColor = vec4(lit, texel.a);
 }
