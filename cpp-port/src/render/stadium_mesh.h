@@ -153,6 +153,22 @@ std::vector<MeshVertex> buildSuiteTowerMesh(const Track& track, int frontTiers, 
 // height varying by track type).
 std::vector<MeshVertex> buildCatchFenceMesh(const Track& track, double fenceHeight);
 
+// G29: a tire stack and a fuel rig beside every pit stall. The stalls had a
+// war wagon and a crew billboard and nothing else, so pit road read as a line
+// of identical boxes; the reference's pit lane is cluttered, and the clutter
+// is what makes it look like work happens there. Placed on the wall side of
+// the stall so nothing sits where a car actually stops.
+std::vector<MeshVertex> buildPitEquipmentMesh(const Track& track);
+
+// G29 (graphics pass): the infield -- garage row, haulers, a suite/media
+// block and light towers. This area had NO geometry at all before: it was
+// bare grass from the apron to the horizon, and on a left-turning oval the
+// infield is in shot for most of the lap, which made it the largest empty
+// space in the game. `rng` is the shared scenery-only stream (the same
+// cosmetic-determinism precedent buildStandMesh()/buildSurfacePatchesMesh()
+// already set).
+std::vector<MeshVertex> buildInfieldMesh(const Track& track, Mulberry32& rng);
+
 // G28 (graphics pass): the catch fence's structure -- posts marching along
 // the wall, two horizontal rails, and the curved top return that bends back
 // over the track. buildCatchFenceMesh() draws only the mesh band, which reads

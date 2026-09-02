@@ -9864,3 +9864,65 @@ fence self-evident. Wordmarks verified by dumping the baked atlas directly.
 The jumbotron with a live feed, the treeline/horizon billboards, and the
 infield and pit work (G29). Backface culling is still off, and now matters
 more: the fence structure and arch add double-rasterised geometry.
+
+## G29 -- The infield, which had nothing in it, and pit clutter
+
+The user's ask named "grand stands and infield and pit detail". The infield
+turned out to be the starkest of the three: it had **no geometry at all** --
+bare grass from the apron to the horizon. On a left-turning oval the infield is
+in shot for most of the lap, which made it the largest empty area in the game.
+
+`buildInfieldMesh()` adds a twelve-bay garage row with overhanging roofs and
+roll-up doors, nine haulers parked behind it, a multi-storey suite/media block
+with window bands (the same treatment `buildSuiteTowerMesh()` uses outside the
+track, so the two read as one facility), and four light towers tall enough to
+break the horizon -- which is most of what they contribute, since they give the
+eye something vertical to judge speed against on an otherwise flat skyline.
+
+`buildPitEquipmentMesh()` puts a tire stack and a fuel rig beside every stall.
+The stalls had a war wagon and a crew billboard and nothing else, so pit road
+read as a line of identical boxes; the reference's pit lane is cluttered, and
+the clutter is what makes it look like work happens there. Placed on the wall
+side of the stall, so nothing new sits where a car actually stops.
+
+### The plan called for instancing here. It is not needed, and that is measured
+
+The G-series plan assumed this slice would need instancing to keep the draw
+call count from exploding. It does not: **all of this scenery is appended into
+the one static vertex buffer** that already holds the stands, wall, pit road
+and signage. Adding buildings costs triangles, not draw calls -- the infield is
+about 1,900 triangles, against a single car mesh at 1,322. The premise was
+wrong, and building an instancing path on it would have been work spent on a
+problem this renderer does not have. Recorded so it is not re-derived.
+
+### A tooling fix found along the way
+
+`LHT_START_TOPDOWN` and `LHT_START_CHASE` were being silently overridden
+whenever they were combined with `LHT_FORCE_RACE`, because `startRaceFromMenu()`
+sets its own camera mode and the flags were read *before* it. That is exactly
+the combination a headless screenshot wants, since the menu has no race to look
+at. Found while trying to get a whole-track view to check this slice's own
+work; the checks now run after the force-race block.
+
+### Verification
+
+`ctest` **36/36**. `stadium_mesh_test` gains guards for G28's and G29's props,
+pinning the property that matters for scenery: not what it looks like (a
+screenshot shows that) but that none of it intrudes on the racing surface or
+floats -- geometry that drifts into the track is invisible in a still and
+catastrophic in play.
+
+**Both new guards were mutation-tested, and the first attempt at one of them
+was a silent no-op**: the mutation string `constexpr double kTowerH = 22.0;`
+does not exist, because the constant is declared as a pair
+(`kLegW = 0.9, kTowerH = 22.0`). The replace matched nothing, the test passed,
+and it looked like a guard that failed to catch a real break. Re-run against
+the correct anchor, it fails as intended. A mutation that does not apply is
+indistinguishable from a guard that does not work, and the only defence is
+asserting the anchor exists.
+
+### Not done here
+
+The crowd is still a painted texture rather than instanced spectators. The
+jumbotron live feed and the treeline are still open from G28. Backface culling
+remains off and now costs more with every solid box added.

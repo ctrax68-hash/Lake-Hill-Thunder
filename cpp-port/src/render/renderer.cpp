@@ -1204,6 +1204,11 @@ void Renderer::setTrack(const Track& track) {
         // its board is textured from the sponsor atlas, so the builder writes
         // into both lists.
         append(buildCornerBarrierMesh(track));
+        // G29: the infield, which had no geometry at all before -- garages,
+        // haulers, a suite block and light towers.
+        append(buildInfieldMesh(track, sceneryRng));
+        // G29: tire stacks and fuel rigs beside each pit stall.
+        append(buildPitEquipmentMesh(track));
         {
             std::vector<MeshVertex> archBoard;
             append(buildSponsorArchMesh(track, archBoard));

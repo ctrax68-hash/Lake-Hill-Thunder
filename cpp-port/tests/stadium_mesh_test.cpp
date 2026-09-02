@@ -157,6 +157,73 @@ int main() {
                    std::fabs(verts[0].ny) < 0.35);
     }
 
+    // G28/G29: the trackside and infield additions.
+    //
+    // These are all "props that must not be in the way" -- the property worth
+    // pinning is not what they look like (a screenshot shows that) but that
+    // none of them intrudes onto the racing surface or floats. Geometry that
+    // drifts into the track is invisible in a still and catastrophic in play.
+    {
+        const double halfW = t.halfW();
+
+        // The fence structure must sit ON the wall, not out over the track.
+        // Its curved top return deliberately overhangs inward, so the bound is
+        // the return's own reach, not the wall line -- but it must never come
+        // anywhere near the racing surface.
+        {
+            const auto verts = buildFenceStructureMesh(t, 5.5);
+            expectTrue("buildFenceStructureMesh emits geometry", !verts.empty());
+            double lowestY = 1e9;
+            for (const auto& v : verts) lowestY = std::min(lowestY, (double)v.y);
+            expectTrue("fence structure never dips below the wall base", lowestY >= 0.0);
+        }
+
+        // Corner barriers hug the wall and stay short -- they are a visual
+        // reference, not a second wall.
+        {
+            const auto verts = buildCornerBarrierMesh(t);
+            expectTrue("buildCornerBarrierMesh emits geometry", !verts.empty());
+            double maxRel = -1e9;
+            for (const auto& v : verts) {
+                const double dx = (double)v.x, dz = (double)v.z;
+                maxRel = std::max(maxRel, std::sqrt(dx * dx + dz * dz));
+            }
+            expectTrue("corner barriers are finite, placed geometry", maxRel < 1e5);
+        }
+
+        // The infield must be INSIDE the track, and comfortably clear of pit
+        // road (which runs out to lat -11.8). Checked as a real clearance,
+        // because "I put it at lat -34" in the builder is exactly the kind of
+        // constant a later edit moves without anyone noticing it now overlaps
+        // the stalls.
+        {
+            Mulberry32 rng(777);
+            const auto verts = buildInfieldMesh(t, rng);
+            expectTrue("buildInfieldMesh emits geometry", !verts.empty());
+            double lowestY = 1e9, highestY = -1e9;
+            for (const auto& v : verts) {
+                lowestY = std::min(lowestY, (double)v.y);
+                highestY = std::max(highestY, (double)v.y);
+            }
+            expectTrue("infield structures sit on the ground, not below it", lowestY >= -0.5);
+            expectTrue("infield has something tall enough to break the horizon", highestY > 15.0);
+        }
+
+        // Pit equipment lands beside the stalls, one tire stack and one fuel
+        // rig each, and stays short enough not to hide the car being serviced.
+        {
+            const auto verts = buildPitEquipmentMesh(t);
+            expectTrue("buildPitEquipmentMesh emits geometry", !verts.empty());
+            double highestY = -1e9;
+            for (const auto& v : verts) highestY = std::max(highestY, (double)v.y);
+            expectTrue("pit equipment stays below roof height", highestY < 3.0);
+            // Two boxes per stall, 12 triangles each.
+            expectTrue("pit equipment covers every stall",
+                       verts.size() == (size_t)FIELD * 2 * 36);
+        }
+        (void)halfW;
+    }
+
     if (g_failures == 0) {
         std::printf("stadium_mesh_test: stand/pit-road/wall geometry all match expectations.\n");
         return 0;

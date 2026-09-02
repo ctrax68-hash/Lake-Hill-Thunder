@@ -725,8 +725,6 @@ int main(int argc, char** argv)
     // Debug-only: force chase mode on at startup instead of waiting for a
     // live C keypress -- for scripted headless screenshot verification,
     // same rationale as LHT_FORCE_RACE below.
-    if (std::getenv("LHT_START_CHASE")) S.renderer.setCameraMode(Renderer::CameraMode::Chase);
-    if (std::getenv("LHT_START_TOPDOWN")) S.renderer.setCameraMode(Renderer::CameraMode::TopDown);
 
     // Phase 4b (PORT_PROGRESS.md): the real entry point is now the menu
     // screen -- RaceState's own default mode ("menu", race_state.h) is left
@@ -756,6 +754,15 @@ int main(int argc, char** argv)
             S.state.flag = "green";
         }
     }
+
+    // Camera overrides, applied AFTER the LHT_FORCE_RACE block above rather
+    // than before it. startRaceFromMenu() sets its own camera mode, so these
+    // were being silently overridden whenever they were combined with
+    // LHT_FORCE_RACE -- i.e. in exactly the case a headless screenshot wants
+    // them, since the menu has no race to look at. Found while trying to get
+    // a whole-track view to check G29's infield.
+    if (std::getenv("LHT_START_CHASE")) S.renderer.setCameraMode(Renderer::CameraMode::Chase);
+    if (std::getenv("LHT_START_TOPDOWN")) S.renderer.setCameraMode(Renderer::CameraMode::TopDown);
 
     // Debug-only: see seedForceDoneState()'s own comment above.
     if (std::getenv("LHT_FORCE_DONE")) {

@@ -400,6 +400,146 @@ std::vector<MeshVertex> buildCatchFenceMesh(const Track& track, double fenceHeig
     return out;
 }
 
+// G29 (graphics pass): the infield, which had nothing in it at all.
+//
+// Every frame of the reference footage shows the inside of the track carrying
+// as much structure as the outside -- a garage row, haulers parked behind it,
+// a white multi-storey suite block, light towers. Ours was bare grass from the
+// apron to the horizon, and on a left-turning oval the infield is in shot for
+// most of the lap, so it is the single largest empty area in the game.
+//
+// All of it is axis-aligned boxes placed off crossPt(), the same approach
+// buildFlagStandMesh()/buildSuiteTowerMesh() already take: the front straight
+// is straight, so no heading rotation is needed for anything sitting along it,
+// and a box is the right primitive for buildings that are, in fact, boxes.
+//
+// Everything is appended into the one static scenery buffer, so this costs
+// triangles, not draw calls -- measured at ~1,900 triangles, against a car
+// mesh that is 1,322 each.
+std::vector<MeshVertex> buildInfieldMesh(const Track& track, Mulberry32& rng) {
+    std::vector<MeshVertex> out;
+    constexpr std::array<double, 3> kGarageWall{0.74, 0.75, 0.77};
+    constexpr std::array<double, 3> kGarageRoof{0.38, 0.39, 0.42};
+    constexpr std::array<double, 3> kDoor{0.30, 0.33, 0.38};
+    constexpr std::array<double, 3> kTowerLeg{0.34, 0.35, 0.38};
+    constexpr std::array<double, 3> kLampBank{0.86, 0.86, 0.80};
+    constexpr std::array<double, 3> kSuite{0.88, 0.89, 0.91};
+    constexpr std::array<double, 3> kGlass{0.30, 0.42, 0.52};
+
+    const Seg& seg0 = track.segs()[0];
+
+    // --- garage row, along the front straight, well inside pit road --------
+    // Pit road occupies lat -7.2..-11.8 (buildPitRoadMesh), so -34 leaves a
+    // clear paddock lane between the two rather than crowding the stalls.
+    constexpr double kGarageLat = -34.0;
+    constexpr double kBayW = 6.0, kBayD = 9.0, kBayH = 4.4;
+    const int bays = 12;
+    const double gs0 = seg0.s0 + seg0.len * 0.20;
+    for (int i = 0; i < bays; ++i) {
+        const double sc = gs0 + i * (kBayW + 0.6);
+        const Vec3 c = crossPt(track, sc, kGarageLat);
+        addBox(out, c.x - kBayW / 2, c.y, c.z - kBayD / 2, c.x + kBayW / 2, c.y + kBayH, c.z + kBayD / 2,
+               kGarageWall);
+        // A flat roof slab overhanging the walls, which is what actually
+        // makes a row of boxes read as buildings rather than as crates.
+        addBox(out, c.x - kBayW / 2 - 0.4, c.y + kBayH, c.z - kBayD / 2 - 0.4, c.x + kBayW / 2 + 0.4,
+               c.y + kBayH + 0.35, c.z + kBayD / 2 + 0.4, kGarageRoof);
+        // Roll-up door on the track-facing side.
+        addQuad(out, Vec3{c.x - kBayW / 2 + 0.7, c.y, c.z + kBayD / 2 + 0.42},
+                Vec3{c.x + kBayW / 2 - 0.7, c.y, c.z + kBayD / 2 + 0.42},
+                Vec3{c.x + kBayW / 2 - 0.7, c.y + kBayH * 0.72, c.z + kBayD / 2 + 0.42},
+                Vec3{c.x - kBayW / 2 + 0.7, c.y + kBayH * 0.72, c.z + kBayD / 2 + 0.42}, kDoor);
+    }
+
+    // --- haulers parked behind the garages --------------------------------
+    // Long trailer boxes, alternating light and dark so the row does not read
+    // as one solid wall. Team colours would be better still, but the crowd
+    // palette is the only per-track colour set here and it is authored for
+    // seats, not vehicles -- using it would tint the haulers to match the
+    // grandstand, which is worse than neutral.
+    constexpr double kHaulLat = -50.0;
+    constexpr double kHaulW = 2.9, kHaulD = 15.0, kHaulH = 4.0;
+    for (int i = 0; i < 9; ++i) {
+        const double sc = gs0 + 4.0 + i * (kHaulW + 2.2);
+        const Vec3 c = crossPt(track, sc, kHaulLat);
+        const double shade = 0.62 + 0.30 * rng.next();
+        const std::array<double, 3> body{shade, shade, shade * 1.02};
+        addBox(out, c.x - kHaulW / 2, c.y, c.z - kHaulD / 2, c.x + kHaulW / 2, c.y + kHaulH, c.z + kHaulD / 2,
+               body);
+        // Cab, a shorter box at one end.
+        addBox(out, c.x - kHaulW / 2, c.y, c.z + kHaulD / 2, c.x + kHaulW / 2, c.y + kHaulH * 0.62,
+               c.z + kHaulD / 2 + 2.6, kGarageRoof);
+    }
+
+    // --- infield suite / media block --------------------------------------
+    // The reference's white multi-storey block with window bands. Same
+    // "horizontal glass stripes over a light box" treatment
+    // buildSuiteTowerMesh() uses outside the track, so the two read as the
+    // same facility from either side.
+    {
+        const Vec3 c = crossPt(track, seg0.s0 + seg0.len * 0.62, -44.0);
+        constexpr double kW = 22.0, kD = 11.0, kH = 13.0;
+        addBox(out, c.x - kW / 2, c.y, c.z - kD / 2, c.x + kW / 2, c.y + kH, c.z + kD / 2, kSuite);
+        for (int f = 1; f <= 3; ++f) {
+            const double y = c.y + kH * (f / 4.0);
+            addQuad(out, Vec3{c.x - kW / 2, y, c.z + kD / 2 + 0.05},
+                    Vec3{c.x + kW / 2, y, c.z + kD / 2 + 0.05},
+                    Vec3{c.x + kW / 2, y + 1.3, c.z + kD / 2 + 0.05},
+                    Vec3{c.x - kW / 2, y + 1.3, c.z + kD / 2 + 0.05}, kGlass);
+        }
+    }
+
+    // --- light towers -----------------------------------------------------
+    // Four of them, spaced around the infield. Tall enough to break the
+    // horizon, which is most of what they contribute: they give the eye
+    // something vertical to judge speed and distance against, on a track
+    // whose infield is otherwise flat to the skyline.
+    for (int i = 0; i < 4; ++i) {
+        const double sc = track.total() * (0.10 + 0.25 * i);
+        const Vec3 c = crossPt(track, sc, -38.0);
+        constexpr double kLegW = 0.9, kTowerH = 22.0;
+        addBox(out, c.x - kLegW / 2, c.y, c.z - kLegW / 2, c.x + kLegW / 2, c.y + kTowerH, c.z + kLegW / 2,
+               kTowerLeg);
+        // Lamp bank on top -- a wide shallow box, the shape a real one has.
+        addBox(out, c.x - 3.2, c.y + kTowerH, c.z - 0.9, c.x + 3.2, c.y + kTowerH + 1.6, c.z + 0.9, kLampBank);
+    }
+
+    return out;
+}
+
+// G29: pit equipment -- a tire stack and a fuel rig beside every stall.
+//
+// The stalls had a war wagon and a crew billboard and nothing else, so pit
+// road read as a line of identical boxes. The reference's pit lane is
+// cluttered, and the clutter is what makes it look like work is happening
+// there. Cheap geometry: two small boxes per stall, 20 stalls.
+//
+// Placed on the wall side of the stall (further from the racing lane than the
+// crew), so nothing new sits where a car actually stops.
+std::vector<MeshVertex> buildPitEquipmentMesh(const Track& track) {
+    std::vector<MeshVertex> out;
+    constexpr std::array<double, 3> kTire{0.09, 0.09, 0.10};
+    constexpr std::array<double, 3> kRig{0.72, 0.62, 0.18};
+    const Seg& seg0 = track.segs()[0];
+    const double s0 = seg0.s0;
+    // Same stall spacing buildPitCrewMesh()/buildPitRoadMesh() use, so the
+    // equipment lands in the stall it belongs to rather than drifting out of
+    // step with the crew standing next to it.
+    constexpr double kStallLat = -10.5;
+    const double eqLat = kStallLat - 1.6;
+    for (int idx = 0; idx < FIELD; ++idx) {
+        const double sStall = s0 + seg0.len * (0.18 + 0.55 * idx / FIELD);
+        // Tire stack: four tires as one short box, which is what a stack of
+        // four reads as at any distance a player sees pit road from.
+        const Vec3 t = crossPt(track, sStall - 0.9, eqLat);
+        addBox(out, t.x - 0.36, t.y, t.z - 0.36, t.x + 0.36, t.y + 0.95, t.z + 0.36, kTire);
+        // Fuel rig, taller and narrower.
+        const Vec3 f = crossPt(track, sStall + 1.0, eqLat);
+        addBox(out, f.x - 0.28, f.y, f.z - 0.28, f.x + 0.28, f.y + 1.5, f.z + 0.28, kRig);
+    }
+    return out;
+}
+
 // G28 (graphics pass): the catch fence's STRUCTURE -- posts and a curved
 // top rail.
 //
