@@ -885,7 +885,23 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
             c.vy = 0;
             c.r = 0;
             if (c.dmgCd <= 0 && state.flag != "yellow") {
-                const double dmgDelta = std::min(0.12, vLost * 0.005);
+                // L14: light scraping is cheap, heavy impact still costly.
+                //
+                // This was linear in the speed lost (vLost * 0.005), which with
+                // the 0.6 s cooldown works out to about 0.105 damage per second
+                // of wall contact at racing speed -- roughly 9.5 s of cumulative
+                // rubbing for a permanent DNF. That is why a player learning a
+                // track dies before they learn it, and NASCAR Thunder lets you
+                // rub the wall repeatedly and keep racing; that forgiveness is
+                // what makes an oval learnable.
+                //
+                // Quadratic instead, so the two cases separate rather than
+                // trading off: a 20 m/s impact still costs ~0.10 (essentially
+                // unchanged), while a 5 m/s scrape costs 0.006 against 0.025
+                // before -- about 4x more survivable contact, which is what L14
+                // asked for. The cap stays, so nothing gets cheaper at the top
+                // end.
+                const double dmgDelta = std::min(0.12, vLost * vLost * 0.00025);
                 c.dmg = std::min(1.0, c.dmg + dmgDelta);
                 // P3: signed by which wall (p2.lat's sign) was actually hit,
                 // set at this exact impact moment -- see car.h's own comment

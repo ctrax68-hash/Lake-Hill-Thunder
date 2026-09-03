@@ -133,6 +133,26 @@ int main() {
     }
 
     // ---- collide() ----
+    //
+    // N6/L10: these numbers are a DELIBERATE DIVERGENCE from JS, not a
+    // re-baseline to hide a failure. Recorded here in the same style as L12's
+    // change to speed_model_test, which faced the identical situation.
+    //
+    // JS dissipated a fixed fraction of the scalar speed DIFFERENCE on every
+    // tick two cars overlapped. That made sustained contact a permanent
+    // velocity sink and, because the penalty scaled with the difference, it
+    // bit hardest on the car trying to escape -- roughly 12 m/s^2 of loss
+    // against 5 m/s^2 of drive, so escaping a pile-up was arithmetically
+    // impossible. Measured consequence: on Milltown the whole field ended up
+    // in a 35 m stretch of an 848 m lap at ~0 m/s, permanently.
+    //
+    // The port now removes the CLOSING component along the contact normal, and
+    // splits it between hitter and victim by role rather than by array index.
+    // For this test's head-on case (40 m/s into 30 m/s, closing at 10) that
+    // means the hitter sheds 6*0.45 = 2.7 and the victim 6*0.20 = 1.2, where
+    // JS shed 1.9 and 0.3. A genuine 10 m/s rear-ending costing more than
+    // 2 m/s between the two cars is the more defensible number on its own
+    // terms, quite apart from the jam it fixes.
     {
         std::vector<Car> cars(2);
         cars[0].x = 0;
@@ -150,18 +170,40 @@ int main() {
         collide(cars, state, track, rngR);
         expectNear("collide[0].x", cars[0].x, -1.05);
         expectNear("collide[0].y", cars[0].y, 0.0);
-        expectNear("collide[0].v", cars[0].v, 38.1);
+        expectNear("collide[0].v", cars[0].v, 37.3); // JS: 38.1 -- see above
         expectNear("collide[0].hdg", cars[0].hdg, 0.0);
         expectNear("collide[1].x", cars[1].x, 2.55);
         expectNear("collide[1].y", cars[1].y, 0.0);
-        expectNear("collide[1].v", cars[1].v, 29.7);
+        expectNear("collide[1].v", cars[1].v, 28.8); // JS: 29.7 -- see above
         expectNear("collide[1].hdg", cars[1].hdg, 0.0);
         // Phase 6b (PORT_PROGRESS.md): collide()'s hitter.hitFx accumulation
-        // (index.html:1227, `hitter.hitFx += cv2*0.04`) -- cv2 = |38.1-29.7|
-        // = 8.4, so cars[0] (the hitter: a.v>b.v) gains 8.4*0.04 = 0.336;
-        // cars[1] (the victim) gets no hitFx from this site.
-        expectNear("collide[0].hitFx", cars[0].hitFx, 0.336);
+        // (index.html:1227, `hitter.hitFx += cv2*0.04`) -- cv2 = |37.3-28.8|
+        // = 8.5, so cars[0] (the hitter: a.v>b.v) gains 8.5*0.04 = 0.34;
+        // cars[1] (the victim) gets no hitFx from this site. (The 8.5 is 8.4
+        // under JS's own speed loss; see the divergence note above.)
+        expectNear("collide[0].hitFx", cars[0].hitFx, 0.34);
         expectNear("collide[1].hitFx", cars[1].hitFx, 0.0);
+    }
+
+    // ---- collide(): a SEPARATING pair pays nothing (N6) ----
+    //
+    // The single property the field-jam fix turns on, and the one JS got
+    // wrong. Two overlapping cars moving APART must lose no speed: penalising
+    // them is what made a pile-up inescapable, because pulling away from your
+    // neighbour is exactly what raises the old speed-difference penalty.
+    {
+        std::vector<Car> cars(2);
+        cars[0].x = 0; cars[0].y = 0; cars[0].hdg = 0;
+        cars[1].x = 1.5; cars[1].y = 0; cars[1].hdg = 0;
+        // b is ahead of a and pulling away: they overlap, but are separating.
+        cars[0].v = 20; cars[1].v = 30;
+        RaceState state;
+        state.mode = "race";
+        state.flag = "green";
+        Mulberry32 rngR(999);
+        collide(cars, state, track, rngR);
+        expectNear("separating pair: trailing car keeps its speed", cars[0].v, 20.0);
+        expectNear("separating pair: leading car keeps its speed", cars[1].v, 30.0);
     }
 
     // ---- collide(): P3 (NT2003 engine-feel plan, damage that pulls) --
@@ -194,8 +236,8 @@ int main() {
         // fixture -- unaffected by the lateral offset), so cars[0] (hitter,
         // a.v>b.v) gets hitterDelta = min(0.08, 8.4*0.003) = 0.0252, and
         // cars[1] (victim) gets victimDelta = min(0.05, 8.4*0.002) = 0.0168.
-        expectNear("collide P3 [0].dmgPull (hitter, pulled right)", cars[0].dmgPull, -0.0252, 1e-4);
-        expectNear("collide P3 [1].dmgPull (victim, pulled left)", cars[1].dmgPull, 0.0168, 1e-4);
+        expectNear("collide P3 [0].dmgPull (hitter, pulled right)", cars[0].dmgPull, -0.0255, 1e-4);
+        expectNear("collide P3 [1].dmgPull (victim, pulled left)", cars[1].dmgPull, 0.0170, 1e-4);
         expect(cars[0].dmgPull < 0.0 && cars[1].dmgPull > 0.0,
                "collide() gives the two cars in a one-sided impact OPPOSITE-signed pulls");
     }
@@ -232,7 +274,7 @@ int main() {
     }
 
     if (g_failures == 0) {
-        std::printf("race_sim_test: gridStart/stepPace/updateAero/collide all match JS.\n");
+        std::printf("race_sim_test: gridStart/stepPace/updateAero match JS; collide matches the documented N6/L10 divergence.\n");
         return 0;
     }
     std::fprintf(stderr, "race_sim_test: %d MISMATCHES.\n", g_failures);

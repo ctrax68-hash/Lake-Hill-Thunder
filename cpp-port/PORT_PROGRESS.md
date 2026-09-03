@@ -10170,3 +10170,124 @@ drawing.
 
 Other figures from the same reading, now on the record for the first time:
 **104 draw calls, 83,601 triangles** per frame.
+
+## L14 -- Wall contact is survivable again
+
+`dmgDelta = min(0.12, vLost * 0.005)` was linear in the speed a wall took off
+the car. With the 0.6 s `dmgCd`, that is about **0.105 damage per second** of
+contact at racing speed, so roughly **9.5 seconds of cumulative rubbing is a
+permanent DNF** -- and `dmg >= 1.0` has no recovery short of a pit stop, which
+repairs only 0.5. A player learning an oval dies before they learn it.
+
+Made quadratic, `min(0.12, vLost * vLost * 0.00025)`, which separates the two
+cases instead of trading them off:
+
+| speed lost to the wall | before | after |
+|---|---|---|
+| 5 m/s (a scrape) | 0.025 | **0.006** |
+| 10 m/s | 0.050 | 0.025 |
+| 20 m/s (a real hit) | 0.100 | **0.100** |
+| 30 m/s | 0.120 (capped) | 0.120 (capped) |
+
+Light scraping is ~4x more survivable, which is what L14 asked for; a genuine
+impact costs exactly what it did. The 0.12 cap is unchanged, so nothing gets
+cheaper at the top end.
+
+## L10 -- The collision response no longer punishes the car that was hit
+
+N6 fixed the deadlock by dissipating only the *closing* component of a
+contact. That left a second defect visible: the speed penalty was split
+evenly, and an even split is what makes a pile-up permanent -- if both cars
+shed the same speed, neither escapes. Measured, an even split was *worse* than
+the shipped asymmetry: moving fraction 0.774 -> 0.690, cars running 159 -> 154.
+
+Replaced with a physical split. The car whose velocity is more aligned with
+the contact normal is the one arriving; it takes 0.45 of the closing rate, the
+car being hit takes 0.20. The player is always treated as the victim, because
+being punted by AI has been an open report (L10) since the first round of
+feedback and there is no version of this game where the human should lose more
+speed in a collision than the car that hit them.
+
+**A correction to N6's own entry.** The edit that landed the closing-rate fix
+silently deleted the heading kick that used to sit in the same block
+(`a.hdg += ny*0.008*(a.isPlayer?1:2)`). Part of the improvement N6 attributed
+to the closing-rate change was in fact that deletion. The kick is restored,
+scaled by impact severity and gated so it cannot fire on a separating pair,
+at 0.004 rather than 0.008. Final measured field health, eight runs across
+four tracks and two seeds:
+
+| build | moving fraction | cars running |
+|---|---|---|
+| before N6 | 0.625 | 150 |
+| N6 as shipped (kick accidentally absent) | 0.829 | 157 |
+| **this build** (hitter/victim split, kick restored) | **0.754** | **158** |
+
+The moving fraction is lower than the kick-less build and that is the honest
+trade: a contact that cannot deflect a car is a contact that cannot spread a
+pack out either. Cars running -- the number that decides whether there is a
+race at the end -- is the best it has been.
+
+`race_sim_test` pinned `collide()` bit-for-bit against JS ground truth and
+therefore had to change. It is updated as an explicitly documented deliberate
+divergence, in the same style as L12's, with the old JS figures (38.1/29.7)
+and the new ones (37.3/28.8) both recorded, plus a new assertion that a
+*separating* pair is left alone -- the property the closing-rate test exists
+to provide, which nothing pinned before.
+
+## L12 residual -- measured, and there is nothing to fix
+
+L12 clamped the corner-speed planner to the friction circle computed from
+tire mu alone, discarding the aero term. The standing complaint against that
+("cars only doing about 80 in corners") assumed the clamp was the reason
+corners feel slow, and the obvious next step was to bound the aero term rather
+than drop it. That was measured, and the assumption is wrong.
+
+**First: why the clamp exists.** The aero-inclusive fixed point genuinely
+diverges, because `mu = CAR.mu + dfK*v^2` has no bound and `cornerCap`'s
+denominator pins at 0.25:
+
+| track | R | aero-inclusive plan | tire-only limit | shipped |
+|---|---|---|---|---|
+| Thunder Oval | 140 | 127.4 m/s (285 mph) | 51.9 | 49.3 |
+| Milltown | 100 | 49.9 (112 mph) | 40.4 | 38.4 |
+| Cedar Valley | 190 | 117.5 (263 mph) | 55.7 | 52.9 |
+| Big Sable | 240 | **325.0 (727 mph)** | 76.3 | 72.5 |
+
+**Second, and decisive: the plan is not what limits corner speed.** Lateral
+grip utilisation -- the lateral acceleration a car actually pulls, over what
+the *aero-inclusive* friction circle allows at its own speed:
+
+| track | field | solo | achieved vs plan (solo) |
+|---|---|---|---|
+| Thunder Oval | 49% | 54% | 43.6 vs 44.9 m/s |
+| Milltown | 44% | 56% | 35.9 vs 37.0 |
+| Cedar Valley | 46% | 52% | 45.9 vs 48.3 |
+| Big Sable | 24% | 25% | 65.3 vs 70.1 |
+
+Cars use **a quarter to a half** of the grip available to them, and a solo car
+already runs within 1.3 m/s of its plan on three of four tracks. Raising the
+plan hands the AI guidance it is nowhere near following, which is precisely
+the failure L12 closed. Recorded as measured-and-closed so it is not reopened
+a fifth time.
+
+### The throttle policy behind the gap, tried and rejected
+
+The gap that does exist has a different cause, and it looked like an easy win.
+A car below its target commands `thr = min(1.0, 0.55 + 0.45*aggr)` -- a flat
+constant, so a low-aggression car is capped at 55% throttle no matter how far
+under its own plan it is. Solo cars measured **negative** dv/dt through 8-11
+second corners while commanding 68-81% throttle.
+
+Making it deficit-proportional (`+ (vT - c.v) * 0.10`) worked solo -- Big
+Sable's corner speed rose 65.3 -> 68.1 m/s -- and **failed badly in traffic**:
+
+| | corner speed | DNFs | cars running |
+|---|---|---|---|
+| shipped | 41.0 m/s | 2 | 158 |
+| deficit-proportional | **36.1** | **10** | **150** |
+
+Cedar Valley collapsed to 5 DNFs and 24.8 m/s. The mechanism is the friction
+ellipse: throttle in a corner spends longitudinal force out of the same grip
+budget the car is cornering on, so the cars push wide, hit the wall and each
+other, and the pack jams. Exactly the L12/L18 interaction both of those
+entries flagged as the risk. Rejected and recorded, not retried.

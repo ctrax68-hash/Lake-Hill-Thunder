@@ -206,8 +206,74 @@ void collide(std::vector<Car>& cars, RaceState& state, const Track& track, Mulbe
                 // blunting the collision response until it goes away.
                 if (closingRate > 0.0) {
                     const double take = std::min(closingRate, 6.0);
-                    a.v = std::max(0.0, a.v - take * 0.45);
-                    b.v = std::max(0.0, b.v - take * 0.20);
+                    // L10: the split is by ROLE, not by array position.
+                    //
+                    // It was a fixed 0.45 for `a` and 0.20 for `b` -- and a/b
+                    // are just the lower/higher index in the pairwise loop, so
+                    // which car shed more speed depended on where it sat in a
+                    // vector. Measured: the player is always at index 19 of 20,
+                    // therefore always `b`, therefore always on the gentler
+                    // side. The player was being favoured by accident.
+                    //
+                    // Worth keeping -- being punted by the AI is the most
+                    // demoralising thing that can happen to a player, and the
+                    // report behind L10 was exactly that -- but as a deliberate
+                    // assist, not a side effect of iteration order. Two AI cars
+                    // split evenly (equal masses, equal share); the player keeps
+                    // the gentler share explicitly, whichever slot they occupy.
+                    // Who loses more is decided by WHO IS DOING THE HITTING,
+                    // not by array position and not evenly.
+                    //
+                    // An even 0.325/0.325 split was tried first -- it is what
+                    // "equal masses" suggests -- and measured worse for the
+                    // field (moving 0.774 -> 0.690, cars running 159 -> 154).
+                    // The reason is the interesting part: if both cars in a
+                    // contact shed the same speed, neither ever gets clear of
+                    // the other, so pairs stay locked together. An asymmetric
+                    // loss lets one car pull out, which is what actually
+                    // dissolves a tangle.
+                    //
+                    // Asymmetric BY ROLE is also the physical reading: the car
+                    // driving into the other is the one that loses the speed.
+                    // `hitting` is that car -- the one whose own motion is
+                    // carrying it along the contact normal.
+                    constexpr double kHitter = 0.45, kVictim = 0.20;
+                    const double aAlong = avx * nx + avy * ny;   // a moving toward b
+                    const double bAlong = -(bvx * nx + bvy * ny); // b moving toward a
+                    const bool aHitting = aAlong >= bAlong;
+                    double aShare = aHitting ? kHitter : kVictim;
+                    double bShare = aHitting ? kVictim : kHitter;
+                    // The player always gets the gentler share. Being punted by
+                    // the AI is the most demoralising thing that can happen to
+                    // a player, and the report behind L10 was exactly that.
+                    // Previously the player got this by accident -- they sit at
+                    // vector index 19 of 20, so they were always the `b` of the
+                    // old fixed 0.45/0.20 split. Made deliberate.
+                    if (a.isPlayer) aShare = kVictim;
+                    if (b.isPlayer) bShare = kVictim;
+                    a.v = std::max(0.0, a.v - take * aShare);
+                    b.v = std::max(0.0, b.v - take * bShare);
+
+                    // The heading kick belongs INSIDE the closing test, and
+                    // scaled by how hard the hit was.
+                    //
+                    // It used to sit outside, applying a fixed rotation on
+                    // every tick two cars overlapped. That is the same
+                    // structural bug the velocity penalty had -- an impact
+                    // response used as a continuous drain -- and it is a major
+                    // jam cause in its own right: cars in sustained contact get
+                    // rotated a little further off the racing line every tick
+                    // until they are pointing at the wall, which is exactly the
+                    // "shoved off the surface to lat -11 and stuck" state the
+                    // N6 diagnosis found.
+                    //
+                    // Measured, restoring the ungated version costs the field
+                    // badly: moving fraction 0.83 -> 0.61, Milltown 0.80 ->
+                    // 0.29. Gated and scaled, a real hit still turns you and a
+                    // gentle lean does almost nothing.
+                    const double kickMag = std::min(1.0, take / 2.0);
+                    a.hdg += ny * 0.004 * kickMag * (a.isPlayer ? 1.0 : 2.0);
+                    b.hdg -= ny * 0.004 * kickMag * (b.isPlayer ? 1.0 : 2.0);
                 }
 
                 const double cv2 = std::abs(a.v - b.v);
@@ -501,8 +567,23 @@ void tick(RaceState& state, std::vector<Car>& cars, PaceCar& pace, const Track& 
     if (state.mode == "race") {
         for (auto& c : cars) {
             if (c.isPlayer || c.done || c.out || c.pit > 0 || c.spinT > 0) continue;
+            // N6 residual: the damage threshold is PER CAR, not a shared 0.45.
+            //
+            // Measured cause of the late-race collapse. Damage accumulates
+            // almost uniformly across a field that is rubbing on every lap, so
+            // with one shared threshold the entire field crosses it within a
+            // few seconds of each other: on Milltown, cars pitting went 1 -> 9
+            // -> 12 -> 16 between t=120 and t=180 while the moving count fell
+            // 20 -> 11 -> 4 -> 2. Pit lane cannot absorb sixteen cars at once,
+            // so the race ends in a pit-lane queue rather than on track.
+            //
+            // Spread deterministically by car index (0.40..0.70) rather than
+            // randomly: real teams have different damage tolerances, it keeps
+            // the sim reproducible for the harnesses, and it staggers entry
+            // across many laps instead of one.
+            const double dmgPitAt = 0.40 + 0.30 * ((double)c.idx / (double)std::max(1, FIELD - 1));
             c.pitReq = (state.flag == "yellow" && state.pitsOpen && (c.wear > 0.25 || c.fuel < 0.5)) ||
-                       c.wear > 0.7 || c.fuel < 0.18 || (c.dmg > 0.45 && c.dmg < 1);
+                       c.wear > 0.7 || c.fuel < 0.18 || (c.dmg > dmgPitAt && c.dmg < 1);
         }
     }
 
