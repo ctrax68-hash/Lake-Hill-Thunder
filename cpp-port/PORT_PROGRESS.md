@@ -10291,3 +10291,42 @@ ellipse: throttle in a corner spends longitudinal force out of the same grip
 budget the car is cornering on, so the cars push wide, hit the wall and each
 other, and the pack jams. Exactly the L12/L18 interaction both of those
 entries flagged as the risk. Rejected and recorded, not retried.
+
+## G30 -- The last three dbgText screens
+
+G26 built the font and G27 rebuilt the in-race HUD on it, which left the game
+in a split state: gameplay in a real proportional face, and the menu rows, the
+results screen and the pit-adjustment panel still in bgfx's 8x16 terminal
+overlay. Those three are now converted, so no screen a player reaches shows
+the debug font.
+
+Each keeps the dbgText path as a fallback for `textOut == nullptr`, matching
+`drawMenu()`'s existing shape -- a failed atlas decode should cost the
+typography, not the screen.
+
+**`drawBar()` gained real columns.** Converting the menu found that G26 had
+converted only the *title*; every row label was still dbgText, which a
+screenshot showed and reasoning had not. `drawBar()` now takes `label` and
+`value` so the two align in columns rather than being packed into one
+pre-spaced string, and a `text == nullptr` mode draws the panel only -- added
+because START RACE came out double-drawn, once through each path, when
+`nullptr` was passed to a function that then took the dbgText branch anyway.
+
+**The pit panel's labels did not fit, and only a screenshot said so.** The
+label column was 11 dbgText cells wide, which is exactly the length of the old
+`"TRACK BAR: "` literal back when every glyph was 8 px. In the real font
+"TRACK BAR" measures **95.9 px against 88 px of column**, so it rendered
+straight through the minus button.
+
+Nothing caught it, and the reasons are worth writing down: the region rects
+were still self-consistent with each other, so the layout test passed; the
+hit rects still matched what was drawn, so tapping still worked; and the
+shorter "WEDGE" label fit fine, so one of the two rows looked correct. A
+constant carried over from a monospace font into a proportional one is
+invisible to every test that only checks internal consistency.
+
+Widened to 14 columns (112 px), and `pit_setup_test` now measures the real
+label strings -- taken from the same `kPitSetupLabels` array `drawPitSetup()`
+draws from, so it cannot pass by measuring something else -- against the real
+column at the real size, with an 8 px minimum gap. Verified to FAIL at the old
+11 and pass at 14.

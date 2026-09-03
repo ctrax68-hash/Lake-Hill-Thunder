@@ -4,6 +4,8 @@
 // container, so this exercises the region-computation/clamping math the
 // click handler (main.cpp) calls into.
 
+#include "../src/render/font_atlas.h"
+#include "../src/render/hud_text.h"
 #include "../src/ui/pit_setup.h"
 #include "../src/ui/touch_controls.h" // pointInRect() -- shared with main.cpp's own click handling
 
@@ -77,8 +79,36 @@ int main() {
     atNegLimit = clampPitSetup(atNegLimit - kPitSetupStep);
     check(atNegLimit == -1.0, "stepping past -1.0 didn't stay clamped at -1.0");
 
+    // G30: the labels must FIT the label column in the font they are actually
+    // drawn in.
+    //
+    // This exists because the column width was 11 dbgText cells -- the length
+    // of the old string literals, back when every glyph was 8 px. Converting
+    // to the proportional font made "TRACK BAR" 95.9 px against 88 px of
+    // column, so it rendered straight through the minus button, and nothing
+    // caught it: the region rects were still self-consistent, the shorter
+    // "WEDGE" still looked right, and only a screenshot showed the collision.
+    //
+    // Asserted against the real measure() at the real size, with the strings
+    // taken from the same array drawPitSetup() draws, so this cannot pass by
+    // measuring something other than what is on screen.
+    const float labelRoom = pitSetupLabelWidthPx();
+    for (const char* label : kPitSetupLabels) {
+        const float w = font::measure(label, hudtext::kBody);
+        // A gap, not merely non-overlap: text that ends exactly on the button
+        // edge reads as touching it, which is the defect this is about.
+        constexpr float kMinGapPx = 8.0f;
+        if (!(w + kMinGapPx <= labelRoom)) {
+            std::fprintf(stderr,
+                         "pit_setup_test: FAILED -- label \"%s\" is %.1f px at kBody but the label "
+                         "column is only %.1f px; it will run into the minus button\n",
+                         label, w, labelRoom);
+            ok = false;
+        }
+    }
+
     if (ok) {
-        std::printf("pit_setup_test: region layout and clamping all correct.\n");
+        std::printf("pit_setup_test: region layout, label fit and clamping all correct.\n");
         return 0;
     }
     return 1;

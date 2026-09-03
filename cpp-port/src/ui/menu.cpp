@@ -1,6 +1,7 @@
 #include "menu.h"
 
 #include "../render/color.h"
+#include "../render/hud_text.h"
 #include "../render/ui_draw.h"
 
 #include <bgfx/bgfx.h>
@@ -92,16 +93,45 @@ constexpr uint8_t attr(uint8_t fg, uint8_t bg) {
 // and prints `label` centered on the bar's middle text-row -- reuses
 // pushBevelPanel() exactly as status_bars.cpp's drawOneBar() already does,
 // just for a whole labeled row instead of a segmented value bar.
+// G30: G26 gave the menu TITLE a real font and left every row label in
+// dbgText, which is the wrong half -- the title is read once, the rows are
+// what a player actually operates.
+//
+// `label` and `value` are separate so the value can start at a fixed column.
+// The dbgText version padded them into one monospace string ("TRACK:      ")
+// which lines up only in a fixed-width font; in a proportional one the values
+// came out ragged down the column. `text` (the pre-padded form) is still what
+// the dbgText fallback prints, so that path is unchanged.
+constexpr float kBarValueX = 150.0f; // clears the longest label at kBarTextSize
+constexpr float kBarTextSize = 17.0f;
+
 void drawBar(int row, int cols, uint8_t fg, const float fillRgb[3], const float lightRgb[3],
-             const float darkRgb[3], const char* text, std::vector<PosColorVertex>& uiOut) {
+             const float darkRgb[3], const char* text, std::vector<PosColorVertex>& uiOut,
+             std::vector<PosColorUvVertex>* textOut, const char* label = nullptr,
+             const char* value = nullptr) {
     const SDL_Rect r = rowRect(row, cols);
     pushBevelPanel(uiOut, (float)r.x, (float)r.y, (float)r.w, (float)r.h, packColor(fillRgb),
                    packColor(lightRgb), packColor(darkRgb));
-    // Middle of the 3-row-tall bar -- rowRect()'s `row` is the bar's top
-    // row, so +1 lands on the vertically-centered text row (see kBarRowStep's
-    // own comment for why this only works cleanly because every bar is
-    // exactly 3 rows tall).
-    bgfx::dbgTextPrintf(kCol, row + 1, attr(fg, kBlack), "%s", text);
+    // `text == nullptr` means "panel only" -- the caller is drawing its own
+    // label (the Start button centres its own). Without this, passing a null
+    // textOut to get just the plate fell through to the dbgText branch and
+    // drew the terminal-font string underneath.
+    if (!text) return;
+    if (!textOut) {
+        bgfx::dbgTextPrintf(kCol, row + 1, attr(fg, kBlack), "%s", text);
+        return;
+    }
+    // Genuinely centred in the bar, rather than snapped to the middle text row
+    // of three.
+    const float baseline = (float)r.y + (float)r.h * 0.5f + kBarTextSize * 0.36f;
+    const uint32_t col = fg == kGrey ? packColor(Theme::kGraycool) : packColor(Theme::kWhite);
+    if (label && value) {
+        hudtext::draw(*textOut, (float)r.x + 12.0f, baseline, label, kBarTextSize, col);
+        hudtext::draw(*textOut, (float)r.x + kBarValueX, baseline, value, kBarTextSize,
+                      packColor(Theme::kWhite));
+    } else {
+        hudtext::draw(*textOut, (float)r.x + 12.0f, baseline, text, kBarTextSize, col);
+    }
 }
 
 // G24: a simple checkered accent band -- no general checkerboard primitive
@@ -243,34 +273,73 @@ void drawMenu(const MenuSelection& sel, int laps, bool tilt, const std::string& 
                     packColor(Theme::kSteel, 0.85f));
 
     drawBar(kRowTrack, kRowColsWide, kWhite, Theme::kSteel, Theme::kGraycool, Theme::kBlack,
-            (std::string("TRACK:      ") + trackName).c_str(), uiOut);
+            (std::string("TRACK:      ") + trackName).c_str(), uiOut, textOut, "TRACK:", trackName.c_str());
 
-    char lapsText[32];
+    char lapsText[32], lapsVal[8];
     std::snprintf(lapsText, sizeof(lapsText), "LAPS:       %-3d", laps);
-    drawBar(kRowLaps, kRowColsWide, kWhite, Theme::kSteel, Theme::kGraycool, Theme::kBlack, lapsText, uiOut);
+    std::snprintf(lapsVal, sizeof(lapsVal), "%d", laps);
+    drawBar(kRowLaps, kRowColsWide, kWhite, Theme::kSteel, Theme::kGraycool, Theme::kBlack, lapsText, uiOut,
+            textOut, "LAPS:", lapsVal);
 
     // index.html's #qualTog exists, but this port doesn't have a real
     // qualifying flow yet (see MenuSelection::qual's own comment) -- grey
     // rather than white, a small honest visual cue that this row currently
     // has no gameplay effect.
     drawBar(kRowQual, kRowColsWide, kGrey, Theme::kSteel, Theme::kGraycool, Theme::kBlack,
-            sel.qual ? "QUALIFYING: ON" : "QUALIFYING: OFF", uiOut);
+            sel.qual ? "QUALIFYING: ON" : "QUALIFYING: OFF", uiOut, textOut, "QUALIFYING:",
+            sel.qual ? "ON" : "OFF");
     drawBar(kRowSound, kRowColsWide, kGrey, Theme::kSteel, Theme::kGraycool, Theme::kBlack,
-            sel.sound ? "SOUND:      ON" : "SOUND:      OFF", uiOut);
+            sel.sound ? "SOUND:      ON" : "SOUND:      OFF", uiOut, textOut, "SOUND:",
+            sel.sound ? "ON" : "OFF");
     drawBar(kRowTilt, kRowColsWide, kWhite, Theme::kSteel, Theme::kGraycool, Theme::kBlack,
-            tilt ? "TILT STEER: ON" : "TILT STEER: OFF", uiOut);
+            tilt ? "TILT STEER: ON" : "TILT STEER: OFF", uiOut, textOut, "TILT STEER:",
+            tilt ? "ON" : "OFF");
 
     char volBar[21];
     const int filled = std::max(0, std::min(20, (sel.volume * 20) / 100));
     for (int i = 0; i < 20; ++i) volBar[i] = i < filled ? '#' : '-';
     volBar[20] = '\0';
-    char volText[40];
+    char volText[40], volVal[8];
     std::snprintf(volText, sizeof(volText), "VOLUME: [%s] %3d%%", volBar, sel.volume);
-    drawBar(kRowVolume, kRowColsWide, kGrey, Theme::kSteel, Theme::kGraycool, Theme::kBlack, volText, uiOut);
+    std::snprintf(volVal, sizeof(volVal), "%d%%", sel.volume);
+    drawBar(kRowVolume, kRowColsWide, kGrey, Theme::kSteel, Theme::kGraycool, Theme::kBlack, volText, uiOut,
+            textOut, "VOLUME:", volVal);
+    // G30: a real bar instead of "[####----]". The ASCII meter was a dbgText
+    // workaround -- the only way to draw a level in a fixed-cell font -- and
+    // ui_draw.h has had pushSegBar() for the HUD's status strip all along.
+    // Drawn only on the font path; the dbgText fallback keeps its hashes,
+    // since it has nothing better.
+    if (textOut) {
+        const SDL_Rect vb = rowRect(kRowVolume, kRowColsWide);
+        const float barX = (float)vb.x + kBarValueX + 72.0f; // clears the "100%" reading
+        const float barW = (float)vb.w - kBarValueX - 86.0f;
+        if (barW > 20.0f) {
+            pushSegBar(uiOut, barX, (float)vb.y + (float)vb.h * 0.5f - 6.0f, barW, 12.0f,
+                       std::max(0.0, std::min(1.0, sel.volume / 100.0)), 10, packColor(Theme::kBlue),
+                       packColor(Theme::kBlack, 0.55f));
+        }
+    }
 
     // Start stays the bottommost bar (see kRowStart's own comment) but gets
     // the reference's highlighted treatment: a bold red fill with a bright
     // accent edge instead of the other rows' plain steel plate.
-    drawBar(kRowStart, kStartColsWide, kWhite, Theme::kRed, Theme::kOrange, Theme::kBlack,
-            " >>> START RACE <<< ", uiOut);
+    // Centred and sized to its own button. The other rows are left-aligned
+    // labels; this one is a button, and its dbgText string carried decorative
+    // ">>> <<<" arrows that only centred it by luck of the cell grid.
+    if (textOut) {
+        drawBar(kRowStart, kStartColsWide, kWhite, Theme::kRed, Theme::kOrange, Theme::kBlack,
+                /*text=*/nullptr, uiOut, textOut);
+        const SDL_Rect sb = rowRect(kRowStart, kStartColsWide);
+        const char* startTxt = "START RACE";
+        float size = 21.0f;
+        const float avail = (float)sb.w - 24.0f;
+        const float w = font::measure(startTxt, size);
+        if (w > avail && w > 0.0f) size *= avail / w;
+        hudtext::drawCentered(*textOut, (float)sb.x + sb.w * 0.5f,
+                              (float)sb.y + sb.h * 0.5f + size * 0.36f, startTxt, size,
+                              packColor(Theme::kWhite));
+    } else {
+        drawBar(kRowStart, kStartColsWide, kWhite, Theme::kRed, Theme::kOrange, Theme::kBlack,
+                " >>> START RACE <<< ", uiOut, textOut);
+    }
 }

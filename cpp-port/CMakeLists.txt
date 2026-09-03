@@ -769,12 +769,14 @@ add_test(NAME leaderboard_test COMMAND leaderboard_test)
 # because results.cpp's drawResults() calls bgfx::dbgTextPrintf(), even
 # though this test never calls that function.
 add_executable(results_test tests/results_test.cpp src/ui/results.cpp
-  src/render/fmt_time.cpp src/render/ui_draw.cpp)
+  src/render/fmt_time.cpp src/render/ui_draw.cpp
+  src/render/font_atlas.cpp src/render/texture_import.cpp)
 target_link_libraries(results_test PRIVATE SDL2::SDL2 bgfx)
 target_include_directories(results_test PRIVATE
   third_party/bgfx.cmake/bgfx/include
   third_party/bgfx.cmake/bx/include
 )
+target_include_directories(results_test PRIVATE ${LHT_STB_INCLUDE_DIR})
 add_test(NAME results_test COMMAND results_test)
 
 # P4 (NT2003 engine-feel plan): pit_setup_test exercises
@@ -783,12 +785,14 @@ add_test(NAME results_test COMMAND results_test)
 # pit_setup.cpp's drawPitSetup() calls bgfx::dbgTextPrintf(), even though
 # this test never calls that function.
 add_executable(pit_setup_test tests/pit_setup_test.cpp src/ui/pit_setup.cpp
-  src/render/ui_draw.cpp)
+  src/render/ui_draw.cpp
+  src/render/font_atlas.cpp src/render/texture_import.cpp)
 target_link_libraries(pit_setup_test PRIVATE SDL2::SDL2 bgfx)
 target_include_directories(pit_setup_test PRIVATE
   third_party/bgfx.cmake/bgfx/include
   third_party/bgfx.cmake/bx/include
 )
+target_include_directories(pit_setup_test PRIVATE ${LHT_STB_INCLUDE_DIR})
 add_test(NAME pit_setup_test COMMAND pit_setup_test)
 
 # G22 (PORT_PROGRESS.md): proximity_test exercises buildProximityList()'s

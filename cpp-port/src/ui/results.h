@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../render/font_atlas.h"
 #include "../render/vertex.h"
 #include "../sim/car.h"
 
@@ -48,4 +49,9 @@ std::vector<const Car*> buildResultsOrder(const std::vector<Car*>& finishOrder,
 // shared UI-overlay vertex list (Renderer submits it as a second,
 // pixel-space bgfx view after this call returns). Caller must have already
 // called bgfx::dbgTextClear() this frame.
-void drawResults(const std::vector<const Car*>& resultsOrder, std::vector<PosColorVertex>& uiOut);
+// G30: `textOut`, when non-null, is the frame's font-atlas text list -- the
+// results screen in the real UI font. Null falls back to the dbgText path, as
+// drawMenu() does, so a failed atlas decode costs the typography and not the
+// screen.
+void drawResults(const std::vector<const Car*>& resultsOrder, std::vector<PosColorVertex>& uiOut,
+                 std::vector<PosColorUvVertex>* textOut = nullptr);

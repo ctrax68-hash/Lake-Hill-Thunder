@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../render/font_atlas.h"
 #include "../render/vertex.h"
 #include "../sim/car.h"
 
@@ -57,6 +58,16 @@ constexpr double kPitSetupMax = 1.0;
 // a no-op, not silently drifting past it.
 double clampPitSetup(double value);
 
+// G30: the geometry the label column has to satisfy, exposed so
+// pit_setup_test can assert the fit instead of trusting a comment. The
+// original 11-column width was the length of the dbgText string literals, and
+// nothing noticed when proportional text outgrew it -- "TRACK BAR" rendered
+// straight through the minus button. These let the test measure the real
+// labels against the real column and fail if a future one does not fit.
+extern const char* const kPitSetupLabels[2];
+// Pixels available to a label before the minus button starts.
+float pitSetupLabelWidthPx();
+
 // Draws the panel (title, WEDGE/TRACK BAR center-zero tracks -- the same
 // "steel background + center notch + signed marker" widget shape as
 // status_bars.cpp's drawBalanceBar(), reused here rather than reinvented
@@ -65,4 +76,8 @@ double clampPitSetup(double value);
 // matching results.cpp's approach. `uiOut` is the frame's shared UI-
 // overlay vertex list. Caller must have already called
 // bgfx::dbgTextClear() this frame.
-void drawPitSetup(const Car& player, std::vector<PosColorVertex>& uiOut);
+// G30: `textOut`, when non-null, draws this in the real UI font, with a panel
+// behind it -- the dbgText version relied on the debug overlay always drawing
+// on top of everything, which real text does not. Null falls back to dbgText.
+void drawPitSetup(const Car& player, std::vector<PosColorVertex>& uiOut,
+                  std::vector<PosColorUvVertex>* textOut = nullptr);

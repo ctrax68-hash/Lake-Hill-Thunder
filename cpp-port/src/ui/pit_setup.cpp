@@ -1,6 +1,7 @@
 #include "pit_setup.h"
 
 #include "../render/color.h"
+#include "../render/hud_text.h"
 #include "../render/ui_draw.h"
 
 #include <bgfx/bgfx.h>
@@ -20,10 +21,23 @@ constexpr int kRowWedge = 15;
 constexpr int kRowTrackBar = 17;
 constexpr int kRowHint = 19;
 
-// Button/track layout, in text columns relative to kCol -- labels are 11
-// chars ("WEDGE:     "/"TRACK BAR: "), so the minus button starts right
-// after them, then the track, then the plus button.
-constexpr int kLabelCols = 11;
+// Button/track layout, in text columns relative to kCol: the label column,
+// then the minus button, the track, and the plus button.
+//
+// G30: this was 11, the length of the dbgText literals ("WEDGE:     " /
+// "TRACK BAR: ") back when every glyph was exactly 8 px wide. In the real
+// proportional font "TRACK BAR" measures 95.9 px at kBody against the 88 px
+// that 11 columns buys, so the label ran straight through the minus button --
+// visible in a screenshot as "TRACK BAR-" with no gap, while the shorter
+// "WEDGE" looked fine and hid the bug.
+//
+// 14 columns = 112 px, which clears the widest label with 16 px of gap. The
+// hit rects in computePitSetupRegions() are built from the same constant, so
+// the buttons a player taps stay exactly where they are drawn.
+// kPitSetupWidestLabelPx below pins the measurement this was derived from;
+// pit_setup_test asserts the label actually fits, so adding a longer one
+// fails a test instead of silently overlapping again.
+constexpr int kLabelCols = 14;
 constexpr int kBtnCols = 3;
 constexpr int kBarCols = 20;
 
@@ -75,18 +89,59 @@ double clampPitSetup(double value) {
     return std::max(-kPitSetupMax, std::min(kPitSetupMax, value));
 }
 
-void drawPitSetup(const Car& player, std::vector<PosColorVertex>& uiOut) {
-    bgfx::dbgTextPrintf(kCol, kRowTitle, attr(kYellow, kBlack), "PIT ADJUSTMENTS");
+const char* const kPitSetupLabels[2] = {"WEDGE", "TRACK BAR"};
 
-    bgfx::dbgTextPrintf(kCol, kRowWedge, attr(kWhite, kBlack), "WEDGE:     ");
-    bgfx::dbgTextPrintf(kCol + kLabelCols, kRowWedge, attr(kWhite, kBlack), "-");
-    bgfx::dbgTextPrintf(kCol + kLabelCols + kBtnCols + kBarCols, kRowWedge, attr(kWhite, kBlack), "+");
-    drawSetupTrack(kRowWedge, player.setupWedge, uiOut);
+float pitSetupLabelWidthPx() { return (float)kLabelCols * kCellW; }
 
-    bgfx::dbgTextPrintf(kCol, kRowTrackBar, attr(kWhite, kBlack), "TRACK BAR: ");
-    bgfx::dbgTextPrintf(kCol + kLabelCols, kRowTrackBar, attr(kWhite, kBlack), "-");
-    bgfx::dbgTextPrintf(kCol + kLabelCols + kBtnCols + kBarCols, kRowTrackBar, attr(kWhite, kBlack), "+");
-    drawSetupTrack(kRowTrackBar, player.setupTrackBar, uiOut);
+void drawPitSetup(const Car& player, std::vector<PosColorVertex>& uiOut,
+                  std::vector<PosColorUvVertex>* textOut) {
+    // G30: the last dbgText holdout. This one is drawn OVER the running HUD
+    // during a stop, so it was the only remaining place a player saw the
+    // terminal font mid-race. dbgText path kept as the atlas-decode fallback,
+    // same as drawMenu()/drawResults().
+    if (!textOut) {
+        bgfx::dbgTextPrintf(kCol, kRowTitle, attr(kYellow, kBlack), "PIT ADJUSTMENTS");
+        bgfx::dbgTextPrintf(kCol, kRowWedge, attr(kWhite, kBlack), "WEDGE:     ");
+        bgfx::dbgTextPrintf(kCol + kLabelCols, kRowWedge, attr(kWhite, kBlack), "-");
+        bgfx::dbgTextPrintf(kCol + kLabelCols + kBtnCols + kBarCols, kRowWedge, attr(kWhite, kBlack), "+");
+        drawSetupTrack(kRowWedge, player.setupWedge, uiOut);
+        bgfx::dbgTextPrintf(kCol, kRowTrackBar, attr(kWhite, kBlack), "TRACK BAR: ");
+        bgfx::dbgTextPrintf(kCol + kLabelCols, kRowTrackBar, attr(kWhite, kBlack), "-");
+        bgfx::dbgTextPrintf(kCol + kLabelCols + kBtnCols + kBarCols, kRowTrackBar, attr(kWhite, kBlack), "+");
+        drawSetupTrack(kRowTrackBar, player.setupTrackBar, uiOut);
+        bgfx::dbgTextPrintf(kCol, kRowHint, attr(kGrey, kBlack), "(auto-exits when service is done)");
+        return;
+    }
 
-    bgfx::dbgTextPrintf(kCol, kRowHint, attr(kGrey, kBlack), "(auto-exits when service is done)");
+    const float x0 = kCol * kCellW;
+    // A panel behind it: this overlays live gameplay, and the dbgText version
+    // relied on the debug overlay always drawing on top of everything. Real
+    // text needs something to sit on.
+    const float panelW = (float)(kLabelCols + kBtnCols + kBarCols + 4) * kCellW;
+    pushQuad(uiOut, x0 - 10.0f, kRowTitle * kCellH - 8.0f, panelW, (float)(kRowHint - kRowTitle + 2) * kCellH,
+             packColor(Theme::kBlack, 0.72f));
+
+    hudtext::draw(*textOut, x0, kRowTitle * kCellH + 13.0f, "PIT ADJUSTMENTS", hudtext::kBody,
+                  packColor(Theme::kYellow));
+
+    struct Row { int row; const char* label; double value; };
+    // Labels come from kPitSetupLabels so the strings the test measures are
+    // literally the strings drawn here, not a copy that can drift from them.
+    const Row rows[] = {{kRowWedge, kPitSetupLabels[0], player.setupWedge},
+                        {kRowTrackBar, kPitSetupLabels[1], player.setupTrackBar}};
+    for (const Row& rw : rows) {
+        const float baseline = rw.row * kCellH + 13.0f;
+        hudtext::draw(*textOut, x0, baseline, rw.label, hudtext::kBody, packColor(Theme::kWhite));
+        // The +/- markers land on the middle of the button rects the hit test
+        // actually uses, instead of the nearest 8px cell.
+        hudtext::drawCentered(*textOut, (float)(kCol + kLabelCols) * kCellW + kBtnCols * kCellW * 0.5f,
+                              baseline, "-", hudtext::kValue, packColor(Theme::kWhite));
+        hudtext::drawCentered(*textOut,
+                              (float)(kCol + kLabelCols + kBtnCols + kBarCols) * kCellW + kBtnCols * kCellW * 0.5f,
+                              baseline, "+", hudtext::kValue, packColor(Theme::kWhite));
+        drawSetupTrack(rw.row, rw.value, uiOut);
+    }
+
+    hudtext::draw(*textOut, x0, kRowHint * kCellH + 12.0f, "(auto-exits when service is done)",
+                  hudtext::kCaption, packColor(Theme::kGraycool));
 }
