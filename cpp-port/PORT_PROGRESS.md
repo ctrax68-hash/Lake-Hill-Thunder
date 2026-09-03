@@ -10098,3 +10098,36 @@ regressions.
 
 Verified in both directions: the guard fails on the pre-fix `collide()`
 (Milltown and Cedar Valley both trip it) and passes on the fixed one.
+
+## G25 leftover -- backface culling: measured, and NOT shipped
+
+G25 deferred backface culling "to the first geometry slice", on the grounds
+that enabling it blind could silently delete geometry. Three geometry slices
+have landed since. Tested properly now, and the deferral was right.
+
+Method: capture the same frame with no culling, with `BGFX_STATE_CULL_CW`, and
+with `BGFX_STATE_CULL_CCW`, and diff.
+
+| mode | frame differing from baseline |
+|---|---|
+| CULL_CW | **27.96%** |
+| CULL_CCW | **31.37%** |
+
+Both directions destroy roughly a third of the image. Under CW the entire
+grandstand disappears -- the right side of the frame goes from packed crowd to
+open sky. There is no correct global setting because the winding is genuinely
+mixed, and the source says so in its own comments: `buildStandMesh()` notes it
+follows "JS's own already-fixed backface-culling winding for stands", while
+`buildOuterWallMesh()` and `buildCatchFenceMesh()` use a deliberately
+"reversed winding ... visible from the track side". Those two conventions are
+opposites, and both are in the same vertex buffer.
+
+**So this is not a flag to flip; it is a normalisation pass.** Every mesh
+builder's winding has to be made consistent (or the single-sided ones split
+into their own draw), and each one re-checked visually. That is real work with
+real regression risk, and it buys fill-rate on a target that has not yet been
+measured as fill-bound -- there is still no frame-time number from the user's
+actual phone, which G25 itself called the gate.
+
+Recorded as measured-and-rejected rather than left as a vague "still off", so
+the next attempt starts from the numbers instead of re-deriving them.
