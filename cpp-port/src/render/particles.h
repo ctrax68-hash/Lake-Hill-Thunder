@@ -39,14 +39,59 @@ struct Particle {
 // JS's `if(PARTS.length > 220) PARTS.shift()` cap (index.html:3280).
 constexpr int kParticleCap = 220;
 
+// L6: skid marks -- rubber laid on the track where a car slides.
+//
+// A separate list rather than a Particle variant, for two reasons. A mark is
+// a different KIND of thing: static, oriented to the track rather than to the
+// camera, and it lives for tens of seconds where a puff of smoke lives for
+// under one. And practically, sharing the 220-entry FIFO would mean a long
+// slide evicting the smoke that slide is producing.
+//
+// The corners are baked at spawn time from the track's own surface function,
+// the same one the racing ribbon is built from. That makes a mark follow the
+// banking exactly -- a flat quad on a 23-degree banked corner would sink into
+// the surface at one end and float at the other -- and it means the renderer
+// needs no access to the Track to draw one.
+struct SkidMark {
+    float c[4][3] = {};   // world-space corners, in quad order
+    double age = 0, life = 0;
+    double strength = 0;  // 0..1 at spawn, from how hard the car was sliding
+};
+
+// Roughly 25 s of continuous sliding by two cars at the spacing below. Sized
+// to cover a genuine multi-car incident rather than to a memory limit: the
+// whole list is 1200 * 60 bytes, under 72 KB.
+constexpr int kSkidMarkCap = 1200;
+
+// Distance between marks along a slide. Small enough that consecutive soft-
+// edged quads overlap into a continuous streak rather than a dotted line,
+// which is what decides whether this reads as rubber or as debris.
+constexpr double kSkidMarkSpacing = 0.55;
+
 struct ParticleSystem {
     std::vector<Particle> particles;
+    // L6: laid rubber, and the per-car distance accumulator that spaces it.
+    // Accumulating DISTANCE rather than spawning per frame is what makes the
+    // spacing frame-rate independent -- a per-frame spawn lays marks twice as
+    // densely at 120 fps as at 60, which is the kind of thing that looks fine
+    // on the machine it was written on.
+    std::vector<SkidMark> skids;
+    std::vector<double> skidAccum;
     // JS's own independent `rngP = mulberry32(4242)` stream
     // (index.html:3277) -- kept separate from the sim's rng/rngR so
     // cosmetic particle jitter can never perturb a determinism-checked
     // replay.
     Mulberry32 rng{4242};
 };
+
+// Lays one mark under a sliding car, if it has travelled far enough since the
+// last one. `slide` is the 0..1 slide severity (Car::slipFx). Returns true if
+// a mark was actually laid, which is what the test asserts on.
+bool laySkidMark(ParticleSystem& ps, const Track& track, const Car& c, double dt);
+
+// Ages skid marks and drops expired ones. Separate from integrateParticles()
+// because marks do not move -- they only fade.
+void ageSkidMarks(ParticleSystem& ps, double dt);
 
 // spawnP() (index.html:3279-3282): FIFO-evicts the oldest particle once at
 // the cap, exactly like JS's Array.shift().

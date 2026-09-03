@@ -395,13 +395,38 @@ else()
     AS_HEADERS
     OUT_FILES_VAR LHT_FS_TEXT_OUTPUTS
   )
-  add_custom_target(lht_shaders DEPENDS ${LHT_VS_FLAT_OUTPUTS} ${LHT_FS_FLAT_OUTPUTS}
+  set(LHT_ALL_SHADER_OUTPUTS
+    ${LHT_VS_FLAT_OUTPUTS} ${LHT_FS_FLAT_OUTPUTS}
     ${LHT_VS_LIT_OUTPUTS} ${LHT_FS_LIT_OUTPUTS} ${LHT_VS_SKY_OUTPUTS} ${LHT_FS_SKY_OUTPUTS}
     ${LHT_VS_TEXTURED_LIT_OUTPUTS} ${LHT_FS_TEXTURED_LIT_OUTPUTS}
     ${LHT_FS_BLOOM_BRIGHT_OUTPUTS} ${LHT_FS_BLOOM_BLUR_OUTPUTS} ${LHT_FS_GRADE_TONEMAP_OUTPUTS}
     ${LHT_VS_SKINNED_OUTPUTS} ${LHT_VS_CAR_OUTPUTS} ${LHT_FS_CAR_OUTPUTS}
     ${LHT_VS_PARTICLE_OUTPUTS} ${LHT_FS_PARTICLE_OUTPUTS}
     ${LHT_VS_TEXT_OUTPUTS} ${LHT_FS_TEXT_OUTPUTS})
+
+  # G31b: editing a shared shader HEADER must recompile the shaders that
+  # include it.
+  #
+  # bgfx.cmake's bgfx_compile_shaders() makes each output depend on its own
+  # .sc and varying def, and on nothing else. `atmos.sh` -- which carries the
+  # exposure and haze math that every lit surface in the game includes -- was
+  # therefore invisible to the build: changing it rebuilt nothing, the binary
+  # kept the old bytecode, and the change appeared to have no effect.
+  #
+  # Found the way these things are always found: a haze change was measured
+  # at 1.89% of pixels altered, which is noise, and the first assumption was
+  # that the change was too subtle. It had simply never been compiled. That is
+  # a silent-wrong-answer bug in the build, and it would have misled every
+  # future edit to this file the same way.
+  #
+  # add_custom_command(... APPEND) adds these DEPENDS to the rules
+  # bgfx_compile_shaders() already created, without reimplementing them.
+  file(GLOB LHT_SHADER_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/*.sh)
+  foreach(shaderOut IN LISTS LHT_ALL_SHADER_OUTPUTS)
+    add_custom_command(OUTPUT ${shaderOut} APPEND DEPENDS ${LHT_SHADER_HEADERS})
+  endforeach()
+
+  add_custom_target(lht_shaders DEPENDS ${LHT_ALL_SHADER_OUTPUTS})
   set(LHT_GENERATED_SHADERS_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders)
 endif()
 

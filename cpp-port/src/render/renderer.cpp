@@ -1489,6 +1489,12 @@ struct Renderer::WorldDrawList {
     // orientation depends on that view's own camera, unlike the shadow/car
     // matrices above which are camera-independent world transforms.
     const std::vector<Particle>* particles = nullptr;
+    // L6: laid rubber. Unlike the billboards above these are NOT per-view --
+    // the corners are baked in world space at spawn time, in the track's own
+    // banked plane -- but they ride in the same list because they want the
+    // same pass: alpha-blended, depth-tested against the world, drawn after
+    // the opaque cars.
+    const std::vector<SkidMark>* skids = nullptr;
 };
 
 void Renderer::submitWorld(bgfx::ViewId viewId, const float view[16], const float proj[16],
@@ -1646,12 +1652,41 @@ void Renderer::submitWorld(bgfx::ViewId viewId, const float view[16], const floa
     // since a billboard's orientation is inherently per-camera, unlike the
     // shadow/car matrices above which are camera-independent world
     // transforms.
-    if (draws.particles && !draws.particles->empty() && bgfx::isValid(particleTexture_)) {
+    const bool anyParticles = draws.particles && !draws.particles->empty();
+    const bool anySkids = draws.skids && !draws.skids->empty();
+    if ((anyParticles || anySkids) && bgfx::isValid(particleTexture_)) {
         const float rightX = view[0], rightY = view[4], rightZ = view[8];
         const float upX = view[1], upY = view[5], upZ = view[9];
 
-        std::vector<PosUvColorVertex> smokeVerts, sparkVerts;
-        for (const Particle& p : *draws.particles) {
+        std::vector<PosUvColorVertex> smokeVerts, sparkVerts, skidVerts;
+
+        // L6: skid marks. Built from their baked world-space corners rather
+        // than from a camera basis -- rubber lies on the track, it does not
+        // turn to face you.
+        //
+        // The particle sprite is reused deliberately. It is a radial gradient,
+        // so a stretched quad of it is a soft-edged smear, and consecutive
+        // overlapping smears along a slide blend into a continuous streak.
+        // A hard-edged rectangle would read as a decal stuck to the asphalt,
+        // which is the thing this is trying not to look like.
+        if (anySkids) {
+            for (const SkidMark& m : *draws.skids) {
+                const double g = 1.0 - m.age / m.life;
+                if (g <= 0.0) continue;
+                // Fade over the whole life rather than only at the end: rubber
+                // gets driven over and picked up continuously.
+                const float a = (float)(0.55 * m.strength * g);
+                const uint32_t col = packColor(0.10f, 0.09f, 0.09f, a);
+                auto v = [&](int i, float u, float w) {
+                    skidVerts.push_back({m.c[i][0], m.c[i][1], m.c[i][2], u, w, col});
+                };
+                v(0, 0.0f, 0.0f); v(1, 1.0f, 0.0f); v(2, 1.0f, 1.0f);
+                v(0, 0.0f, 0.0f); v(2, 1.0f, 1.0f); v(3, 0.0f, 1.0f);
+            }
+        }
+
+        for (size_t pi = 0; anyParticles && pi < draws.particles->size(); ++pi) {
+            const Particle& p = (*draws.particles)[pi];
             // JS's own per-frame size formula (index.html:3433-3436): grows
             // gently over life for smoke (size>=0.1), then both kinds
             // shrink out over roughly the last third of their life. `p.size`
@@ -1698,6 +1733,10 @@ void Renderer::submitWorld(bgfx::ViewId viewId, const float view[16], const floa
             bgfx::setState(baseState | blend);
             bgfx::submit(viewId, particleProgram_);
         };
+        // Rubber first: it is under everything else, and drawing it before
+        // the smoke means a cloud over a mark blends on top of it rather than
+        // the other way round.
+        drawBatch(skidVerts, BGFX_STATE_BLEND_NORMAL);
         drawBatch(smokeVerts, BGFX_STATE_BLEND_NORMAL);
         drawBatch(sparkVerts, BGFX_STATE_BLEND_ADD);
     }
@@ -1705,7 +1744,8 @@ void Renderer::submitWorld(bgfx::ViewId viewId, const float view[16], const floa
 
 void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& cars, double renderAlpha,
                             const PaceCar* pace, const MenuSelection* menu, const std::string* menuTrackName,
-                            const std::vector<Car*>* finishOrder, const std::vector<Particle>* particles) {
+                            const std::vector<Car*>* finishOrder, const std::vector<Particle>* particles,
+                            const std::vector<SkidMark>* skids) {
     // Phase 5c (PORT_PROGRESS.md): a new view (id 0, numerically below the
     // world view) for the sky background -- bgfx renders views in ascending
     // ID order regardless of submission order, so this MUST be a lower ID
@@ -2113,6 +2153,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     // wall-clock wheel state -- see WorldDrawList's comment in renderer.h.
     WorldDrawList draws;
     draws.particles = particles; // H4: shared read-only across every view
+    draws.skids = skids;         // L6: likewise -- world-space, so genuinely view-independent
 
     // Step 3 (PORT_PROGRESS.md, physics-driven car rig animation): the flat
     // textured quad that used to draw here is replaced by car_rig_data.h's

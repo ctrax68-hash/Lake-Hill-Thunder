@@ -114,7 +114,12 @@ public:
                       const PaceCar* pace = nullptr, const MenuSelection* menu = nullptr,
                       const std::string* menuTrackName = nullptr,
                       const std::vector<Car*>* finishOrder = nullptr,
-                      const std::vector<Particle>* particles = nullptr);
+                      const std::vector<Particle>* particles = nullptr,
+                      // L6: laid rubber, from the same ParticleSystem. A
+                      // separate list because a mark is world-space and
+                      // long-lived where a particle is view-space and
+                      // momentary; see particles.h's own note.
+                      const std::vector<SkidMark>* skids = nullptr);
 
     // Phase 3c (PORT_PROGRESS.md): stand-in for the CSS `#rotate` prompt
     // (index.html:140-147,203) shown whenever the viewport is portrait --

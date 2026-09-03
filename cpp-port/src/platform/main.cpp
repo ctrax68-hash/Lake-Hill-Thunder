@@ -556,7 +556,7 @@ void mainLoopTick(void* argPtr) {
             S.renderer.renderFrame(S.state, S.cars, renderAlpha, nullptr, nullptr, nullptr, &S.finishOrder);
         } else {
             S.renderer.renderFrame(S.state, S.cars, renderAlpha, &S.pace, nullptr, nullptr, nullptr,
-                                    &S.particles.particles);
+                                    &S.particles.particles, &S.particles.skids);
         }
     }
     ++S.frame;

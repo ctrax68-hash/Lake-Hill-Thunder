@@ -10445,3 +10445,189 @@ apart -- which is the actual root cause, not the number 8.
 `atlas_texture_test` gained the assertion that would have caught this: a
 painted spectator must be 0.3-0.8 m wide and 0.7-1.6 m tall in WORLD units.
 Verified to fail on the old 32x32 grid, where it reports exactly 0.22 x 0.13 m.
+
+## L6 (second half) -- Skid marks
+
+The dust above was one of the two things L6 asked for; this is the other, and
+it was genuinely unbuilt -- `grep skid src/` returned only the audio mixer's
+noise channel. Cars slid, screeched and smoked, and left nothing behind.
+
+**Reuses the alpha-blended particle pass rather than adding a new one.** The
+particle sprite is a radial gradient, so a stretched quad of it is a
+soft-edged smear, and consecutive overlapping smears along a slide blend into
+a continuous streak. A hard-edged rectangle would read as a decal stuck to the
+asphalt, which is the thing this is trying not to look like.
+
+**Corners are baked at spawn time from the track's own surface function** --
+the same `pos3()` the racing ribbon is built from -- so a mark lies in the
+banked plane. A flat quad on Big Sable's 23-degree banking would sink into the
+surface at one end and float at the other. It also means the renderer needs no
+access to the Track to draw one, and the marks are genuinely view-independent
+where the billboards next to them are not.
+
+A separate list from `Particle`, for two reasons: a mark is a different kind
+of thing (static, track-oriented, alive for tens of seconds against a puff of
+smoke's fraction of one), and sharing the 220-entry FIFO would mean a long
+slide evicting the smoke that slide is producing. Capped at 1200 marks, under
+72 KB.
+
+### The bug the test caught
+
+Marks are spaced by DISTANCE, with a per-car accumulator, because a per-frame
+spawn lays them twice as densely at 120 fps as at 60 -- which looks correct on
+whatever machine it was written on and wrong everywhere else.
+
+That accumulator was written, and then defeated one line further down by
+laying a single mark per call. At 40 m/s and 60 fps a car covers 0.667 m per
+frame, more than the 0.55 m spacing, so "one per call" silently became "one
+per frame" again:
+
+| | marks over the same 66.7 m |
+|---|---|
+| 60 fps, one mark per call | **100** |
+| 120 fps, one mark per call | **121** |
+| either rate, backlog laid | **121** |
+
+`particles_test` asserts the two frame rates agree over the same distance, and
+that assertion is what found it. Verified to fail with the loop reduced back to
+an `if`. The backlog is laid backwards along the track from the car's current
+station, which is where the car actually was when it earned each mark.
+
+### slipFx is saturated, and gating on it carpeted the track
+
+The obvious signal for "this car is sliding" is `Car::slipFx`, which already
+drives the tire smoke. It is unusable. Measured over 100 s of real racing on
+all four tracks, its **median, 90th and 99th percentiles are all 1.00** --
+`pastLimitAny` pins it to 1.0 whenever either axle is past its friction
+ellipse, and in this tire model that is essentially every tick of normal
+cornering. Gating on it pinned the 1200-mark cap on every single track inside
+the first two minutes: the whole circuit black.
+
+(That also means the tire smoke is emitting continuously in normal racing,
+which is a separate observation worth its own look and is not addressed here.)
+
+Replaced with **body slip angle** -- `atan2(|vy|, v)`, the angle between where
+the car points and where it is actually going, which is the plain-language
+definition of sliding and is not saturated:
+
+| track | p50 | p90 | p99 | max | over 10 deg |
+|---|---|---|---|---|---|
+| Thunder Oval | 1.81 | 6.61 | 22.70 | 75.85 | 3.4% |
+| Milltown | 2.54 | 8.13 | 32.82 | 84.31 | 7.4% |
+| Cedar Valley | 1.46 | 5.38 | 13.66 | 45.10 | 2.0% |
+| Big Sable | 3.42 | 7.50 | 8.41 | 14.65 | 0.1% |
+
+The onset angle was then swept against real races rather than picked --
+steady-state live marks, and the peak reached during an incident:
+
+| onset | Thunder | Milltown | Cedar | Big Sable |
+|---|---|---|---|---|
+| 10 deg | 418 / 1006 | 1192 / **1200** | 606 / 700 | 23 / 144 |
+| **14 deg** | **120 / 733** | **214 / 1200** | **308 / 410** | **5 / 9** |
+| 18 deg | 62 / 578 | 55 / 892 | 194 / 268 | **0 / 0** |
+| 22 deg | 1 / 483 | 9 / 569 | 119 / 177 | **0 / 0** |
+
+14 degrees is the only value where every track lays something -- 18 and above
+erase the superspeedway entirely -- while the steady state stays modest and
+only Milltown, the tightest track, reaches the cap, transiently, during an
+actual incident, which is when a lot of rubber is correct.
+
+It also gives the right per-track character for free, without any per-track
+tuning: the bullring marks up heavily, the superspeedway almost never does.
+That is how real tracks behave, and it falls out of the physics rather than
+being written down anywhere.
+
+Also pinned: nothing is laid by a car that is not sliding, or sliding below
+8 m/s (rubber comes from a tire scrubbing; marking the pit lane and the grid
+would be wrong); marks expire rather than accumulating forever; and a mark in
+a banked section has its two lateral edges at different heights, which a flat
+quad would not.
+
+## G25 leftover, second measurement -- backface culling is still correctly deferred
+
+The earlier pass measured that CULL_CW and CULL_CCW each destroy about a third
+of the image, established that the winding is genuinely mixed (the source says
+so in its own comments -- `buildStandMesh()` follows one convention,
+`buildOuterWallMesh()`/`buildCatchFenceMesh()` the opposite), and concluded
+this is a normalisation pass rather than a flag, deferred because it buys
+fill-rate on a target never measured as fill-bound.
+
+Now that P1's readout exists, that last clause can be tested. Same scene, same
+frame, two resolutions:
+
+| resolution | pixels | frame ms | cpu ms | gpu ms | draws | tris |
+|---|---|---|---|---|---|---|
+| 1280x720 | 921,600 | 41.30 | 39.34 | **42.69** | 106 | 83,621 |
+| 640x360 | 230,400 | 23.32 | 13.37 | **18.92** | 106 | 82,697 |
+
+Fitting `gpu = fixed + k*pixels` to those two points gives k = 3.44e-5 ms per
+pixel, so at 720p about **11.0 ms is fixed and 31.7 ms is pixel-proportional
+-- 74% of GPU time scales with fill**. On its face that is a strong argument
+for culling.
+
+**It does not settle the question, and it would be dishonest to claim it
+does.** The only renderer available in this container is llvmpipe, a software
+rasteriser, whose fill sensitivity is not representative of any GPU and least
+of all of a tile-based mobile one. This measurement characterises llvmpipe.
+
+What it does establish is the shape of the answer and the method: the same two
+captures on the user's phone, read straight off the on-screen readout, decide
+it in about a minute. That readout is the thing this round actually added, and
+the number that gates the normalisation work is now one the user can report
+rather than one nobody could obtain. Recorded with the decomposition so the
+next attempt starts from arithmetic instead of re-deriving it.
+
+## G31b -- A build bug that made shader-header edits do nothing
+
+Started from an observation and ended somewhere else, so both halves are
+recorded: the guess, the measurement that killed it, and the real defect it
+uncovered on the way.
+
+**The observation.** From the top-down camera on Big Sable the whole scene
+washes out to a flat grey-green, the oval barely visible.
+
+**The guess.** G25's haze is a pure exponential, `1 - exp(-dist * 0.0016)`,
+uncapped -- 0.91 at 1500 m, 0.99 by 3000 m. So distant geometry does not
+desaturate toward the sky, it becomes literally the fog colour. That looked
+like the explanation, and it also looked like the unrecognised cause of an
+older problem: the treeline added for depth was invisible at its first
+placement (980/880 m, a 79% blend) and had to be moved to 620/520 m and
+darkened.
+
+**The build bug.** The fix -- a 0.82 clamp in `atmos.sh` -- measured as 1.89%
+of pixels changed, which is noise, and the first assumption was that it was
+too subtle. It had never been compiled.
+
+`bgfx_compile_shaders()` makes each output depend on its own `.sc` and varying
+def, and on nothing else. `atmos.sh` carries the exposure and haze math that
+every lit surface in the game includes, and it was **invisible to the build**:
+editing it rebuilt nothing, the binary kept its old bytecode, and the change
+appeared to have no effect. Every future edit to that file would have been
+misled the same way, and it is the worst kind of build bug -- it does not
+fail, it silently answers the previous question.
+
+Fixed by appending the shader headers to the generated outputs' DEPENDS
+(`add_custom_command(... APPEND)`, so bgfx.cmake's own rules are extended
+rather than reimplemented). Verified: touching `atmos.sh` now regenerates
+`fs_lit`, and a deliberately extreme cap of 0.15 changes **87% of pixels**,
+against 0% for the shipped value -- which is how the pipeline was proved live
+before drawing any conclusion from a null result.
+
+**The measurement then killed the guess.** With the shader actually compiled,
+the 0.82 cap changes essentially nothing. From the top-down camera the scene
+sits 500-900 m away, giving blends of 0.55-0.76 -- comfortably *below* the
+cap, which only binds past about 1050 m. The wash-out is not saturation. It
+is G25's intended density acting over an elevated camera's uniformly long
+sight lines, and it is arguably correct: a real aerial view of a circuit on a
+hazy day does look like that.
+
+**What shipped, and why.** The cap stays, but on its own merits rather than
+the ones claimed above: it is the guarantee that a dramatic, unmeasured effect
+cannot delete the scene at any distance, and it costs one clamp. It is inert
+at every view distance the game currently produces, and the entry says so
+rather than implying a fix that was measured not to happen. Nothing under
+1050 m changes, so every G25 measurement is bit-identical.
+
+Density itself is deliberately NOT touched. It was tuned in G25 against the
+chase camera, which is the view players actually use, and re-tuning it to
+flatter a secondary camera would undo that.

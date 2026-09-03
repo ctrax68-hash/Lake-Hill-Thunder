@@ -207,6 +207,125 @@ int main() {
         expect(slow.particles.empty(), "a car crawling off-track raises no dust");
     }
 
+    // ---- L6: skid marks ----
+    {
+        const Track track(TRACKS[0]);
+        auto slidingCar = [&]() {
+            Car c;
+            c.idx = 0;
+            c.v = 40.0;
+            c.s = 100.0;
+            // Sliding is a BODY SLIP ANGLE, not slipFx -- slipFx is pinned at
+            // 1.00 through normal racing (median, p90 and p99 all 1.00 over
+            // 100 s on every track), so gating on it laid rubber everywhere.
+            // vy = 12 at v = 40 is atan(12/40) = 16.7 degrees, a real slide.
+            c.vy = 12.0;
+            return c;
+        };
+
+        // A car that is not sliding lays nothing, however fast it goes.
+        {
+            ParticleSystem ps;
+            Car c = slidingCar();
+            c.vy = 0.0; // pointed exactly where it is going: not sliding
+            for (int i = 0; i < 200; ++i) {
+                laySkidMark(ps, track, c, 0.016);
+                c.s += c.v * 0.016;
+            }
+            expect(ps.skids.empty(), "a car that is not sliding lays no rubber");
+        }
+
+        // A car sliding at speed does.
+        {
+            ParticleSystem ps;
+            Car c = slidingCar();
+            for (int i = 0; i < 200; ++i) {
+                laySkidMark(ps, track, c, 0.016);
+                c.s += c.v * 0.016;
+            }
+            expect(!ps.skids.empty(), "a car sliding at speed lays rubber");
+        }
+
+        // Crawling does not: rubber comes from a tire scrubbing, and marking
+        // the pit lane and the grid would be wrong.
+        {
+            ParticleSystem ps;
+            Car c = slidingCar();
+            c.v = 3.0;
+            for (int i = 0; i < 200; ++i) {
+                laySkidMark(ps, track, c, 0.016);
+                c.s += c.v * 0.016;
+            }
+            expect(ps.skids.empty(), "a car sliding at walking pace lays no rubber");
+        }
+
+        // THE PROPERTY THAT IS EASY TO GET WRONG: spacing is per METRE, not
+        // per frame. A per-frame spawn lays marks twice as densely at 120 fps
+        // as at 60 -- which looks fine on whatever machine it was written on
+        // and wrong everywhere else. Same distance covered, same rubber.
+        {
+            ParticleSystem slow, fast;
+            Car a = slidingCar(), b = slidingCar();
+            for (int i = 0; i < 100; ++i) { // 100 steps of 1/60 s
+                laySkidMark(slow, track, a, 1.0 / 60.0);
+                a.s += a.v / 60.0;
+            }
+            for (int i = 0; i < 200; ++i) { // 200 steps of 1/120 s: same 100/60 s
+                laySkidMark(fast, track, b, 1.0 / 120.0);
+                b.s += b.v / 120.0;
+            }
+            const int n60 = (int)slow.skids.size(), n120 = (int)fast.skids.size();
+            std::printf("skid marks over the same distance: %d at 60fps, %d at 120fps\n", n60, n120);
+            expect(n60 > 0 && std::abs(n60 - n120) <= 1,
+                   "skid-mark spacing is per metre, not per frame");
+        }
+
+        // Marks expire, and the list is capped so a long race cannot grow it
+        // without bound.
+        {
+            ParticleSystem ps;
+            Car c = slidingCar();
+            for (int i = 0; i < 200; ++i) {
+                laySkidMark(ps, track, c, 0.016);
+                c.s += c.v * 0.016;
+            }
+            const size_t before = ps.skids.size();
+            expect(before > 0, "expiry check needs marks to expire");
+            ageSkidMarks(ps, 60.0); // past the longest life
+            expect(ps.skids.empty(), "skid marks expire rather than accumulating forever");
+            expect((int)before <= kSkidMarkCap, "skid-mark list stays within its cap");
+        }
+
+        // Corners follow the track surface: a mark on a banked corner must lie
+        // in the banked plane, not flat. Asserted as the two lateral edges
+        // sitting at different heights wherever the track is banked -- a flat
+        // quad would have them equal, and would sink into the surface at one
+        // side.
+        {
+            ParticleSystem ps;
+            Car c = slidingCar();
+            // Find a banked station on this track rather than assuming one.
+            double bankedS = -1.0;
+            for (double s = 0; s < track.total(); s += 5.0)
+                if (std::fabs(track.bankAt(s)) > 0.05) { bankedS = s; break; }
+            expect(bankedS >= 0.0, "track 0 has a banked section to test against");
+            if (bankedS >= 0.0) {
+                c.s = bankedS;
+                for (int i = 0; i < 60 && ps.skids.empty(); ++i) {
+                    laySkidMark(ps, track, c, 0.016);
+                    c.s += 0.05; // creep, so the mark stays in the banked section
+                }
+                expect(!ps.skids.empty(), "a mark was laid in the banked section");
+                if (!ps.skids.empty()) {
+                    const SkidMark& m = ps.skids.front();
+                    // Corners 0 and 3 are the two lateral extremes at s0.
+                    const float dy = std::fabs(m.c[0][1] - m.c[3][1]);
+                    expect(dy > 0.01f, "a skid mark on banking lies in the banked plane");
+                }
+            }
+        }
+    }
+
     std::printf(g_failures == 0 ? "particles_test: PASS\n" : "particles_test: FAILURES ABOVE\n");
     return g_failures == 0 ? 0 : 1;
 }
