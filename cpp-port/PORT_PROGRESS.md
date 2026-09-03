@@ -10131,3 +10131,42 @@ actual phone, which G25 itself called the gate.
 
 Recorded as measured-and-rejected rather than left as a vague "still off", so
 the next attempt starts from the numbers instead of re-deriving them.
+
+## P1 -- The measurement G25 asked for, and what it immediately found
+
+G25 named frame-time on a real device as "the gate" for every graphics
+decision, then turned on `BGFX_DEBUG_STATS` and called it done. That overlay
+reports the right numbers in the 8x16 debug-text grid: on a phone it is a wall
+of unreadable characters, and it is not something a player can read off and
+report back. Three geometry slices then landed on a budget nobody had checked.
+
+Now that a real font exists, the figures that actually decide graphics work get
+a legible two-line readout (same `?stats=1` / `LHT_STATS` flag): FPS, frame ms,
+CPU ms, GPU ms, draw calls, triangles, texture memory. bgfx's own overlay is
+turned off -- it drew straight over the replacement, making both illegible.
+
+### It found a 450.9 MB texture budget
+
+First reading: **450.9 MB of texture memory**, against a predicted 470 MB for
+21 cars at 2048x2048 RGBA8 plus mips. `livery.h`'s own comment on the
+1024 -> 2048 bump (J1) admits it was made "with no measured device-memory
+budget anywhere in this project to check it against."
+
+Half a gigabyte of texture is not a budget a mobile browser has. This is the
+most likely single reason the game has struggled on the user's actual phone,
+and no amount of the geometry work in G28/G29 would have mattered against it.
+
+**Fix: full resolution for the player's car, half for everyone else.**
+450.9 MB -> **130.9 MB**, a 71% cut, with the player's own car untouched at
+2048 -- it is the one vehicle on screen at all times a few metres from a chase
+camera, and it is what J1's readability argument was actually about. The other
+twenty are seen at distance and through a rear-view mirror.
+
+The reduction costs nothing to produce: mip level 1 of the chain that is built
+anyway IS the box-filtered 1024 image, so the AI upload skips level 0 and sends
+the rest. `livery.cpp` is untouched, and the bake still supersamples at full
+resolution, so the 1024 is a properly filtered reduction rather than a coarser
+drawing.
+
+Other figures from the same reading, now on the record for the first time:
+**104 draw calls, 83,601 triangles** per frame.

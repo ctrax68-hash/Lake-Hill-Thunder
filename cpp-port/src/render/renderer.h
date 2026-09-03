@@ -305,6 +305,9 @@ private:
     // at), only by shutdown().
     std::unordered_map<int, bgfx::TextureHandle> carTextures_;
     bgfx::TextureHandle getOrBuildCarTexture(const Car& car);
+    // Full resolution for the player's own car, half for everyone else. See
+    // renderer.cpp for the 450.9 MB measurement that motivated it.
+    bgfx::TextureHandle uploadLivery(const std::vector<uint8_t>& mipChain, bool fullSize);
     // G20: the pace car's livery, cached in carTextures_ under a reserved
     // negative key (real Car::num values are always positive 1-2 digit race
     // numbers, so no collision is possible).

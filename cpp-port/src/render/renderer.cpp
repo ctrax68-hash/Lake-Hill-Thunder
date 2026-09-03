@@ -5,6 +5,7 @@
 #include "env_presets.h"
 #include "font_atlas.h"
 #include "hud.h"
+#include "hud_text.h"
 #include "livery.h"
 #include "particle_texture.h"
 #include "shaders_embedded.h"
@@ -491,7 +492,13 @@ bool Renderer::init(void* nativeDisplayHandle, void* nativeWindowHandle, int wid
     // already uses. Opt-in via ?stats=1 (LHT_STATS natively) -- see
     // showStats() for why this project needed measurement before adding
     // any more geometry.
-    bgfx::setDebug(BGFX_DEBUG_TEXT | (showStats() ? BGFX_DEBUG_STATS : 0));
+    // BGFX_DEBUG_STATS is deliberately NOT enabled any more. It reports the
+    // right numbers in the 8x16 debug-text grid, which on a phone is a wall of
+    // unreadable characters -- and it draws over the top of the readout that
+    // replaced it, making both illegible. renderFrame() now reads
+    // bgfx::getStats() directly and draws the handful of figures that matter
+    // in the real UI font instead.
+    bgfx::setDebug(BGFX_DEBUG_TEXT);
 
     layout_.begin()
         .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
@@ -1379,6 +1386,40 @@ void Renderer::renderBlockedFrame() {
     bgfx::frame();
 }
 
+// Uploads a baked livery, at full resolution for the player's own car and at
+// half for everyone else.
+//
+// WHY. The first real frame-time/memory reading this project has ever taken
+// (the perf readout above) reported **450.9 MB of texture memory** -- against a
+// predicted 470 MB for 21 cars at 2048x2048 RGBA8 plus mips. livery.h's own
+// comment on the 1024->2048 bump admits it was made "with no measured
+// device-memory budget anywhere in this project to check it against". There is
+// one now, and half a gigabyte of texture is not a budget a mobile browser has:
+// it is the most likely single reason this game struggles on a real phone.
+//
+// The player's car keeps every pixel J1 bought. It is the one vehicle on screen
+// at all times, a few metres from a chase camera, and it is what J1's
+// readability argument was actually about. The other twenty are seen at
+// distance and through a rear-view mirror.
+//
+// The half-size upload costs nothing to produce: mip level 1 of the chain that
+// is built anyway IS the box-filtered 1024 image, so this skips level 0 and
+// uploads the rest. No change to livery.cpp, and the bake still supersamples at
+// full resolution, so the 1024 is a properly filtered reduction rather than a
+// coarser drawing.
+bgfx::TextureHandle Renderer::uploadLivery(const std::vector<uint8_t>& mipChain, bool fullSize) {
+    const size_t level0Bytes = (size_t)kLiveryTextureSize * kLiveryTextureSize * 4;
+    if (fullSize || mipChain.size() <= level0Bytes) {
+        return bgfx::createTexture2D((uint16_t)kLiveryTextureSize, (uint16_t)kLiveryTextureSize, true, 1,
+                                     bgfx::TextureFormat::RGBA8, 0,
+                                     bgfx::copy(mipChain.data(), (uint32_t)mipChain.size()));
+    }
+    const uint16_t half = (uint16_t)(kLiveryTextureSize / 2);
+    return bgfx::createTexture2D(half, half, true, 1, bgfx::TextureFormat::RGBA8, 0,
+                                 bgfx::copy(mipChain.data() + level0Bytes,
+                                            (uint32_t)(mipChain.size() - level0Bytes)));
+}
+
 bgfx::TextureHandle Renderer::getOrBuildCarTexture(const Car& car) {
     auto it = carTextures_.find(car.num);
     if (it != carTextures_.end()) return it->second;
@@ -1388,9 +1429,7 @@ bgfx::TextureHandle Renderer::getOrBuildCarTexture(const Car& car) {
     // instead of one flat texel) -- same "aliases on real mobile GPU
     // without a mip chain" lesson already learned once for the crowd atlas.
     const std::vector<uint8_t> liveryMips = buildRgba8MipChain(pixels, kLiveryTextureSize);
-    const bgfx::TextureHandle tex =
-        bgfx::createTexture2D((uint16_t)kLiveryTextureSize, (uint16_t)kLiveryTextureSize, true, 1,
-                               bgfx::TextureFormat::RGBA8, 0, bgfx::copy(liveryMips.data(), (uint32_t)liveryMips.size()));
+    const bgfx::TextureHandle tex = uploadLivery(liveryMips, car.isPlayer);
     carTextures_[car.num] = tex;
     return tex;
 }
@@ -1415,9 +1454,8 @@ bgfx::TextureHandle Renderer::getOrBuildPaceTexture() {
     const std::vector<uint8_t> pixels =
         buildLiveryPixels(Color3{0.93, 0.93, 0.95}, 0, 0, &paceScheme, /*paceLightBar=*/true);
     const std::vector<uint8_t> liveryMips = buildRgba8MipChain(pixels, kLiveryTextureSize);
-    const bgfx::TextureHandle tex =
-        bgfx::createTexture2D((uint16_t)kLiveryTextureSize, (uint16_t)kLiveryTextureSize, true, 1,
-                               bgfx::TextureFormat::RGBA8, 0, bgfx::copy(liveryMips.data(), (uint32_t)liveryMips.size()));
+    // Half size, like the field: the pace car is never the camera's subject.
+    const bgfx::TextureHandle tex = uploadLivery(liveryMips, /*fullSize=*/false);
     carTextures_[kPaceKey] = tex;
     return tex;
 }
@@ -2471,6 +2509,55 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             // variant later.
             bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_BLEND_ALPHA);
             bgfx::submit(kUiView, program_);
+        }
+
+        // ---- Perf readout ------------------------------------------------
+        //
+        // G25 turned on bgfx's own BGFX_DEBUG_STATS overlay, which reports the
+        // right numbers but draws them in the 8x16 debug-text grid: on a phone
+        // that is a wall of unreadable characters, and it is not something a
+        // player can read off and report back. Now that a real font exists,
+        // the handful of figures that actually decide graphics work get their
+        // own legible line.
+        //
+        // This is the measurement G25 named as the gate for every later
+        // graphics decision and which still did not exist in a usable form:
+        // three geometry slices have since been added to an unmeasured budget.
+        // Same flag (?stats=1 / LHT_STATS), so it costs nothing when off.
+        if (showStats()) {
+            const bgfx::Stats* st = bgfx::getStats();
+            if (st != nullptr) {
+                const double toMs = 1000.0 / (double)st->cpuTimerFreq;
+                const double cpuMs = (double)(st->cpuTimeEnd - st->cpuTimeBegin) * toMs;
+                const double gpuToMs = st->gpuTimerFreq > 0 ? 1000.0 / (double)st->gpuTimerFreq : 0.0;
+                const double gpuMs = (double)(st->gpuTimeEnd - st->gpuTimeBegin) * gpuToMs;
+                // frameMs is the wall-clock frame interval -- the number that
+                // actually corresponds to what the player feels, as opposed to
+                // CPU or GPU time in isolation.
+                const double frameMs = (double)(st->cpuTimeFrame) * toMs;
+                const double fps = frameMs > 0.0001 ? 1000.0 / frameMs : 0.0;
+
+                char line1[128], line2[128];
+                std::snprintf(line1, sizeof(line1), "%.1f FPS   %.2f ms  (cpu %.2f  gpu %.2f)", fps, frameMs,
+                              cpuMs, gpuMs);
+                std::snprintf(line2, sizeof(line2), "draws %d   tris %d   tex %.1f MB", (int)st->numDraw,
+                              (int)(st->numPrims[bgfx::Topology::TriList]),
+                              (double)st->textureMemoryUsed / (1024.0 * 1024.0));
+
+                // Right-hand side under the position panel: the only band of
+                // this HUD with nothing already in it. The left column is the
+                // leaderboard and status bars, the bottom corners are the lap
+                // panel and the touch controls.
+                const float bx = (float)width_ - 8.0f - 360.0f, by = 150.0f;
+                const float w1 = font::measure(line1, hudtext::kBody);
+                const float w2 = font::measure(line2, hudtext::kBody);
+                pushQuad(uiVerts, bx - 4.0f, by - 4.0f, std::max(w1, w2) + 12.0f, 44.0f,
+                         packColor(Theme::kBlack, 0.72f));
+                hudtext::draw(textVerts, bx, by + 14.0f, line1, hudtext::kBody,
+                              packColor(Theme::kYellow));
+                hudtext::draw(textVerts, bx, by + 34.0f, line2, hudtext::kBody,
+                              packColor(Theme::kGraycool));
+            }
         }
 
         // ---- G26: the text pass ------------------------------------------
