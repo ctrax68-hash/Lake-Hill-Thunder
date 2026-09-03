@@ -267,6 +267,13 @@ private:
     bgfx::VertexBufferHandle fenceVb_ = BGFX_INVALID_HANDLE;
     uint32_t fenceVertexCount_ = 0;
 
+    // G28: the jumbotron's screen face -- its own buffer because it binds the
+    // rear-view mirror's render target instead of the world atlas, so it
+    // cannot be batched into the static scenery draw. Empty (and never drawn)
+    // on the three tracks without a jumbotron.
+    bgfx::VertexBufferHandle jumbotronVb_ = BGFX_INVALID_HANDLE;
+    uint32_t jumbotronVertexCount_ = 0;
+
     // G5a (NASCAR-Thunder gap-analysis plan, track surface texture): the
     // ribbon's asphalt texture (track_surface_texture.h). The ribbon itself
     // uses texturedLitLayout_/texturedLitProgram_ (above) instead of
@@ -429,8 +436,13 @@ private:
     // pace car) into `viewId` with the given camera. Extracted from
     // renderFrame()'s formerly inline block so the mirror pass can reuse it
     // verbatim rather than growing a second, drift-prone copy.
+    // G28: `sampleMirror` gates the jumbotron screen, which binds the mirror
+    // render target. It must be FALSE for the mirror's own pass -- sampling a
+    // target while rendering into it is a feedback loop, and undefined. The
+    // mirror is submitted after the main view, so the screen shows the
+    // previous frame's mirror, which at jumbotron scale is invisible.
     void submitWorld(bgfx::ViewId viewId, const float view[16], const float proj[16], const float eye[3],
-                     const WorldDrawList& draws);
+                     const WorldDrawList& draws, bool sampleMirror);
 
     bgfx::CallbackI* callback_ = nullptr;
 };

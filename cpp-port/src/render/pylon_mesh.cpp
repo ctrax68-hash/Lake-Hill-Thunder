@@ -74,6 +74,55 @@ std::vector<MeshVertex> buildPylonMesh(const Track& track) {
     return out;
 }
 
+// G28 (graphics pass): the jumbotron's SCREEN, as its own mesh.
+//
+// buildJumbotronMesh() below draws the structure and an LED leaderboard on its
+// face -- a static list of car numbers. The reference's jumbotron shows live
+// race footage, and this port already has a render-to-texture path producing
+// exactly that: the rear-view mirror. Pointing the screen at it costs no new
+// render target, no new shader and no second camera pass -- the frame is being
+// rendered anyway.
+//
+// Separate from the structure mesh because it needs a DIFFERENT texture from
+// the rest of the world (the mirror target, not the atlas), so it cannot be
+// batched into the one static scenery buffer. Returned with 0..1 UVs; the
+// renderer owns the V-flip, since whether a render target reads top-down or
+// bottom-up is a backend property it is the only place that knows.
+//
+// Empty on every track without a jumbotron, same as the structure builder.
+std::vector<MeshVertex> buildJumbotronScreenMesh(const Track& track) {
+    std::vector<MeshVertex> out;
+    if (!track.stadium().jumbotron) return out;
+
+    const Seg& seg0 = track.segs()[0];
+    const Seg& seg2 = track.segs()[2];
+    const double cx = (seg0.A.x + seg0.B.x + seg2.A.x + seg2.B.x) / 4.0;
+    const double cz = (seg0.A.y + seg0.B.y + seg2.A.y + seg2.B.y) / 4.0;
+    // Inset inside the bezel that buildJumbotronMesh() draws, and a hair
+    // proud of its front face so the two do not z-fight.
+    constexpr double JB_W = 14.0, JB_H = 8.0, baseH = 6.0, kInset = 0.5;
+    const double x0 = cx - JB_W / 2 + kInset, x1 = cx + JB_W / 2 - kInset;
+    const double y0 = baseH + kInset, y1 = baseH + JB_H - kInset;
+    const double z = cz + 1.06;
+
+    auto v = [&](double x, double y, double u, double vv) {
+        MeshVertex m{};
+        m.x = x; m.y = y; m.z = z;
+        m.nx = 0.0; m.ny = 0.0; m.nz = 1.0;
+        m.color = {1.0, 1.0, 1.0};
+        m.u = u; m.v = vv;
+        return m;
+    };
+    // Two triangles, UVs spanning the full target.
+    out.push_back(v(x0, y1, 0.0, 0.0));
+    out.push_back(v(x1, y1, 1.0, 0.0));
+    out.push_back(v(x1, y0, 1.0, 1.0));
+    out.push_back(v(x0, y1, 0.0, 0.0));
+    out.push_back(v(x1, y0, 1.0, 1.0));
+    out.push_back(v(x0, y0, 0.0, 1.0));
+    return out;
+}
+
 std::vector<MeshVertex> buildJumbotronMesh(const Track& track) {
     std::vector<MeshVertex> out;
     if (!track.stadium().jumbotron) return out;

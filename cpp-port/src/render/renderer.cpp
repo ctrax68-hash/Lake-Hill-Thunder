@@ -10,6 +10,7 @@
 #include "shaders_embedded.h"
 #include "sky_texture.h"
 #include "hill_silhouette.h"
+#include "treeline.h"
 #include "pylon_mesh.h"
 #include "stadium_mesh.h"
 #include "track_surface.h"
@@ -741,6 +742,7 @@ void Renderer::shutdown() {
     if (bgfx::isValid(atlasTexture_)) bgfx::destroy(atlasTexture_);
     if (bgfx::isValid(stadiumTexturedVb_)) bgfx::destroy(stadiumTexturedVb_);
     if (bgfx::isValid(fenceVb_)) bgfx::destroy(fenceVb_); // G28
+    if (bgfx::isValid(jumbotronVb_)) bgfx::destroy(jumbotronVb_); // G28
     for (auto& [num, tex] : carTextures_) {
         if (bgfx::isValid(tex)) bgfx::destroy(tex);
     }
@@ -1092,6 +1094,10 @@ void Renderer::setTrack(const Track& track) {
         bgfx::destroy(fenceVb_);
         fenceVb_ = BGFX_INVALID_HANDLE;
     }
+    if (bgfx::isValid(jumbotronVb_)) { // G28
+        bgfx::destroy(jumbotronVb_);
+        jumbotronVb_ = BGFX_INVALID_HANDLE;
+    }
     if (bgfx::isValid(atlasTexture_)) bgfx::destroy(atlasTexture_);
     {
         const Stadium& st = track.stadium();
@@ -1129,6 +1135,11 @@ void Renderer::setTrack(const Track& track) {
         // require matching call order (see stadium_mesh.h's own "safe to
         // diverge" precedent).
         if (st.sky.silhouette == "hills") append(buildHillSilhouette(sceneryRng));
+        // G28/G29: a treeline on EVERY track. Three of the four had nothing
+        // between the grandstands and the sky -- the ground plane simply
+        // ended -- which reads as a hard cut at the horizon. Appended after
+        // the hills so on Cedar Valley the two layer, trees in front.
+        append(buildTreeline(track.theme().grass, sceneryRng));
         // G9 (NASCAR-Thunder gap-analysis plan, stadium bug fix): straight
         // margin shrunk 0.12/0.88 -> 0.03/0.97 and cornerCov (below) raised
         // -- the old values left a real, unflagged bare-dirt gap at every
@@ -1268,6 +1279,30 @@ void Renderer::setTrack(const Track& track) {
                 texturedLitLayout_);
         }
         fenceVertexCount_ = (uint32_t)fenceVerts.size();
+
+        // G28: the jumbotron screen, same textured-lit layout, its own buffer
+        // so the mirror target can be bound for it alone.
+        const std::vector<MeshVertex> jumboMesh = buildJumbotronScreenMesh(track);
+        std::vector<PosNormalUVVertex> jumboVerts;
+        jumboVerts.reserve(jumboMesh.size());
+        // Render-target textures are V-flipped on backends whose texture
+        // origin is bottom-left (GL/GLES, i.e. what the WASM build runs on).
+        // Baked into the buffer here rather than handled per-draw, because
+        // this is the only place that both knows the backend and owns the
+        // vertices -- the same flip the mirror composite applies to its own
+        // quad, just resolved at build time instead of every frame.
+        const bool flipV = bgfx::getCaps()->originBottomLeft;
+        for (const MeshVertex& v : jumboMesh) {
+            const float vv = flipV ? (float)(1.0 - v.v) : (float)v.v;
+            jumboVerts.push_back({(float)v.x, (float)v.y, (float)v.z, (float)v.nx, (float)v.ny, (float)v.nz,
+                                  (float)v.u, vv});
+        }
+        if (!jumboVerts.empty()) {
+            jumbotronVb_ = bgfx::createVertexBuffer(
+                bgfx::copy(jumboVerts.data(), (uint32_t)(jumboVerts.size() * sizeof(PosNormalUVVertex))),
+                texturedLitLayout_);
+        }
+        jumbotronVertexCount_ = (uint32_t)jumboVerts.size();
 
         Mulberry32 atlasRng(777);
         const std::vector<uint8_t> atlasPixels =
@@ -1419,7 +1454,7 @@ struct Renderer::WorldDrawList {
 };
 
 void Renderer::submitWorld(bgfx::ViewId viewId, const float view[16], const float proj[16],
-                            const float eye[3], const WorldDrawList& draws) {
+                            const float eye[3], const WorldDrawList& draws, bool sampleMirror) {
     bgfx::setViewTransform(viewId, view, proj);
     const float camPos[4] = {eye[0], eye[1], eye[2], 0.0f};
     bgfx::setUniform(uCamPos_, camPos);
@@ -1506,6 +1541,21 @@ void Renderer::submitWorld(bgfx::ViewId viewId, const float view[16], const floa
         bgfx::setTexture(0, uSkyTexColor_, atlasTexture_);
         bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_DEPTH_TEST_LESS |
                        BGFX_STATE_BLEND_ALPHA);
+        bgfx::submit(viewId, texturedLitProgram_);
+    }
+
+    // G28: the jumbotron screen, showing the rear-view mirror's render target
+    // as a live race feed. Opaque, depth-tested like any other solid surface;
+    // it is a screen, not a transparency.
+    //
+    // Skipped entirely on the mirror's own pass (see `sampleMirror`) -- and on
+    // the three tracks with no jumbotron, where the buffer is empty.
+    if (sampleMirror && jumbotronVertexCount_ > 0 && bgfx::isValid(jumbotronVb_) &&
+        bgfx::isValid(mirrorFb_)) {
+        bgfx::setTransform(identity);
+        bgfx::setVertexBuffer(0, jumbotronVb_, 0, jumbotronVertexCount_);
+        bgfx::setTexture(0, uSkyTexColor_, bgfx::getTexture(mirrorFb_));
+        bgfx::setState(state);
         bgfx::submit(viewId, texturedLitProgram_);
     }
 
@@ -2108,7 +2158,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
 
     // G23: the main view. Everything above only *computed* -- this is where
     // the world is actually submitted.
-    submitWorld(kView, view, proj, eyePos, draws);
+    submitWorld(kView, view, proj, eyePos, draws, /*sampleMirror=*/true);
 
     // ---- G23: rearview mirror -------------------------------------------
     //
@@ -2173,7 +2223,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             bgfx::submit(kMirrorView, skyProgram_);
         }
         const float mirrorEye[3] = {eye.x, eye.y, eye.z};
-        submitWorld(kMirrorView, mirrorView, mirrorProj, mirrorEye, draws);
+        submitWorld(kMirrorView, mirrorView, mirrorProj, mirrorEye, draws, /*sampleMirror=*/false);
         mirrorReady = true;
     }
     } // !showResults

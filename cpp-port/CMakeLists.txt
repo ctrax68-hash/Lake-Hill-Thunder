@@ -441,6 +441,7 @@ add_executable(lht_port
   src/render/ticker.cpp
   src/render/touch_buttons.cpp
   src/render/track_surface.cpp
+  src/render/treeline.cpp
   src/render/track_surface_texture.cpp
   src/render/ui_draw.cpp
   src/render/wheel_animation.cpp
@@ -595,7 +596,8 @@ add_test(NAME sky_texture_test COMMAND sky_texture_test)
 add_executable(stadium_mesh_test tests/stadium_mesh_test.cpp src/sim/track.cpp src/sim/car.cpp
   src/render/track_surface.cpp src/render/stadium_mesh.cpp src/render/gear_rpm.cpp
   src/render/atlas_texture.cpp src/render/digit_mesh.cpp
-  src/render/word_blit.cpp src/render/font_atlas.cpp src/render/texture_import.cpp)
+  src/render/word_blit.cpp src/render/font_atlas.cpp src/render/texture_import.cpp
+  src/render/treeline.cpp src/render/pylon_mesh.cpp)
 target_include_directories(stadium_mesh_test PRIVATE ${LHT_STB_INCLUDE_DIR})
 add_test(NAME stadium_mesh_test COMMAND stadium_mesh_test)
 

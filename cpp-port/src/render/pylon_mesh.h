@@ -17,4 +17,12 @@
 // `stadium.pylon`/`stadium.jumbotron` flag is false (every track but Big
 // Sable), so callers can invoke both unconditionally.
 std::vector<MeshVertex> buildPylonMesh(const Track& track);
+// G28: the jumbotron's screen face, as its own mesh so it can be drawn with
+// the rear-view mirror's render target bound instead of the world atlas -- a
+// live race feed on the big screen, reusing a frame the renderer already
+// produces rather than adding a second camera pass. UVs span 0..1; the
+// renderer owns the V-flip, since render-target row order is a backend
+// property only it knows. Empty on tracks without a jumbotron.
+std::vector<MeshVertex> buildJumbotronScreenMesh(const Track& track);
+
 std::vector<MeshVertex> buildJumbotronMesh(const Track& track);

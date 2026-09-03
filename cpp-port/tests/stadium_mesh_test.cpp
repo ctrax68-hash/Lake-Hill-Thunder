@@ -6,6 +6,8 @@
 
 #include "../src/render/stadium_mesh.h"
 #include "../src/render/track_surface.h"
+#include "../src/render/treeline.h"
+#include "../src/render/pylon_mesh.h"
 #include "../src/sim/car.h"
 #include "../src/sim/tracks_data.h"
 
@@ -222,6 +224,71 @@ int main() {
                        verts.size() == (size_t)FIELD * 2 * 36);
         }
         (void)halfW;
+    }
+
+    // G28/G29 horizon and jumbotron.
+    {
+        // Treeline: present on EVERY track (the whole reason it exists is that
+        // three of four had nothing between the stands and the sky), and it
+        // must ring the circuit OUTSIDE the track's own footprint. A treeline
+        // that cuts through the far corner is not a subtle defect.
+        {
+            Mulberry32 rng(777);
+            const auto verts = buildTreeline(TRACKS[0].theme.grass, rng);
+            expectTrue("buildTreeline emits geometry", !verts.empty());
+
+            // The track's own extent, measured rather than assumed.
+            double trackR = 0.0;
+            for (int i = 0; i < 240; ++i) {
+                const Vec3 p = pos3(t, t.total() * i / 240.0, wallLat(t));
+                trackR = std::max(trackR, std::sqrt(p.x * p.x + p.z * p.z));
+            }
+            double minR = 1e9, maxY = -1e9;
+            for (const auto& v : verts) {
+                minR = std::min(minR, std::sqrt((double)v.x * v.x + (double)v.z * v.z));
+                maxY = std::max(maxY, (double)v.y);
+            }
+            expectTrue("treeline rings the track without cutting through it", minR > trackR + 20.0);
+            expectTrue("treeline is tall enough to sit on the horizon", maxY > 12.0);
+        }
+
+        // Jumbotron screen: only on the track that has a jumbotron, one quad,
+        // facing the same way as the bezel it is inset into.
+        {
+            const auto none = buildJumbotronScreenMesh(t); // Thunder Oval: no jumbotron
+            expectTrue("no jumbotron screen on a track without a jumbotron", none.empty());
+
+            const Track big(TRACKS[3]); // Big Sable Speedway
+            const auto screen = buildJumbotronScreenMesh(big);
+            expectTrue("jumbotron screen exists on the track that has one", !screen.empty());
+            expectTrue("jumbotron screen is exactly one quad", screen.size() == 6);
+            if (screen.size() == 6) {
+                expectTrue("jumbotron screen faces +z, like its bezel", screen[0].nz > 0.9);
+                // Checked as a CORRESPONDENCE, not as min/max extremes. The
+                // first version of this assertion took the range of u and v
+                // across all six vertices and required 0..1 -- which a quad
+                // with one corner's u corrupted to 0.5 still satisfies, since
+                // the other corners keep the extremes intact. Verified by
+                // mutation: that version passed on a visibly broken quad.
+                //
+                // What actually matters is that each vertex's UV matches
+                // where that vertex IS: leftmost vertices sample u=0,
+                // rightmost u=1, top v=0, bottom v=1.
+                double xMin = 1e9, xMax = -1e9, yMin = 1e9, yMax = -1e9;
+                for (const auto& vv : screen) {
+                    xMin = std::min(xMin, vv.x); xMax = std::max(xMax, vv.x);
+                    yMin = std::min(yMin, vv.y); yMax = std::max(yMax, vv.y);
+                }
+                bool mapped = (xMax > xMin) && (yMax > yMin);
+                for (const auto& vv : screen) {
+                    const double wantU = (vv.x - xMin) / (xMax - xMin);
+                    // v runs top-down: the highest y is v=0.
+                    const double wantV = (yMax - vv.y) / (yMax - yMin);
+                    if (std::fabs(vv.u - wantU) > 1e-9 || std::fabs(vv.v - wantV) > 1e-9) mapped = false;
+                }
+                expectTrue("every jumbotron screen vertex samples the target point it sits at", mapped);
+            }
+        }
     }
 
     if (g_failures == 0) {

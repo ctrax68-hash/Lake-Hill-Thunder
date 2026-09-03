@@ -9929,3 +9929,78 @@ asserting the anchor exists.
 The crowd is still a painted texture rather than instanced spectators. The
 jumbotron live feed and the treeline are still open from G28. Backface culling
 remains off and now costs more with every solid box added.
+
+## G28/G29 completion -- the horizon, and a live feed on the jumbotron
+
+The two items left open from those slices, plus an honest note on the one I am
+deliberately not doing.
+
+### Treeline, on every track
+
+Three of the four tracks had **nothing** between the grandstands and the sky:
+the ground plane ended and the sky began. Only Cedar Valley had distant
+dressing, and its hill ring is gated on a per-track `sky.silhouette` field, so
+it was never going to cover the others.
+
+`buildTreeline()` rings the circuit with two rows at different radii -- one
+ring alone reads as a painted band however jagged you make its top edge; it is
+the near row's gaps showing the far row through them that reads as depth. Each
+segment carries its neighbour's height across so the tops join, and each gets
+its own shade jitter, because a silhouette with uniform colour stays a
+silhouette however ragged the outline.
+
+**The first attempt was invisible, and the reason is worth keeping.** I placed
+the rows at 980/880 -- inside the hills at 1400 -- and wrote in the header that
+G25's haze "does the rest". It does not: haze is exponential in distance, so at
+950 m the fog blend is ~79% and the treeline arrived as a pale smudge
+indistinguishable from sky. Halved to 620/520 (about as close as a full ring
+can come without cutting the far end of the track) and darkened substantially,
+since a real treeline at that range is a dark blue-green mass and anything near
+grass brightness is erased by the ~58% blend that remains.
+
+### The jumbotron shows the race
+
+It displayed a static LED leaderboard. The reference's shows live footage, and
+this port already renders exactly that every frame: the rear-view mirror's
+render target. Pointing the screen at it costs no new target, no new shader and
+no second camera pass.
+
+Two things had to be right. The screen is its own mesh and its own draw,
+because it binds a different texture from the rest of the world and so cannot
+join the static scenery batch. And it is **skipped on the mirror's own pass** --
+sampling a render target while rendering into it is a feedback loop. The mirror
+is submitted after the main view, so the screen shows the previous frame's
+mirror, which at jumbotron scale is invisible.
+
+### A guard that passed on a broken quad
+
+The jumbotron UV assertion first checked the *range* of u and v across the six
+vertices and required 0..1. Mutation testing found it worthless: corrupting one
+corner's u to 0.5 leaves the extremes intact, because other corners still carry
+0 and 1. It passed on a visibly broken quad.
+
+Rewritten as a correspondence -- every vertex must sample the target point it
+physically sits at -- and it fails on that mutation now. This is the second
+time this round a min/max assertion has turned out to check nothing; the
+pattern to distrust is *aggregate* bounds where the property is *per-element*.
+
+### The crowd: not doing it, and why
+
+The remaining G29 line was "crowd from a flat painted texture to instanced
+spectators". I am not doing that, and the reason is the same measurement that
+retired the instancing premise: this renderer batches all scenery into one
+static buffer, so instancing buys no draw calls here. The crowd is already
+per-cell randomised from a per-track palette with a hand-built mip chain, and
+at the distance the stands are actually viewed from, thousands of spectator
+billboards would cost real triangles to look very much the same. If the crowd
+is to improve, the lever is the texture, not the geometry -- and it is not
+currently the weakest thing on screen.
+
+### Verification
+
+`ctest` 35/35. `stadium_mesh_test` gains guards for both: the treeline must
+ring the track without cutting through its measured footprint, and the
+jumbotron screen must exist only on the track that has one, be exactly one
+quad, face the same way as its bezel, and map every vertex correctly. Both were
+mutation-tested; the treeline guard caught its mutation first time, the
+jumbotron one did not and was rewritten.
