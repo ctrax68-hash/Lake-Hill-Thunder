@@ -127,28 +127,83 @@ void paintFenceBand(Canvas& c, const AtlasRegion& r) {
     }
 }
 
-// paintCrowdTile() (index.html:2953-2965): exact port -- an 8px grid,
-// empty-seat base color, per-cell random fill (gated by crowdFill) from
-// the track's own palette, with a brightness jitter multiplier.
+// paintCrowdTile(): spectators at the size spectators actually are.
+//
+// G31. JS painted this as an 8 px grid (index.html:2953-2965) and the port
+// copied it exactly, including through G5b's head-rect addition. The grid was
+// never wrong in the texture; it was wrong against the WORLD, and nothing on
+// this side of the pipeline knew the mapping to notice. One tile covers
+// kCrowdTileWidthM x kCrowdTileSlopeM of seating, so an 8 px cell on a
+// 256 x 256 tile was a person **0.22 m wide and 0.12 m tall**. At that size no
+// arrangement of coloured rectangles can read as people -- it reads as static,
+// which is exactly how the crowd has looked in every screenshot of this
+// project.
+//
+// Derived from kSpectatorWidthM/kSpectatorHeightM instead: 14 columns by 4
+// rows, so a painted spectator lands at roughly 0.5 m x 1.0 m. That is 42
+// cells where there were 1024, so the bake also does 24x LESS work -- this is
+// not a quality-for-cost trade, the old version was spending a kilobyte of
+// fill calls to produce noise.
+//
+// The extra room per cell pays for the parts that make a figure read: a torso
+// with shoulders, a proper head, and a darker seat gap beneath. Aisles every
+// few columns break the field into sections, which is the other thing a real
+// grandstand has and a uniform random field does not.
 void paintCrowdTile(Canvas& c, const AtlasRegion& r, const std::array<std::array<double, 3>, 6>& palette,
                      double fillProb, Mulberry32& rng) {
+    // Empty seating, which is what shows through wherever nobody is sitting.
     c.fillRect(r.x, r.y, r.w, r.h, {38 / 255.0, 38 / 255.0, 42 / 255.0});
-    constexpr int cell = 8;
-    // G5b (NASCAR-Thunder gap-analysis plan, crowd variety): a small
-    // neutral-toned "head" rect on top of each filled cell's own jersey-
-    // colored torso fill -- still 2 fillRect() calls per cell (no
-    // resolution/perf change), just enough to break up the single-flat-
-    // color-per-cell look without a texture-budget increase.
+
+    const double cellW = (double)r.w / kCrowdCols;
+    const double cellH = (double)r.h / kCrowdRows;
     const std::array<double, 3> skin{0.55, 0.45, 0.38};
-    for (int py = r.y; py < r.y + r.h; py += cell) {
-        for (int px = r.x; px < r.x + r.w; px += cell) {
+    const std::array<double, 3> aisle{0.20, 0.20, 0.22};
+
+    for (int row = 0; row < kCrowdRows; ++row) {
+        const int py = r.y + (int)std::lround(row * cellH);
+        const int rowH = (int)std::lround(cellH);
+        for (int col = 0; col < kCrowdCols; ++col) {
             if (rng.next() > fillProb) continue;
-            const auto& col = palette[(size_t)(rng.next() * palette.size())];
+            const int px = r.x + (int)std::lround(col * cellW);
+            const int w = (int)std::lround(cellW);
+
+            const auto& col3 = palette[(size_t)(rng.next() * palette.size())];
             const double m = 0.7 + rng.next() * 0.4;
-            c.fillRect(px, py, cell - 1, cell - 1, {col[0] * m, col[1] * m, col[2] * m});
+            const std::array<double, 3> shirt{col3[0] * m, col3[1] * m, col3[2] * m};
+
+            // Proportions of a seated figure within its cell. The torso runs
+            // to the BOTTOM of the cell rather than stopping short: in a
+            // packed stand the row in front hides everything below the chest
+            // anyway, and leaving the lower cell empty made a full grandstand
+            // read as a dark field with specks in it -- the first version of
+            // this did exactly that. A 2-texel gap at the base is enough to
+            // keep rows distinct.
+            const int headH = std::max(2, (int)std::lround(rowH * 0.24));
+            const int gap = std::max(1, rowH / 24);
+            const int torsoTop = py + headH;
+            const int torsoH = std::max(2, (py + rowH - gap) - torsoTop);
+            const int inset = std::max(0, (int)std::lround(w * 0.06));
+            const int headW = std::max(2, (int)std::lround(w * 0.42));
+
+            c.fillRect(px + inset, torsoTop, w - 2 * inset, torsoH, shirt);
             const double headM = 0.85 + rng.next() * 0.3;
-            c.fillRect(px + 2, py, cell - 4, 3, {skin[0] * headM, skin[1] * headM, skin[2] * headM});
+            c.fillRect(px + (w - headW) / 2, py + std::max(1, headH / 3), headW, headH,
+                       {skin[0] * headM, skin[1] * headM, skin[2] * headM});
         }
+    }
+
+    // Aisles, drawn OVER the seating rather than by skipping a column.
+    //
+    // Real stands have stairways, and they are the clearest single cue that a
+    // coloured field is seating rather than a pattern. Skipping whole columns
+    // was the first approach and cost half a metre of crowd per aisle, which
+    // is both wrong (a stair is narrower than a seat) and expensive in the one
+    // currency that matters here -- how full the stand looks.
+    constexpr int kAisleEvery = 5;
+    const int aisleW = std::max(1, (int)std::lround(cellW * 0.30));
+    for (int col = kAisleEvery; col < kCrowdCols; col += kAisleEvery) {
+        const int px = r.x + (int)std::lround(col * cellW) - aisleW / 2;
+        c.fillRect(px, r.y, aisleW, r.h, aisle);
     }
 }
 

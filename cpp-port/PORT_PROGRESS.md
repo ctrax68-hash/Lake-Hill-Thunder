@@ -10330,3 +10330,118 @@ label strings -- taken from the same `kPitSetupLabels` array `drawPitSetup()`
 draws from, so it cannot pass by measuring something else -- against the real
 column at the real size, with an 8 px minimum gap. Verified to FAIL at the old
 11 and pass at 14.
+
+## L7 -- Sense of speed: the camera drops, and impacts are felt
+
+Two changes to the chase camera, both small, both aimed at the same standing
+complaint that the game does not feel fast.
+
+**The eye drops with speed.** JS used a flat 2.55 m and the port copied it.
+Eye height is the strongest cheap lever there is on perceived speed, and the
+reason is geometric: for a camera at height `h`, a ground point at the bottom
+of the frame sits at horizontal distance `d = h / tan(phi)` for a fixed
+frame-bottom angle `phi`, and its angular rate as the camera moves at `v` is
+`v*h / (d^2 + h^2)`, which reduces to **`v / h` times a constant**. Optical
+flow at the bottom of the frame is inversely proportional to eye height.
+
+Easing 2.55 -> 2.15 m by racing speed therefore buys **2.55/2.15 = 1.19x, a
+19% increase in foreground flow**, at zero rendering cost. Deliberately
+smaller than the FOV push already present (H5's 58 -> 72 degrees), because
+both act on the same perception and stacking two large effects reads as a
+lurch rather than as speed.
+
+**Impacts shake the camera, and the first attempt at it did not work.**
+`step_car.cpp` says outright that JS's `S.shakeT` was "intentionally not
+ported -- render only", so hitting a wall moved the car and did nothing to the
+view. `Car::hitFx` is already accumulated at both impact sites and already
+decays, so the signal existed; only particles and audio ever read it.
+
+The first version added the shake to the camera's *target* and was
+self-defeating. The eye chases its target through a first-order filter at
+11 rad/s; the shake runs at 47 rad/s (7.5 Hz). Working out the discrete
+filter's response at 60 fps gives a gain of **0.234** at that frequency, so a
+0.30 m shake arrived at the eye as **7 cm** and "you just hit a wall" read as
+a faint tremor.
+
+A camera shake is a perturbation of where the eye *is* for one frame, not a
+place the camera should smoothly travel toward. Moved to the view matrix,
+after the smoothing and outside the persistent `chaseEye_` state, so the full
+amplitude lands and successive frames cannot accumulate it into a drift.
+Dropped to 0.22 m accordingly -- 0.22 m delivered against 0.07 m before, 3.1x
+more, from a smaller number.
+
+The noise is deterministic pseudo-noise off the frame clock, not an RNG draw:
+the sim's RNG streams are part of race determinism and nothing render-side may
+advance them.
+
+## L6 -- Dust when you leave the racing surface
+
+A car on the grass looked exactly like a car on the asphalt. That is a missing
+visual, and more importantly a missing *gameplay* cue -- off-track is where
+the grip penalty lives, and the player had no signal for it beyond the car
+feeling strange.
+
+Brown particles (0.55/0.44/0.28 against tire smoke's grey), emitted from the
+rear wheels, gated on `|lat| > track.halfW()` -- the same test `step_car.cpp`
+uses to apply the grip penalty, so the dust appears exactly when the handling
+changes rather than at some independently-tuned threshold. Above 6 m/s only:
+dust comes from wheels doing work, and a car rolling to a stop in the grass
+should not be throwing up a rooster tail.
+
+One structural note: the emit call sits BEFORE `emitCarParticles()`'s
+early-out. That early-out tests slip/hit/damage, so a clean car sliding
+through the grass would have returned before reaching the new rule.
+
+`particles_test` pins the behaviour rather than a particle count (the count is
+random): nothing on the surface, something off it at speed, nothing off it at
+walking pace, and the colour is brown rather than smoke-grey. Each assertion
+verified to fail with the rule disabled and with the colour set to grey.
+
+## G31 -- The crowd was painted 12 cm tall
+
+The reference footage shows thousands of individual spectators. This build's
+crowd has read as coloured static in every screenshot of the project, and the
+standing plan called for replacing the painted texture with instanced or
+billboarded people. It did not need instancing. It needed the right scale.
+
+`paintCrowdTile()` was an exact port of JS's 8 px grid (index.html:2953-2965),
+and the port kept it through G5b's head-rect addition. The grid was never
+wrong in the texture -- it was wrong against the WORLD, and nothing on the
+painting side knew the mapping to notice. `buildStandMesh()` maps one tile
+onto 7.0 m of stand by one tier's sloped seat face (~4.1 m), so on a 256x256
+tile an 8 px cell is a person **0.22 m wide and 0.12 m tall**.
+
+People are not 12 cm tall. At that size no arrangement of coloured rectangles
+can read as a crowd; it can only read as noise.
+
+**Every test the crowd had passed the whole time**, because they all asked
+about the texture in texel space -- is the fill proportion right, is a cell a
+solid block -- and the defect was in the mapping to world space. This is the
+same shape as G30's pit-panel label bug found the same day: a constant that is
+internally consistent and externally wrong is invisible to any test that only
+checks internal consistency.
+
+Rebuilt from `kSpectatorWidthM`/`kSpectatorHeightM`: a 14 x 4 grid, putting a
+painted spectator at **0.50 m x 1.02 m**. Consequences:
+
+- 42 cells where there were 1024, so the bake does **24x less work**. This was
+  not a quality-for-cost trade; the old version spent a kilobyte of fill calls
+  to produce static.
+- The room per cell pays for a figure that reads: torso with shoulders, a
+  proper head, and a seat gap beneath.
+- Aisles every 5th column. A uniform random field is the one thing a real
+  grandstand never looks like, and stairways are the clearest cue that a
+  coloured field is seating. Drawn as narrow stripes OVER the seating at 30%
+  of a seat width -- the first version skipped whole columns, which is both
+  wrong (a stair is narrower than a seat) and cost half a metre of crowd per
+  aisle, measurably darkening the stand.
+- Spectator coverage of the tile went **58.1% -> 66.2%**, so the stands read
+  fuller, not emptier, despite having structure in them now.
+
+`kCrowdTileWidthM` now lives in `atlas_texture.h` and `stadium_mesh.cpp` takes
+its tiling length from it, so the mesh and the painter can no longer drift
+apart -- which is the actual root cause, not the number 8.
+
+`atlas_texture_test` gained the assertion that would have caught this: a
+painted spectator must be 0.3-0.8 m wide and 0.7-1.6 m tall in WORLD units.
+Verified to fail on the old 32x32 grid, where it reports exactly 0.22 x 0.13 m.

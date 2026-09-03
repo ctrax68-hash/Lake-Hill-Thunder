@@ -154,7 +154,15 @@ StandMeshResult buildStandMesh(const Track& track, double sStart, double sEnd, i
                 // is the world-space width one tile of painted crowd
                 // represents, so people now come out the same size
                 // everywhere.
-                constexpr double kCrowdTile = 7.0;
+                //
+                // G31: this number is now shared with the painter. It is what
+                // a crowd texel is worth in metres, and while it lived only
+                // here the painter had no way to size a spectator -- which is
+                // how the crowd ended up painted at 12 cm tall. Taking it from
+                // atlas_texture.h means changing the tiling changes the
+                // painted scale to match, instead of silently un-sizing the
+                // people.
+                constexpr double kCrowdTile = kCrowdTileWidthM;
                 const int nTile = std::max(1, (int)std::lround((sb - sa) / kCrowdTile));
                 for (int j = 0; j < nTile; ++j) {
                     const double ta0 = sa + (sb - sa) * j / nTile;

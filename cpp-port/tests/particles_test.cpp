@@ -175,6 +175,38 @@ int main() {
         expectNear("slipFx decayed by tickParticles too", cars[0].slipFx, std::max(0.0, 1.0 - 0.05 * 3.5));
     }
 
+    // ---- L6: off-track dust ----
+    //
+    // The cue that was missing entirely: a car on the grass looked exactly
+    // like a car on the asphalt. Pinned as a behaviour rather than a particle
+    // count, since the count is random -- on the track, nothing; off it at
+    // speed, something; and the dust must be brown, or it is just tire smoke
+    // in the wrong place.
+    {
+        ParticleSystem ps;
+        Car c;
+        c.v = 40.0;
+        // Clean car: no slip, no impact, no damage, so ONLY the dust rule can
+        // emit anything here.
+        emitCarParticles(ps, c, 0, 0, 0, 1, 0, 0.05, /*offTrack=*/false);
+        expect(ps.particles.empty(), "a clean car on the racing surface emits nothing");
+
+        for (int i = 0; i < 40 && ps.particles.empty(); ++i)
+            emitCarParticles(ps, c, 0, 0, 0, 1, 0, 0.05, /*offTrack=*/true);
+        expect(!ps.particles.empty(), "a car off the racing surface throws up dust");
+        if (!ps.particles.empty()) {
+            const Particle& d = ps.particles.front();
+            expect(d.col[0] > d.col[2] + 0.15, "off-track dust is brown, not smoke-grey");
+        }
+
+        // Crawling off-track does not: dust comes from wheels doing work.
+        ParticleSystem slow;
+        Car s2;
+        s2.v = 1.0;
+        for (int i = 0; i < 40; ++i) emitCarParticles(slow, s2, 0, 0, 0, 1, 0, 0.05, /*offTrack=*/true);
+        expect(slow.particles.empty(), "a car crawling off-track raises no dust");
+    }
+
     std::printf(g_failures == 0 ? "particles_test: PASS\n" : "particles_test: FAILURES ABOVE\n");
     return g_failures == 0 ? 0 : 1;
 }

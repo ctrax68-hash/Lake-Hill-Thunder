@@ -70,8 +70,13 @@ void integrateParticles(ParticleSystem& ps, double dt);
 // `bx - M[0]*1.7` / `bx + M[0]*1.9` (M's column 0 is the car's own forward
 // axis in JS's carModelMat -- see H3's PORT_PROGRESS.md entry for the full
 // column-mapping derivation this reuses).
+// L6: `offTrack` (|lat| past the track half-width) adds thrown-up dirt from
+// the rear wheels. Nothing here keyed on leaving the racing surface before, so
+// dropping a wheel onto the grass looked identical to staying on it -- a
+// missing visual and, more importantly, a missing cue for the grip penalty
+// that lives out there.
 void emitCarParticles(ParticleSystem& ps, Car& c, double posX, double posY, double posZ, double fwdX,
-                      double fwdZ, double dt);
+                      double fwdZ, double dt, bool offTrack = false);
 
 // Top-level per-frame entry point: for every car, derives its world
 // position (pos3(), the same banked-surface function the renderer's own

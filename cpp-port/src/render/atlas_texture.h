@@ -50,6 +50,36 @@ inline constexpr AtlasRegion kAtlasSponsor{256, 128, 256, 256};
 inline constexpr AtlasRegion kAtlasCrew{0, 384, 256, 64};
 inline constexpr int kAtlasSponsorCount = 8;
 
+// G31: the world-space footprint one crowd tile covers, which is what makes
+// the painted spectators the right SIZE rather than a fine random noise.
+//
+// The tile is mapped by stadium_mesh.cpp's buildStandMesh(): `kCrowdTile`
+// metres along the stand, by one tier's sloped seat face. Those two numbers
+// are what a texel is worth in metres, and until G31 nothing on the painting
+// side knew them -- the tile was a flat 32x32 grid of 8 px cells regardless,
+// which put a "person" at 0.22 m wide and 0.12 m tall. People are not 12 cm
+// tall, so the crowd resolved as static instead of as a stand full of
+// spectators.
+//
+// Declared here, next to the region it describes, so the painter and the mesh
+// cannot drift apart: stadium_mesh.cpp's kCrowdTile is asserted equal to this
+// in atlas_texture_test.
+inline constexpr double kCrowdTileWidthM = 7.0;
+// Nominal slope length of one seat tier, sqrt(tierD^2 + tierH^2). Real values
+// run 3.83 m (Thunder Oval, 3.2/2.1) to 4.77 m (Big Sable, 4.0/2.6); one
+// nominal figure is used because a +-20% difference in painted person height
+// between tracks is not something anyone can see, and per-track atlases would
+// cost four bakes to fix an invisible problem.
+inline constexpr double kCrowdTileSlopeM = 4.1;
+// A seated adult, shoulders to seat and shoulder to shoulder. These are the
+// numbers the grid below is derived from rather than tuned pixel counts.
+inline constexpr double kSpectatorWidthM = 0.50;
+inline constexpr double kSpectatorHeightM = 1.15;
+// Resulting grid. Rounded to whole cells because a partial person at the tile
+// edge would tile into a visible seam.
+inline constexpr int kCrowdCols = (int)(kCrowdTileWidthM / kSpectatorWidthM + 0.5);   // 14
+inline constexpr int kCrowdRows = (int)(kCrowdTileSlopeM / kSpectatorHeightM + 0.5);  // 4
+
 // atlasUV() (index.html:2909-2921): inset a few texels from each tile's
 // edge so UVs never sample the literal boundary pixel. Returns
 // {u0,v0,u1,v1} normalized to [0,1].

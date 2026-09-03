@@ -42,10 +42,36 @@ void integrateParticles(ParticleSystem& ps, double dt) {
 }
 
 void emitCarParticles(ParticleSystem& ps, Car& c, double posX, double posY, double posZ, double fwdX,
-                      double fwdZ, double dt) {
+                      double fwdZ, double dt, bool offTrack) {
+    // L6: dust when a car runs off the racing surface.
+    //
+    // Nothing here keyed on leaving the track, so dropping a wheel onto the
+    // grass or the apron looked exactly like staying on it -- no dust, no
+    // spray, nothing. That is both a missing visual and a missing GAMEPLAY
+    // cue: off-track is where the grip penalty lives, and the player had no
+    // signal for it beyond the car feeling odd.
+    //
+    // Brown rather than the tire smoke's grey, and emitted from the rear
+    // wheels, so it reads as thrown-up dirt instead of lock-up smoke.
+    if (offTrack && c.v > 6.0 && !c.out) {
+        Mulberry32& rd = ps.rng;
+        const double dustCol[3] = {0.55, 0.44, 0.28};
+        const int puffs = c.v > 25.0 ? 2 : 1;
+        for (int i = 0; i < puffs; ++i) {
+            if (rd.next() < 0.75) {
+                spawnParticle(ps, posX - fwdX * 1.6 + (rd.next() - 0.5) * 1.4, posY + 0.15,
+                              posZ - fwdZ * 1.6 + (rd.next() - 0.5) * 1.4, (rd.next() - 0.5) * 2.5,
+                              0.9 + rd.next() * 1.1, (rd.next() - 0.5) * 2.5, 0.5 + rd.next() * 0.4,
+                              0.20, dustCol);
+            }
+        }
+    }
+
     // Early-out matching JS's own (index.html:3323) -- not load-bearing
     // (nothing below would spawn anyway with all three false), just avoids
-    // rolling the RNG for cars with nothing to emit.
+    // rolling the RNG for cars with nothing to emit. Sits AFTER the dust
+    // above, which has its own trigger and would otherwise be skipped for a
+    // clean car sliding through the grass.
     if (!(c.slipFx > 0) && !(c.hitFx > 0) && !(c.dmg > 0.6)) return;
 
     Mulberry32& r = ps.rng;
@@ -86,7 +112,11 @@ void tickParticles(ParticleSystem& ps, std::vector<Car>& cars, const Track& trac
     for (auto& c : cars) {
         const double fwdX = std::cos(c.hdg), fwdZ = std::sin(c.hdg);
         const Vec3 p = pos3(track, c.s, c.lat);
-        emitCarParticles(ps, c, p.x, p.y, p.z, fwdX, fwdZ, dt);
+        // L6: "off the racing surface" is |lat| past the track half-width --
+        // the same test step_car.cpp uses to apply its grip penalty, so the
+        // dust appears exactly when the handling changes.
+        const bool offTrack = std::fabs(c.lat) > track.halfW();
+        emitCarParticles(ps, c, p.x, p.y, p.z, fwdX, fwdZ, dt, offTrack);
     }
     integrateParticles(ps, dt);
 }

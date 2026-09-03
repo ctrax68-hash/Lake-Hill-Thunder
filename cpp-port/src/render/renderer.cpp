@@ -1871,6 +1871,9 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         // establishing/caution-montage alternate camera branches
         // (index.html:3293-3437) -- out of scope for this Phase 5 pass,
         // deferred to a future session (not on Phase 5's own checklist).
+        // L7: impact shake, kept OUT of the smoothed camera state on purpose
+        // -- see where it is filled in below.
+        double shakeX = 0.0, shakeY = 0.0, shakeZ = 0.0;
         if (car && track_) {
             const auto now = std::chrono::steady_clock::now();
             double dtSec = 0.0;
@@ -1893,7 +1896,21 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             const double fwx = std::cos(th), fwz = std::sin(th); // fw.y == 0
             const Vec3 up = surfaceUp(*track_, chasePose.s);
 
-            const double dist = 6.9 + car->v * 0.020, hgt = 2.55; // index.html:3438
+            // L7 (sense of speed): the camera drops as the car goes faster.
+            //
+            // Eye HEIGHT is the strongest cheap lever on perceived speed --
+            // ground detail sweeps through the frame faster the closer the eye
+            // is to it, which is why every racing game sits the camera low.
+            // JS used a flat 2.55; this eases to 2.15 by racing speed, a 16%
+            // drop, which is enough to feel and small enough not to lose sight
+            // of the car ahead.
+            //
+            // Deliberately smaller than the FOV push already here (H5's
+            // 58 -> 72 degrees). Both act on the same perception, and stacking
+            // two big effects reads as a lurch rather than as speed.
+            const double speedT = std::min(1.0, std::max(0.0, car->v / 60.0));
+            const double dist = 6.9 + car->v * 0.020;
+            const double hgt = 2.55 - 0.40 * speedT; // index.html:3438 used a flat 2.55
             double targetEyeX = base.x - fwx * dist + up.x * hgt;
             double targetEyeY = base.y + up.y * hgt;
             double targetEyeZ = base.z - fwz * dist + up.z * hgt;
@@ -1915,6 +1932,46 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             const double fovTgt = 58.0 + std::min(14.0, car->v * 0.14) + std::min(1.0, car->draftF) * 4.0;
             chaseSpeedFx_ = (float)car->v;
             chaseDraftFx_ = (float)car->draftF;
+
+            // L7: camera shake on impact.
+            //
+            // step_car.cpp's wall-contact block says outright that JS's
+            // S.shakeT was "intentionally not ported -- render only", so
+            // hitting a wall or another car moved the car and did nothing to
+            // the camera. A hit you do not feel is a hit that reads as the
+            // game glitching rather than as contact.
+            //
+            // Car::hitFx is already accumulated at both impact sites (the wall
+            // block and collide()) and already decays, so the signal exists --
+            // it was only ever consumed by particles and audio. Driving the
+            // camera from it needs no new state.
+            //
+            // Deterministic pseudo-noise from the frame clock rather than an
+            // RNG: the sim's RNG streams are part of race determinism and must
+            // not be advanced by anything render-side.
+            //
+            // NOT added to targetEye*. That was the first attempt and it is
+            // self-defeating: the eye chases its target through a first-order
+            // filter at 11 rad/s, and the shake runs at 47 rad/s (7.5 Hz).
+            // Working the discrete filter's response out at 60 fps, the gain
+            // at that frequency is |H| = 0.234 -- so a 0.30 m shake arrived as
+            // 7 cm, and "you hit a wall" read as a faint tremor. A camera
+            // shake is a perturbation of where the eye IS for one frame, not a
+            // place the camera should smoothly travel toward, so it is applied
+            // to the view matrix below, after the smoothing, and kept out of
+            // the persistent chaseEye_ state so successive frames cannot
+            // accumulate it into a drift.
+            {
+                const double shake = std::min(1.0, (double)car->hitFx) * 0.22;
+                if (shake > 0.001) {
+                    const double nowSec =
+                        std::chrono::duration<double>(now.time_since_epoch()).count();
+                    const double t = nowSec * 47.0;
+                    shakeX = std::sin(t) * shake;
+                    shakeY = std::sin(t * 1.7 + 1.1) * shake * 0.7;
+                    shakeZ = std::cos(t * 1.3 + 0.4) * shake;
+                }
+            }
 
             if (!chaseInitialized_) {
                 chaseEyeX_ = (float)targetEyeX;
@@ -1976,7 +2033,11 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
 
         mirrorUp = upBlend; // G23: the mirror leans with the same banked up-vector
 
-        const bx::Vec3 eye = {chaseEyeX_, chaseEyeY_, chaseEyeZ_};
+        // L7: the impact shake lands here, on the eye the view matrix is built
+        // from, and nowhere else -- chaseEye_ stays clean, so the offset is
+        // gone the moment hitFx decays instead of being smoothed back out.
+        const bx::Vec3 eye = {chaseEyeX_ + (float)shakeX, chaseEyeY_ + (float)shakeY,
+                              chaseEyeZ_ + (float)shakeZ};
         const bx::Vec3 at = {chaseLookX_, chaseLookY_, chaseLookZ_};
         const bx::Vec3 up = {(float)upBlend.x, (float)upBlend.y, (float)upBlend.z};
         // Base FOV (vertical) was a fixed 60, matching JS's own
@@ -2379,7 +2440,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         // same "mode-exclusive branches" precedent as the menu branch below.
         const std::vector<const Car*> order = computeRaceOrder(cars);
         const std::vector<const Car*> resultsOrder = buildResultsOrder(*finishOrder, order);
-        drawResults(resultsOrder, uiVerts);
+        drawResults(resultsOrder, uiVerts, bgfx::isValid(fontTexture_) ? &textVerts : nullptr);
     } else {
         drawHud(raceState, cars, uiVerts, textVerts, minimapOutline_, minimapBoundX_, minimapBoundY_,
                 track_ ? track_->total() : 0.0, width_, height_);
@@ -2396,7 +2457,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         // own comment on why this isn't a top-level RaceState::mode.
         for (const Car& c : cars) {
             if (c.isPlayer && c.pit == 2) {
-                drawPitSetup(c, uiVerts);
+                drawPitSetup(c, uiVerts, bgfx::isValid(fontTexture_) ? &textVerts : nullptr);
                 break;
             }
         }
