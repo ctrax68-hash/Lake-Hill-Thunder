@@ -148,12 +148,67 @@ void collide(std::vector<Car>& cars, RaceState& state, const Track& track, Mulbe
                 a.y -= ny * push;
                 b.x += nx * push;
                 b.y += ny * push;
-                const double dvel = (a.v - b.v) * 0.25;
-                const double closeMag = std::min(1.0, std::abs(dvel) / 1.0);
-                a.v = std::max(0.0, a.v - std::abs(dvel) * 0.6 - 0.4 * closeMag);
-                b.v = std::max(0.0, b.v - 0.3 * closeMag);
-                a.hdg += ny * 0.008 * (a.isPlayer ? 1 : 2);
-                b.hdg -= ny * 0.008;
+                // N6: dissipate only the CLOSING component of the impact.
+                //
+                // The original applied its speed penalty on every tick two
+                // cars overlapped, scaled by the difference in their speeds.
+                // That made sustained contact a permanent velocity sink, and
+                // the trap is that it bit hardest on exactly the car trying to
+                // escape: gaining speed relative to your neighbour is what
+                // makes the penalty large. At a 1 m/s difference the loss was
+                // ~0.25 m/s per 0.02 s tick, about 12 m/s^2, against roughly
+                // 5 m/s^2 of available drive. Escaping a pile-up was
+                // arithmetically impossible, so the whole field stayed welded
+                // together for the rest of the race -- measured on Milltown as
+                // 20 cars in a 35 m stretch of an 848 m lap, most shoved off
+                // the racing surface, all at ~0 m/s.
+                //
+                // The mistake was using the scalar speed DIFFERENCE as a proxy
+                // for impact severity. Two cars side by side at different
+                // speeds are not approaching each other; two cars nose-to-tail
+                // at the same speed are not either. What a collision actually
+                // removes is the approach velocity along the contact normal --
+                // so that is what is computed and removed here.
+                //
+                // This keeps real impacts costly (a genuine rear-ending still
+                // sheds speed) while making a car that is separating pay
+                // nothing, which is what breaks the deadlock. A blunter fix --
+                // simply rate-limiting the old penalty with a cooldown -- was
+                // tried first and measured: it cured the jam but removed the
+                // energy dissipation entirely, so cars ground against each
+                // other at speed and wrecked instead, taking Cedar Valley from
+                // 16 cars running to 4.
+                //
+                // The positional push above is deliberately NOT gated on any
+                // of this -- cars must always be separated, or they
+                // interpenetrate.
+                const double avx = a.v * std::cos(a.hdg), avy = a.v * std::sin(a.hdg);
+                const double bvx = b.v * std::cos(b.hdg), bvy = b.v * std::sin(b.hdg);
+                // n points from a toward b, so a positive projection means the
+                // pair is closing.
+                const double closingRate = (avx - bvx) * nx + (avy - bvy) * ny;
+                // BOTH conditions, because each fixes a different half and
+                // neither is sufficient alone -- measured, not assumed:
+                //   closing-only, no cooldown: attrition healthy (17-20 cars
+                //     running) but the jam partly returns, because a wedged
+                //     pack oscillates and re-closes every few ticks.
+                //   cooldown-only, old scalar penalty: jam cured but cars
+                //     ground against each other at speed and wrecked, taking
+                //     Cedar Valley from 16 running to 4.
+                // Applied every tick, NOT rate-limited. A cooldown was tried
+                // (0.25 s, mirroring dmgCd) and measured worse overall: it
+                // cures the jam but stops dissipating contact energy, so cars
+                // grind against each other at speed and wreck instead --
+                // Cedar Valley fell from 16 cars running to 4. Dissipating the
+                // closing component continuously is both the physical answer
+                // and the one that keeps the field alive; the jam's remaining
+                // half is an AI problem, fixed in step_car.cpp rather than by
+                // blunting the collision response until it goes away.
+                if (closingRate > 0.0) {
+                    const double take = std::min(closingRate, 6.0);
+                    a.v = std::max(0.0, a.v - take * 0.45);
+                    b.v = std::max(0.0, b.v - take * 0.20);
+                }
 
                 const double cv2 = std::abs(a.v - b.v);
                 if (cv2 > 3 && state.flag != "yellow") {

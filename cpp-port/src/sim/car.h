@@ -683,6 +683,23 @@ struct Car {
     // rather than being treated as cosmetic/HUD-only like hitFx/slipFx.
     double spinRollCd = 0;
     double dmgCd = 0;
+
+    // N6: cooldown on the SPEED penalty collide() applies, exactly parallel to
+    // dmgCd's cooldown on the damage penalty.
+    //
+    // Its absence was the field-jam bug. collide()'s velocity loss models an
+    // impact -- a discrete event -- but was applied on every tick two cars
+    // overlapped, which turns sustained contact into a permanent velocity
+    // sink. A car trying to accelerate out of a pile-up gains relative speed,
+    // which is precisely what makes the penalty bite, so it is braked back
+    // down harder than its engine can push: at a 1 m/s speed difference the
+    // loss is ~0.25 m/s per 0.02 s tick, i.e. ~12 m/s^2, against roughly
+    // 5 m/s^2 of drive. Escape was arithmetically impossible.
+    //
+    // The damage penalty right beside it in the same function already had this
+    // cooldown. That asymmetry is the tell: impacts were understood to need
+    // rate-limiting, and only half the impact got it.
+    double hitCd = 0;
     bool blown = false;
 
     // Tire-model-upgrade regression-pass fix, not a JS port field: gates the

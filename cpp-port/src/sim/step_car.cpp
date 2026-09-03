@@ -78,6 +78,7 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
 
     if (c.spinCd > 0) c.spinCd -= DT;
     if (c.dmgCd > 0) c.dmgCd -= DT;
+    if (c.hitCd > 0) c.hitCd -= DT; // N6: see Car::hitCd
     if (c.spinRollCd > 0) c.spinRollCd -= DT;
     if (c.wallCd > 0) c.wallCd -= DT;
 
@@ -410,6 +411,21 @@ void stepCar(Car& c, RaceState& state, const Track& track, const std::vector<Car
         // stops yielding to the queue and falls through to its normal
         // target-speed logic, so the jam disperses. Contact at under 2 m/s is
         // harmless, and above that the original yielding behaviour is intact.
+        // N6: the AI half of the jam, and a fix that was tried and REJECTED.
+        //
+        // The `c.v > 2.0` floor was added (N2) to break a hard freeze: below
+        // walking pace a car stops yielding and falls through to its normal
+        // target-speed logic, which unfreezes it. The cost is that "normal
+        // target-speed logic" at 0 m/s means full throttle, so a stopped car
+        // in a queue drives into the stopped car in front of it.
+        //
+        // A third "crawl" state was added to express what a queue actually
+        // needs -- light throttle under 4 m of gap, enough to shuffle forward
+        // without ramming -- and it MEASURED WORSE: Milltown's moving fraction
+        // fell from 0.57/0.62 to 0.64/0.21, because a continuous gentle push
+        // into the car ahead is still a push, and the collision response
+        // dissipates exactly that. Recorded so it is not retried. The jam is
+        // improved by the collision fix in race.cpp, not by this branch.
         const bool closing = blocker && bd < 8 && c.v > blocker->v - 0.5 && c.v > 2.0;
         if (closing) {
             thr = 0;

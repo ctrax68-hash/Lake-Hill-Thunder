@@ -10004,3 +10004,97 @@ jumbotron screen must exist only on the track that has one, be exactly one
 quad, face the same way as its bezel, and map every vertex correctly. Both were
 mutation-tested; the treeline guard caught its mutation first time, the
 jumbotron one did not and was rewritten.
+
+## N6 -- The field jam: diagnosed, and the deadlock fixed
+
+Standing open item for several rounds: Milltown ends with 2 of 20 cars moving.
+One earlier attempt (a closing-rate blocker rule) measured worse and was
+correctly not shipped, and that round wrote down that the next step was an
+instrument rather than another tuning guess. This is that round.
+
+### The harness first, and it immediately widened the problem
+
+`tests/pack_jam_test.cpp` runs a full AI field on all four tracks, two seeds,
+240 s, reporting moving fraction, mean speed, pack length and contact pairs.
+First run:
+
+| track | moving | meanV | contacts | running |
+|---|---|---|---|---|
+| Thunder Oval | 0.80 / 0.45 | 26.9 / 15.8 | 0 / 1 | 19 / 17 |
+| Milltown | **0.17** / 0.55 | 5.1 / 17.0 | 6 / 6 | 20 / 19 |
+| Cedar Valley | 0.46 / 0.70 | 16.1 / 24.5 | 3 / 4 | 16 / 19 |
+| Big Sable | 0.97 / 0.90 | 41.1 / 42.7 | 0 / 2 | 20 / 20 |
+
+**Three of four tracks, not one.** The bug was never Milltown-specific; that
+track just shows it worst, being the shortest lap.
+
+### Every prior hypothesis about the cause was wrong, including mine
+
+The suspicion carried for rounds -- including into this one -- was the AI's
+blocker rule: everyone yielding at once collapses the pack. Instrumenting the
+predicate directly killed it. **`yield%` is 0% at nearly every sample.** Nobody
+was braking for the car ahead. Meanwhile 16-20 of 20 cars were slow with that
+rule not firing.
+
+Dumping per-car state at the jam gave the real picture: all 20 cars inside a
+**35 m stretch of an 848 m lap**, all at ~0 m/s, and `lat` values of -7.4 to
+-11.0 against a 6 m half-width -- the field had been shoved bodily off the
+inside of the racing surface and welded there.
+
+### The cause: an impact modelled as a continuous drain
+
+`collide()` applies a speed penalty scaled by the difference in the two cars'
+speeds, **every tick they overlap**. The damage penalty ten lines below it is
+rate-limited by `dmgCd`. That asymmetry is the whole bug: impacts were
+understood to need rate-limiting, and only half the impact got it.
+
+Worse, the penalty scales with the speed *difference*, so it bites hardest on
+exactly the car trying to escape. At a 1 m/s difference the loss is ~0.25 m/s
+per 0.02 s tick -- about **12 m/s²**, against roughly **5 m/s²** of available
+drive. Escaping a pile-up was not difficult; it was arithmetically impossible.
+
+### The fix, and two variants that were measured and rejected
+
+Dissipate only the **closing component along the contact normal**, computed
+from the two cars' velocity vectors. The scalar speed difference was never the
+right severity proxy: two cars side by side at different speeds are not
+approaching, and two nose-to-tail at the same speed are not either. A car
+separating now pays nothing, which is what breaks the deadlock, while a genuine
+rear-ending still sheds speed.
+
+Rejected, both measured:
+- **Cooldown on the old scalar penalty** (0.35 s, mirroring `dmgCd`). Cured the
+  jam and destroyed the field: no contact energy is dissipated at all, so cars
+  ground against each other at speed and wrecked. Cedar Valley fell from 16
+  cars running to 4.
+- **An AI "crawl" state** -- light throttle instead of full when queued within
+  4 m, since the binary brake-or-floor choice has no way to express a queue.
+  Made Milltown *worse* (0.57/0.62 → 0.64/0.21): a continuous gentle push into
+  the car ahead is still a push, and the collision response dissipates exactly
+  that.
+
+### What actually changed, honestly
+
+Moving fraction 0.625 → 0.736 averaged over all eight runs, with cars-running
+unchanged at 150/160. Milltown 0.17 → 0.57 and 0.55 → 0.62.
+
+The qualitative change matters more than the average. Before, Milltown
+collapsed at t=20 s and **never recovered** for the remaining 220 s. Now it
+dips, is fully back to 20/20 cars at 25 m/s by t=40, and holds 18-20 cars at
+30+ m/s through t=120.
+
+**It is not fully fixed.** A second collapse begins around t=140 and does not
+recover, and it correlates with accumulated tire wear and damage rather than
+with the collision response. That is a separate mechanism and it stays open.
+
+### The guard is a ratchet, not an aspiration
+
+`pack_jam_test` asserts *recovery* -- after the grid pack disperses, the field
+must be racing again -- plus a floor on the average set below every figure this
+build measures and above the pre-fix worst. It deliberately does **not** assert
+"the field is always moving", which is the behaviour worth having and which
+this build does not have. A permanently red test says nothing about
+regressions.
+
+Verified in both directions: the guard fails on the pre-fix `collide()`
+(Milltown and Cedar Valley both trip it) and passes on the fixed one.

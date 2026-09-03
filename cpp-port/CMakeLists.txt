@@ -848,6 +848,14 @@ target_include_directories(ticker_test PRIVATE ${LHT_STB_INCLUDE_DIR}
 )
 add_test(NAME ticker_test COMMAND ticker_test)
 
+# N6: pack_jam_test -- the field-jam harness. Reports moving fraction, mean
+# speed, pack length and contact pairs per track, and fails when a field stops
+# racing. Built because several rounds of tuning guesses at the jam made things
+# worse and the round that found that wrote down, correctly, that the next step
+# was an instrument.
+add_executable(pack_jam_test tests/pack_jam_test.cpp ${SIM_SOURCES})
+add_test(NAME pack_jam_test COMMAND pack_jam_test)
+
 add_executable(determinism_test tests/determinism_test.cpp tests/determinism/trace.cpp)
 add_test(NAME determinism_test COMMAND determinism_test)
 # Reads tests/fixtures/trace_synthetic.txt by a repo-relative path.
