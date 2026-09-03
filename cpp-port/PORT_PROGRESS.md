@@ -10493,6 +10493,24 @@ that assertion is what found it. Verified to fail with the loop reduced back to
 an `if`. The backlog is laid backwards along the track from the car's current
 station, which is where the car actually was when it earned each mark.
 
+### How visible they actually are
+
+Measured against a marks-off control at the same frame, over a band of visible
+track surface on a Milltown straight: at the first alpha of 0.55 the marks
+darkened **1.8% of the band, by at most 17.7 levels out of 255**. Raised to
+0.75, which lifts the peak to roughly 24 without changing *where* marks are --
+coverage is geometric and independent of alpha.
+
+The 1.8% figure is not a defect and should not be tuned away. Marks only exist
+where cars slide, that band is a straight, and cars do not slide on straights.
+The render path itself was proved live separately: drawing the same quads in
+opaque magenta puts **10,486 pixels** on screen in that frame, so the geometry,
+the depth test against the banked surface, and the blend state are all working
+and the subtlety is the colour, deliberately.
+
+A browser run on a bullring corner is the check that decides whether 0.75 is
+the right number; the desktop capture can only say it is present and where.
+
 ### slipFx is saturated, and gating on it carpeted the track
 
 The obvious signal for "this car is sliding" is `Car::slipFx`, which already
