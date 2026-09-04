@@ -10715,3 +10715,112 @@ performance nobody is short of.
 Recorded as a stop signal, which is what a gate is for. If a later slice
 pushes frame time somewhere uncomfortable, the lever to reach for is the
 fullscreen chain, not the geometry, and this table says why.
+
+## G32 -- Three defects a phone screenshot found, two of them mine
+
+P2 said the frame has headroom and the complaint was never speed. So the next
+pass came from looking hard at what those same device screenshots actually
+show, at full resolution, rather than at the numbers on them.
+
+### The crowd smears into horizontal rainbow streaks
+
+G31 sized the spectators correctly -- 0.50 x 1.02 m, verified in world units.
+On the phone they arrive as smooth horizontal bands of colour anyway.
+
+Sizing them right was necessary and not sufficient, because the sampler
+destroys them before they reach the screen. Every surface the atlas serves --
+stand seats, outer wall, sponsor boards, catch fence -- is seen nearly EDGE-ON
+from a camera at track level. A stand tier compresses to a few pixels
+vertically while staying hundreds wide, so the two axes are minified by wildly
+different amounts. Isotropic trilinear picks ONE mip level from the larger
+rate of change, the vertical one, and then applies it horizontally too, where
+there was no compression to correct for. The horizontal detail is averaged
+away for nothing.
+
+Fixed with `BGFX_SAMPLER_MIN_ANISOTROPIC | BGFX_SAMPLER_MAG_ANISOTROPIC` on
+the atlas. Not a new idea in this codebase: **the asphalt texture already does
+exactly this**, and its own comment describes this exact failure mode ("that is
+exactly the case anisotropic filtering exists for: it keeps V sharp while still
+filtering U honestly"). The atlas simply never got the same treatment. bgfx's
+GL/GLES backend uses EXT_texture_filter_anisotropic where the driver has it and
+falls back to trilinear where it does not, so it cannot look worse than what it
+replaces.
+
+**Not verified on the desktop build, and the entry says so rather than
+implying otherwise.** An A/B was run and is inconclusive: the chase camera puts
+the eye a couple of metres from the fence, which MAGNIFIES the atlas rather
+than minifying it, so the very case anisotropy addresses is absent from the
+only view available headlessly. (The whole-frame diff came out at 47.85%, which
+is run-to-run camera and particle variation between two separate captures, not
+the sampler -- the same trap the haze cap fell into earlier the same day, and
+recognised this time before drawing a conclusion from it.)
+
+What is established: the mechanism is right for the defect, the flag is applied
+to the atlas, and bgfx degrades to trilinear where the driver lacks the
+extension, so the change cannot regress. The check that decides it is a device
+screenshot of the same grandstand -- the phone is what showed the defect and
+the phone is what confirms the fix.
+
+### Every car smokes its tires down every straight
+
+Visible in both race screenshots: the whole field trailing tire smoke at
+constant speed in a straight line.
+
+The gate was JS's `slipFx > 0`, ported faithfully. That was right against JS's
+KINEMATIC model. Against this port's bicycle tire model it is not: slipFx's
+**median, 90th and 99th percentiles are all 1.00** over 100 s of racing on
+every track, because `pastLimitAny` pins it to 1.0 whenever either axle is past
+its friction ellipse -- which is most of normal cornering. The gate is
+permanently open.
+
+This is the same defect family as G31's crowd scale and G30's pit-panel label:
+a faithfully ported expression whose INPUT changed meaning underneath it,
+invisible to every test that only checks the expression. It is the third one
+found this round, which is worth noting as a pattern rather than three
+coincidences: **the port's per-line fidelity is good and its assumptions about
+what the lines are fed are where the bugs are.**
+
+Re-gated on body slip angle, the same signal the skid marks use, at a 6-degree
+onset -- lower than the marks' 14, because a tire smokes before it leaves a
+black mark -- with density scaling up to JS's original cloud by 25 degrees.
+
+### And my own off-track dust was flooding the particle system
+
+Found by instrumenting the particle list by emitter colour, which nothing had
+ever done. L6's dust, added earlier the same day, was **60-82% of the capped
+220-particle budget on every track**, evicting the impact sparks and tire smoke
+it shares that budget with. Two mistakes, both mine:
+
+**The gate was wrong, and its comment was false.** It claimed to use "the same
+test step_car.cpp uses to apply its grip penalty". The real test is
+`off > halfW + 0.4 && c.lat < 0 && c.pit == 0` -- a margin, INSIDE only (the
+outside is paved apron, not grass), and never in the pit lane. Mine was a bare
+two-sided `|lat| > halfW`. Measured, that threshold sits at the **median** of
+where cars actually run (p50 5.7-6.1 m against a 6.00 m half-width), so it
+fired on a coin flip and counted every pit stop as an off-road excursion. The
+comment asserted a correspondence I never checked.
+
+**And the rate was wrong.** Up to two puffs per tick per car is ~90
+particles/second from a single car, enough to fill the list alone. Now
+rate-limited by distance travelled, the same discipline the skid marks use, so
+it is frame-rate independent too.
+
+| | at the 220 cap | dust share | impact sparks |
+|---|---|---|---|
+| before | **73-98%** | 60-82% | 4-14% |
+| after | **8-25%** | 19-49% | 12-27% |
+
+Impact sparks -- the effect that actually communicates a crash to the player --
+had been squeezed to a twentieth of the budget by scenery dust.
+
+### Guards
+
+`particles_test` gained the assertion that would have caught the smoke bug: a
+car travelling in the direction it is pointing lays down no tire smoke, with
+slipFx deliberately pinned at 1.0 to reproduce exactly what the sim does. Plus
+a second at 2 degrees of drift, around the median of real racing, so the fix is
+a real threshold rather than a rename of the old always-on gate. Both verified
+to FAIL against the old gate.
+
+The old test could not have caught it: it only ever asked "does slipFx>0 spawn
+smoke". Asserting the negative case is the whole point.

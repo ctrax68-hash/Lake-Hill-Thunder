@@ -106,18 +106,23 @@ int main() {
         expect(ps.particles.empty(), "no emission at all with slipFx=hitFx=0 and dmg<=0.6");
     }
     {
-        // The tire-smoke loop is stochastic (2 tries/call at 70% each,
-        // index.html:3327) -- call a few times (each resetting slipFx back
-        // up, since a real car would still be sliding) rather than relying
-        // on one call's exact RNG draws, so this doesn't depend on exactly
-        // which values Mulberry32(4242)'s first two draws happen to be.
+        // The tire-smoke loop is stochastic -- call a few times rather than
+        // relying on one call's exact RNG draws, so this doesn't depend on
+        // exactly which values Mulberry32(4242) happens to produce.
+        //
+        // G32: the car must be genuinely SLIDING, not merely have slipFx set.
+        // slipFx is pinned at 1.00 through normal racing by the tire model, so
+        // gating smoke on it meant every car smoked down every straight. vy=15
+        // at v=40 is atan(15/40) = 20.6 degrees of body slip -- a real slide.
         ParticleSystem ps;
         Car c{};
-        for (int i = 0; i < 5; ++i) {
+        c.v = 40.0;
+        c.vy = 15.0;
+        for (int i = 0; i < 12; ++i) {
             c.slipFx = 1.0;
             emitCarParticles(ps, c, 100, 5, 200, 1, 0, 0.1);
         }
-        expect(!ps.particles.empty(), "slipFx>0 spawns at least some tire-smoke particles over a few calls");
+        expect(!ps.particles.empty(), "a sliding car spawns tire smoke over a few calls");
         for (const Particle& p : ps.particles) {
             // Tire smoke spawns behind the car (-fwd) with a fixed +0.2
             // height offset and +-0.5 lateral jitter on x/z (index.html:
@@ -126,6 +131,42 @@ int main() {
             expectNear("tire smoke y offset", p.y, 5.2);
         }
         expectNear("slipFx decays by dt*3.5", c.slipFx, std::max(0.0, 1.0 - 0.1 * 3.5));
+    }
+    {
+        // G32: THE ASSERTION THAT WOULD HAVE CAUGHT THE BUG A SCREENSHOT DID.
+        //
+        // A car travelling in the direction it is pointing does not smoke its
+        // tires, however hard the tire model says its axles are working.
+        // slipFx is deliberately pinned at 1.0 here, which is exactly what the
+        // sim does in ordinary racing -- its median, p90 and p99 are all 1.00
+        // over 100 s on every track -- and is what made every car in the field
+        // trail smoke down a straight on the user's phone.
+        //
+        // Note this test would have PASSED before the fix in its old form,
+        // because the old form only ever asked "does slipFx>0 spawn smoke".
+        // Asserting the negative case is the whole point.
+        ParticleSystem ps;
+        Car c{};
+        c.v = 45.0;
+        c.vy = 0.0; // pointed exactly where it is going
+        for (int i = 0; i < 50; ++i) {
+            c.slipFx = 1.0;
+            emitCarParticles(ps, c, 0, 0, 0, 1, 0, 0.02);
+        }
+        expect(ps.particles.empty(), "a car driving straight lays down no tire smoke");
+
+        // And a gentle drift -- inside normal cornering, below the onset --
+        // stays clean too, so the fix is a real threshold and not just a
+        // rename of the old always-on gate.
+        ParticleSystem gentle;
+        Car g{};
+        g.v = 45.0;
+        g.vy = 1.6; // atan(1.6/45) = 2.0 deg, around the median of real racing
+        for (int i = 0; i < 50; ++i) {
+            g.slipFx = 1.0;
+            emitCarParticles(gentle, g, 0, 0, 0, 1, 0, 0.02);
+        }
+        expect(gentle.particles.empty(), "ordinary cornering slip does not smoke the tires");
     }
     {
         ParticleSystem ps;
@@ -170,8 +211,17 @@ int main() {
         cars[0].s = 10.0;
         cars[0].lat = 0.0;
         cars[0].hdg = 0.0;
-        tickParticles(ps, cars, track, 0.05);
-        expect(!ps.particles.empty(), "tickParticles spawns from a real Track-derived position");
+        // G32: sliding, for the same reason as above -- smoke is now gated on
+        // body slip angle rather than on the saturated slipFx.
+        cars[0].v = 40.0;
+        cars[0].vy = 15.0;
+        bool spawned = false;
+        for (int i = 0; i < 12 && !spawned; ++i) {
+            cars[0].slipFx = 1.0;
+            tickParticles(ps, cars, track, 0.05);
+            spawned = !ps.particles.empty();
+        }
+        expect(spawned, "tickParticles spawns from a real Track-derived position");
         expectNear("slipFx decayed by tickParticles too", cars[0].slipFx, std::max(0.0, 1.0 - 0.05 * 3.5));
     }
 

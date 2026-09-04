@@ -1324,8 +1324,35 @@ void Renderer::setTrack(const Track& track) {
         // createTexture2D's hasMips flag only documents "texture already
         // contains a full mip chain in _mem" -- it doesn't generate one.
         const std::vector<uint8_t> atlasMips = buildRgba8MipChain(atlasPixels, kAtlasSize);
+        // G32: ANISOTROPIC filtering, from a device screenshot.
+        //
+        // The mip chain above fixed minification aliasing and introduced a
+        // second problem that only shows on a real grazing-angle view. Every
+        // surface this atlas serves -- stand seats, the outer wall, sponsor
+        // boards, the catch fence -- is seen nearly EDGE-ON from a camera
+        // sitting at track level. A stand tier compresses to a few pixels
+        // vertically while staying hundreds of pixels wide, so the two axes
+        // are minified by wildly different amounts.
+        //
+        // Isotropic trilinear picks ONE mip level from the larger of the two
+        // rates of change, which is the vertical one -- and then applies that
+        // level horizontally too, where there was no compression to correct
+        // for. The horizontal detail is blurred away for nothing.
+        //
+        // On the phone that turns G31's crowd into smooth horizontal rainbow
+        // streaks: the 0.50 x 1.02 m spectators are individually correct in
+        // the texture and are being averaged out by the sampler before they
+        // reach the screen. Sizing them right was necessary and not
+        // sufficient.
+        //
+        // Anisotropic sampling takes multiple taps along the axis of greater
+        // compression instead, which is precisely this case. bgfx's GL/GLES
+        // backend uses EXT_texture_filter_anisotropic where the driver has it
+        // and falls back to trilinear where it does not, so this is safe on
+        // any device -- it cannot look worse than what it replaces.
+        constexpr uint64_t kAtlasSampler = BGFX_SAMPLER_MIN_ANISOTROPIC | BGFX_SAMPLER_MAG_ANISOTROPIC;
         atlasTexture_ = bgfx::createTexture2D((uint16_t)kAtlasSize, (uint16_t)kAtlasSize, true, 1,
-                                               bgfx::TextureFormat::RGBA8, 0,
+                                               bgfx::TextureFormat::RGBA8, kAtlasSampler,
                                                bgfx::copy(atlasMips.data(), (uint32_t)atlasMips.size()));
     }
 

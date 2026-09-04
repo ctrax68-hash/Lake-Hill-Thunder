@@ -68,6 +68,12 @@ constexpr int kSkidMarkCap = 1200;
 // which is what decides whether this reads as rubber or as debris.
 constexpr double kSkidMarkSpacing = 0.55;
 
+// G32: metres of travel per dust puff. Chosen so one car ploughing through the
+// infield contributes a visible trail without being able to monopolise the
+// shared particle list: at 30 m/s this is about 10 puffs/second against the
+// ~90/second the per-tick version emitted.
+constexpr double kDustSpacing = 3.0;
+
 struct ParticleSystem {
     std::vector<Particle> particles;
     // L6: laid rubber, and the per-car distance accumulator that spaces it.
@@ -77,6 +83,11 @@ struct ParticleSystem {
     // on the machine it was written on.
     std::vector<SkidMark> skids;
     std::vector<double> skidAccum;
+    // G32: the same distance accumulator for off-track dust, which was
+    // spawning per TICK and measured as 60-82% of the whole 220-particle
+    // budget -- crowding out the impact sparks and tire smoke it shares that
+    // budget with.
+    std::vector<double> dustAccum;
     // JS's own independent `rngP = mulberry32(4242)` stream
     // (index.html:3277) -- kept separate from the sim's rng/rngR so
     // cosmetic particle jitter can never perturb a determinism-checked

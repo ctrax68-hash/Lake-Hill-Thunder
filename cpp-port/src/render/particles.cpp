@@ -53,39 +53,108 @@ void emitCarParticles(ParticleSystem& ps, Car& c, double posX, double posY, doub
     //
     // Brown rather than the tire smoke's grey, and emitted from the rear
     // wheels, so it reads as thrown-up dirt instead of lock-up smoke.
+    // G32: rate-limited, because the first version flooded the whole system.
+    //
+    // Measured with the particle list broken down by emitter colour, off-track
+    // dust was **60-82% of a capped 220-particle budget** on every track --
+    // evicting the impact sparks and tire smoke it shares that budget with.
+    // Two separate mistakes, both mine, both from the same round:
+    //
+    //   1. The gate was wrong, and the comment claiming it "uses the same test
+    //      step_car.cpp uses for its grip penalty" was simply FALSE. The real
+    //      test is `off > halfW + 0.4 && c.lat < 0 && c.pit == 0`: a margin,
+    //      INSIDE only (the outside is paved apron, not grass), and never in
+    //      the pit lane. Mine was a bare two-sided `|lat| > halfW`, which on
+    //      these tracks sits at the MEDIAN of where cars actually run (p50 is
+    //      5.7-6.1 m against a 6.00 m half-width), so it fired on a coin flip
+    //      and counted every pit stop as an off-road excursion.
+    //   2. Even correctly gated, spawning up to two puffs per tick per car is
+    //      ~90 particles/second from one car, which alone can fill the list.
+    //
+    // The gate now matches step_car's `onGrass` exactly, and emission is
+    // rate-limited to a fixed spacing in METRES, the same discipline the skid
+    // marks use -- so it does not scale with frame rate either.
     if (offTrack && c.v > 6.0 && !c.out) {
+        if ((size_t)c.idx >= ps.dustAccum.size()) ps.dustAccum.resize((size_t)c.idx + 1, 0.0);
+        double& accum = ps.dustAccum[(size_t)c.idx];
+        accum += c.v * dt;
         Mulberry32& rd = ps.rng;
         const double dustCol[3] = {0.55, 0.44, 0.28};
-        const int puffs = c.v > 25.0 ? 2 : 1;
-        for (int i = 0; i < puffs; ++i) {
-            if (rd.next() < 0.75) {
-                spawnParticle(ps, posX - fwdX * 1.6 + (rd.next() - 0.5) * 1.4, posY + 0.15,
-                              posZ - fwdZ * 1.6 + (rd.next() - 0.5) * 1.4, (rd.next() - 0.5) * 2.5,
-                              0.9 + rd.next() * 1.1, (rd.next() - 0.5) * 2.5, 0.5 + rd.next() * 0.4,
-                              0.20, dustCol);
-            }
+        // One puff per kDustSpacing metres travelled, capped per call so a
+        // long stall cannot dump a burst. Distance-based, so the rate does not
+        // change with frame rate.
+        int puffs = 0;
+        while (accum >= kDustSpacing && puffs < 2) {
+            accum -= kDustSpacing;
+            ++puffs;
         }
+        if (accum > kDustSpacing) accum = kDustSpacing;
+        for (int i = 0; i < puffs; ++i) {
+            spawnParticle(ps, posX - fwdX * 1.6 + (rd.next() - 0.5) * 1.4, posY + 0.15,
+                          posZ - fwdZ * 1.6 + (rd.next() - 0.5) * 1.4, (rd.next() - 0.5) * 2.5,
+                          0.9 + rd.next() * 1.1, (rd.next() - 0.5) * 2.5, 0.5 + rd.next() * 0.4, 0.20,
+                          dustCol);
+        }
+    } else if ((size_t)c.idx < ps.dustAccum.size()) {
+        ps.dustAccum[(size_t)c.idx] = 0.0;
     }
+
+    // G32: tire smoke needs a real "is this car sliding" test, because
+    // slipFx is not one.
+    //
+    // JS gated the smoke on `slipFx > 0` and the port copied it faithfully.
+    // That was correct against JS's KINEMATIC model. Against this port's
+    // bicycle tire model it is not: `pastLimitAny` pins slipFx to 1.0
+    // whenever either axle is past its friction ellipse, and measured over
+    // 100 s of racing on all four tracks slipFx's **median, 90th and 99th
+    // percentiles are all 1.00**. The gate is therefore always open.
+    //
+    // On the phone that reads as every car in the field trailing tire smoke
+    // down a straight at constant speed, which is what a device screenshot
+    // showed. Same defect family as the crowd scale and the pit-panel label:
+    // a faithfully ported expression whose INPUT changed meaning underneath
+    // it, invisible to any test that only checks the expression.
+    //
+    // Gated on body slip angle instead -- the same signal the skid marks use,
+    // for the same reason -- at a lower onset, because a tire smokes before
+    // it leaves a black mark. 6 degrees sits at roughly the 90th percentile
+    // of real racing, so smoke becomes an event again rather than a constant.
+    constexpr double kSmokeOnsetRad = 0.1047; // 6 deg
+    constexpr double kSmokeFullRad = 0.4363;  // 25 deg
+    const double bodySlip = std::fabs(std::atan2(c.vy, std::max(1.0, c.v)));
+    const double smoke = c.v < 6.0 ? 0.0
+                                   : std::min(1.0, std::max(0.0, (bodySlip - kSmokeOnsetRad) /
+                                                                     (kSmokeFullRad - kSmokeOnsetRad)));
+
+    // slipFx is still decayed, unconditionally and at exactly the old rate, so
+    // the audio mixer's skid channel -- its other consumer -- sees no change
+    // from any of this. Hoisted above the early-out because the smoke gate no
+    // longer guarantees this line is reached. (That the skid SOUND is driven
+    // by the same saturated signal is a real and separate defect. It is not
+    // fixed here, because a screenshot cannot verify audio and I have not
+    // heard the game.)
+    c.slipFx = std::max(0.0, c.slipFx - dt * 3.5);
 
     // Early-out matching JS's own (index.html:3323) -- not load-bearing
     // (nothing below would spawn anyway with all three false), just avoids
     // rolling the RNG for cars with nothing to emit. Sits AFTER the dust
     // above, which has its own trigger and would otherwise be skipped for a
     // clean car sliding through the grass.
-    if (!(c.slipFx > 0) && !(c.hitFx > 0) && !(c.dmg > 0.6)) return;
+    if (!(smoke > 0) && !(c.hitFx > 0) && !(c.dmg > 0.6)) return;
 
     Mulberry32& r = ps.rng;
 
-    if (c.slipFx > 0) { // tire smoke off the rear (index.html:3326-3330)
+    if (smoke > 0) { // tire smoke off the rear (index.html:3326-3330)
         const double col[3] = {0.78, 0.78, 0.81};
         for (int i = 0; i < 2; ++i) {
-            if (r.next() < 0.7) {
+            // Density scales with the slide, so a twitch gives a wisp and a
+            // full sideways moment gives JS's original cloud.
+            if (r.next() < 0.7 * smoke) {
                 spawnParticle(ps, posX - fwdX * 1.7 + (r.next() - 0.5), posY + 0.2,
                               posZ - fwdZ * 1.7 + (r.next() - 0.5), (r.next() - 0.5) * 2, 0.8 + r.next() * 0.8,
                               (r.next() - 0.5) * 2, 0.55 + r.next() * 0.3, 0.17, col);
             }
         }
-        c.slipFx = std::max(0.0, c.slipFx - dt * 3.5);
     }
 
     if (c.hitFx > 0) { // impact burst: sparks + gray puffs (index.html:3332-3341)
@@ -234,10 +303,16 @@ void tickParticles(ParticleSystem& ps, std::vector<Car>& cars, const Track& trac
         // should reflect the slide that just happened rather than what is
         // left of it.
         laySkidMark(ps, track, c, dt);
-        // L6: "off the racing surface" is |lat| past the track half-width --
-        // the same test step_car.cpp uses to apply its grip penalty, so the
-        // dust appears exactly when the handling changes.
-        const bool offTrack = std::fabs(c.lat) > track.halfW();
+        // G32: "off the racing surface" now really is step_car.cpp's own
+        // `onGrass` test, character for character -- a 0.4 m margin, INSIDE
+        // only (the outside is paved apron, not grass), and never while in the
+        // pit lane. L6 claimed to use that test and did not: it used a bare
+        // two-sided `|lat| > halfW`, which sits at the median of where cars
+        // actually run (p50 5.7-6.1 m against a 6.00 m half-width), so it
+        // fired about half the time and counted every pit stop as an
+        // off-road excursion.
+        const bool offTrack =
+            std::fabs(c.lat) > track.halfW() + 0.4 && c.lat < 0 && c.pit == 0;
         emitCarParticles(ps, c, p.x, p.y, p.z, fwdX, fwdZ, dt, offTrack);
     }
     integrateParticles(ps, dt);
