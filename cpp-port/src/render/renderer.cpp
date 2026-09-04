@@ -2177,9 +2177,28 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             const double ca = std::cos(azim), sa = std::sin(azim);
             const double ox = (fwx * ca + sx * sa) * kOrbitR;
             const double oz = (fwz * ca + sz * sa) * kOrbitR;
-            const bx::Vec3 eye = {(float)(base.x + ox + up3.x * kEyeHeight),
-                                  (float)(base.y + up3.y * kEyeHeight),
-                                  (float)(base.z + oz + up3.z * kEyeHeight)};
+            double eyeX = base.x + ox + up3.x * kEyeHeight;
+            double eyeY = base.y + up3.y * kEyeHeight;
+            double eyeZ = base.z + oz + up3.z * kEyeHeight;
+            // Keep the eye above the (banked) surface it is orbiting over.
+            //
+            // Without this the turntable breaks on exactly the angles it was
+            // built to reach: the orbit radius is 8.32 m against a 6 m track
+            // half-width, so swinging toward the infield puts the eye ~2.3 m
+            // past the inside edge, where a banked surface has risen above the
+            // car's own plane. The first capture showed 45 and 90 degrees
+            // rendering the track's UNDERSIDE (there is no backface culling,
+            // so it draws) with the car nowhere in frame.
+            //
+            // Same clamp the Chase camera already uses a few lines below, for
+            // the same reason -- reused rather than re-derived.
+            {
+                const ProjectResult pr = track_->project(eyeX, eyeZ);
+                const double clampedLat = std::max(apronIn(*track_), std::min(wallLat(*track_), pr.lat));
+                const double minY = surfH(*track_, pr.s, clampedLat) + 1.0;
+                if (eyeY < minY) eyeY = minY;
+            }
+            const bx::Vec3 eye = {(float)eyeX, (float)eyeY, (float)eyeZ};
             const bx::Vec3 at = {(float)(base.x + up3.x * kLookHeight), (float)(base.y + up3.y * kLookHeight),
                                   (float)(base.z + up3.z * kLookHeight)};
             const bx::Vec3 up = {(float)up3.x, (float)up3.y, (float)up3.z};

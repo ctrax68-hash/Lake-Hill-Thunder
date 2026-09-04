@@ -10917,3 +10917,19 @@ One command, one image, the whole car.
 
 Native/debug only, and deliberately so: this is an instrument, not a feature.
 The menu still shows the same hero shot it always did.
+
+### It earned its keep on the first run
+
+The very first contact sheet came back with the car missing at 45 and 90
+degrees -- the frames showed the track's UNDERSIDE (there is no backface
+culling, so it draws) with no car anywhere.
+
+The orbit radius is 8.32 m against a 6 m track half-width, so swinging toward
+the infield puts the eye about 2.3 m past the inside edge, where the banked
+surface has risen above the car's own plane. Fixed with the same eye-above-
+surface clamp the Chase camera already applies a few lines below, reused rather
+than re-derived.
+
+Worth recording plainly: **the instrument found a bug in itself at exactly the
+angles it exists to reach**, on its first use, before a single triangle of car
+work. Those are the angles four previous rounds could not see.
