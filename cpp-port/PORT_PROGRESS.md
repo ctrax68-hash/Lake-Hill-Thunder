@@ -10824,3 +10824,59 @@ to FAIL against the old gate.
 
 The old test could not have caught it: it only ever asked "does slipFx>0 spawn
 smoke". Asserting the negative case is the whole point.
+
+## G32 correction -- the crowd "streaking" was two wrong diagnoses, and mostly not a defect
+
+G32 shipped anisotropic filtering on the atlas to fix crowd streaking. Device
+screenshots of the same grandstand, before and after, say it **did nothing**,
+and two follow-up measurements say the diagnosis was wrong twice. Recording
+that properly, because a fix that ships on a wrong theory and is then quietly
+left alone is how a codebase accumulates cargo cult.
+
+**Hypothesis 1 (shipped): isotropic mip selection destroys along-stand
+detail.** Measured on the device, horizontal high-frequency energy in the
+crowd band went 0.611 -> 0.651 between the pre- and post-fix builds, with the
+horizontal:vertical ratio 0.180 -> 0.195. Those shots are from different camera
+positions, so that is noise. No effect.
+
+**Hypothesis 2: the box-filter mip chain averages the crowd to its mean.**
+Also wrong, and this one was checkable locally without a device at all.
+Measuring colour standard deviation of the crowd region per mip level:
+
+| mip | size | colour sd |
+|---|---|---|
+| 0 | 512 | 59.00 |
+| 2 | 128 | 52.70 |
+| 3 | 64 | **48.44** |
+| 4 | 32 | 42.43 |
+
+Mip 3 is an 8x reduction, roughly what a mid-distance stand samples, and it
+retains **82% of the original variance**. Box filtering only destroys detail
+below the filter scale, and G31's spectators are 18x64 texels -- far above it.
+The mip chain was never the problem.
+
+**What it actually is.** Sampling the rendered band from the far end (receding
+to the vanishing point) to the near end:
+
+| position | colour sd | saturation |
+|---|---|---|
+| far 1/8 | 35.51 | **0.197** |
+| 4/8 | 34.61 | 0.411 |
+| near 8/8 | 21.92 | **0.435** |
+
+Saturation rises **monotonically, 2.3x, with proximity**. A sampler artifact
+would be uniform along the band; a smooth falloff with distance is perspective
+minification plus G25's haze. At the near end individual spectators do resolve
+as distinct coloured blocks -- G31 worked. At the far end they are sub-pixel
+and desaturated, which is what a distant grandstand on a hazy day looks like.
+
+**So the crowd is closer to correct than G32 claimed, and the streaking is
+mostly the haze doing its job.** The anisotropic flag stays: it is free, it is
+the right setting for this content on general principle, the asphalt texture
+already uses it, and it measured no cost. But it is not the fix for anything
+observed, and the G32 entry above should be read with this correction.
+
+The lesson, which this round has now paid for three times: **the desktop build
+could not reproduce the view, so every hypothesis was untested reasoning until
+a device screenshot arrived.** Two of the three G32 fixes were verified by
+measurement before shipping and both worked; this one was not, and did not.
