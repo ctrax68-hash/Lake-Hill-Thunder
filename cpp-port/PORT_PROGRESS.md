@@ -10649,3 +10649,69 @@ rather than implying a fix that was measured not to happen. Nothing under
 Density itself is deliberately NOT touched. It was tuned in G25 against the
 chase camera, which is the view players actually use, and re-tuning it to
 flatter a secondary camera would undo that.
+
+## P2 -- The first real-device measurement, and what it says to stop doing
+
+G25 named frame time on the user's actual phone as "the gate" for every
+graphics decision. Three geometry slices and two culling investigations were
+written against a number nobody had. Here it is, read straight off P1's
+on-screen readout on the user's phone (iOS Safari), on the live build:
+
+| where | FPS | frame ms | cpu ms | gpu ms | draws | tris | tex |
+|---|---|---|---|---|---|---|---|
+| menu | 71.4 | 14.00 | 3.00 | n/a | 13 | 13,064 | 8.2 MB |
+| race, in traffic | 55.6 | 18.00 | 6.00 | n/a | 102 | 80,791 | **130.9 MB** |
+| race, down the straight | 58.8 | 17.00 | 4.00 | n/a | 104 | 83,667 | **130.9 MB** |
+
+Two caveats on reading these. `gpu` is 0.00 because Safari does not expose the
+WebGL2 disjoint timer query, so GPU time cannot be separated from vsync wait
+directly. And every figure is a whole number because Safari clamps
+`performance.now()` to 1 ms, so each is +-1 ms.
+
+### P1's texture fix is confirmed on real hardware
+
+**130.9 MB, exactly the desktop figure.** Before P1 this device was being
+asked for 450.9 MB of texture. That fix is the single most valuable thing to
+come out of the instrumentation, and it is now verified where it matters
+rather than inferred from a desktop capture.
+
+### Geometry is NOT the bottleneck, and that kills the culling work
+
+The menu-to-race step is a controlled comparison: same resolution, same
+postfx chain, same everything except scene content.
+
+- draw calls **13 -> 104, an 8x increase**
+- triangles **13,064 -> 83,667, a 6.4x increase**
+- frame time **14 -> 17 ms, up only 3 ms**
+- cpu time **3 -> 4-6 ms, up only 1-3 ms**
+
+Six and a half times the geometry costs about three milliseconds. Whatever is
+consuming the other ~12 ms is present in *both* readings and is therefore
+independent of scene complexity -- which points at the fullscreen work
+(sky, bloom bright, bloom blur, grade/tonemap, and the mirror's
+render-to-texture), all of which run identically on a menu with one car and
+in a race with twenty.
+
+**So backface culling is not merely unproven, it is measurably the wrong
+lever.** It reduces rasterisation of *scene* geometry, and scene geometry has
+just been shown to cost about 3 ms out of 17. The earlier two entries deferred
+it for want of a number; this is the number, and it says the normalisation
+pass -- real work with real regression risk across every mesh builder -- would
+buy a fraction of 3 ms. Closed, not deferred.
+
+The same argument retires the other standing perf worry: the mirror
+re-submitting the whole world (visible here as ~104 draws where the scene has
+about 52). It is geometry, and geometry is cheap on this device.
+
+### And the honest conclusion: there is no performance problem to fix
+
+**55-59 FPS in a twenty-car pack on the user's phone.** Nobody has complained
+that the game is slow; the complaint has always been that it does not look
+good enough. The measurement says the frame has headroom for more graphics
+work, and that spending the next round on fill-rate optimisation -- reduced
+render scale, cheaper postfx, culling -- would trade visual quality for
+performance nobody is short of.
+
+Recorded as a stop signal, which is what a gate is for. If a later slice
+pushes frame time somewhere uncomfortable, the lever to reach for is the
+fullscreen chain, not the geometry, and this table says why.
