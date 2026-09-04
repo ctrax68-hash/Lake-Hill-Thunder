@@ -447,12 +447,69 @@ FLOOR_Y = 0.45
 # bottom-RIGHT rocker (k=0, z=+0.76w) up the right flank, across the roof,
 # and down to the bottom-LEFT rocker (k=NK-1) -- an open arc; the underbody
 # closes it (see the loft loop).
-RINGF = [
-    (0.00, 0.76), (0.09, 0.96), (0.28, 1.00), (0.56, 0.99), (0.80, 0.885),
-    (0.94, 0.58), (1.00, 0.22),
-    (1.00, -0.22), (0.94, -0.58), (0.80, -0.885), (0.56, -0.99), (0.28, -1.00),
-    (0.09, -0.96), (0.00, -0.76),
+# R1: re-proportioned to a Gen-4 stock-car section. NK is deliberately
+# UNCHANGED at 14, and every k index keeps its meaning, because car_v() maps V
+# from the ring INDEX (`0.97 - k/(NK-1) * 0.94`), not from height -- so every
+# livery band in livery.cpp (beltline 0.677, glass GV0/GVH, the roof/hood
+# highlight span, the rocker shadow) is pinned to these indices. Changing the
+# count would silently slide all of them. Only the WIDTH fractions move here.
+#
+# What changed and why (old -> new):
+#   k4 beltline  0.885 -> 0.97   flat slab side, not a rolled shoulder
+#   k5 glass     0.58  -> 0.86   real greenhouse tumblehome, not a wedge
+#   k6 roof      0.22  -> 0.72   THE big one: the roof was a 0.22-halfwidth
+#                                RIDGE. At a cabin halfWidth of 0.91 that is a
+#                                40 cm wide roof. A Gen-4 roof is ~1.25 m, so
+#                                0.72 gives 1.31 m and the cabin reads as a
+#                                boxy greenhouse instead of a tapered blob.
+#
+# The beltline crease comes from the slope BREAK at k4, not from a duplicated
+# point: k3->k4 runs nearly vertical (0.995 -> 0.97) and k4->k5 leans hard
+# inboard (0.97 -> 0.86), so the smooth-normal calculation puts a real edge
+# there. The roof stays genuinely flat because k6 and k7 are both at hf 1.00
+# and differ only in sign.
+# R1: (heightFrac, widthFrac, liveryV) for the +z half; the -z half is
+# mirrored (wf -> -wf, v -> 1-v). 11 per side, NK = 22.
+#
+# TWO structural changes, both forced by real defects:
+#
+# 1. V IS NOW EXPLICIT PER POINT, not `0.97 - k/(NK-1)*0.94`. Deriving V from
+#    the ring INDEX silently couples every livery band to the point count, and
+#    it was already wrong: livery.cpp paints the roof number panel across
+#    v [0.420, 0.580] -- 0.160 wide -- while the old ring's roof plateau
+#    (k=6..7) spanned only v [0.464, 0.536], 0.072. The roof number has been
+#    bleeding over the drip rail and down the tumblehome for the whole life of
+#    this mesh. Explicit V lets the roof plateau land exactly on the panel.
+#
+# 2. CREASES ARE DUPLICATED POINT PAIRS, not single slope breaks.
+#    ring_normals() takes a CENTRAL difference around the ring
+#    (`kp = r[k+1]`, `km = r[k-1]`), so a lone crease point has its normal
+#    averaged across the crease and shades perfectly smooth. A pair a few
+#    millimetres apart gives each side its own tangent and the edge survives.
+#    This is why the previous shape read as a bar of soap no matter how the
+#    widths were tuned.
+#
+# Widths: the door is dead vertical (wf 0.995 -> 1.000 -> 1.000) from hf 0.30
+# to the beltline, so the car's widest point is AT the belt -- what a Cup car's
+# slab doors actually do. The roof plateau at wf 0.640 gives 1.19 m / 46.9 in
+# against a real Gen-4's 47 in; the old 0.22 gave 0.18 m.
+_RING_HALF = [
+    (0.000, 0.640, 0.985),   #  0 underbody / floor edge
+    (0.022, 0.850, 0.955),   #  1 rocker bottom face   (inside livery's black rocker band)
+    (0.055, 0.930, 0.912),   #  2 rocker lip  A   ] crease pair
+    (0.075, 0.955, 0.888),   #  3 rocker lip  B   ]
+    (0.300, 0.995, 0.815),   #  4 lower door
+    (0.580, 1.000, 0.752),   #  5 door mid            (door number band)
+    (0.793, 1.000, 0.690),   #  6 BELTLINE A      ] crease pair, straddles SHOULDER
+    (0.807, 0.9975, 0.677),  #  7 BELTLINE B      ]   (livery's beltline seam, v=0.677)
+    (0.890, 0.900, 0.630),   #  8 side glass / tumblehome
+    (0.980, 0.720, 0.596),   #  9 drip rail   A   ] crease pair
+    (1.000, 0.640, 0.590),   # 10 drip rail   B   ]   (roof plateau edge)
 ]
+RINGF = [(hf, wf) for (hf, wf, _v) in _RING_HALF] + \
+        [(hf, -wf) for (hf, wf, _v) in reversed(_RING_HALF)]
+RINGV = [v for (_h, _w, v) in _RING_HALF] + \
+        [1.0 - v for (_h, _w, v) in reversed(_RING_HALF)]
 NK = len(RINGF)
 
 # heightFrac at/below this rides the beltline curve (yLow -> beltY); above
@@ -507,23 +564,40 @@ _CAR_ST_JS = [
     # the bumper (station 0->1's own quad strip) -- screenshot-checked for
     # a new seam or dent there, not just assumed fine because the
     # isolated-safety checks passed.
-    (2.51,  0.50,  0.40,  0.13,  0.44),   # bumper cap (low, narrow, pointed nose tip)
-    (2.34,  0.66,  0.485, 0.11,  0.485),
-    (2.04,  0.82,  0.585, 0.11,  0.585),  # nose fascia -- gradual taper into the fender
-    (1.70,  0.92,  0.685, 0.12,  0.685),  # fender leading edge
-    (1.40,  0.95,  0.735, 0.14,  0.735),  # front axle -- fender bulge (full width)
-    (1.05,  0.93,  0.795, 0.16,  0.795),
-    (0.68,  0.91,  0.89,  0.175, 0.89),   # cowl / windshield base -- belt and roof still equal
-    (0.34,  0.875, 0.917, 0.18,  1.10),   # windshield mid -- roof rakes up above the belt
-    (0.02,  0.835, 0.942, 0.185, 1.22),   # A-pillar top
-    (-0.60, 0.825, 0.992, 0.195, 1.26),   # roof peak
-    (-1.00, 0.91,  1.023, 0.20,  1.22),   # fastback glass start
-    (-1.40, 0.95,  1.055, 0.205, 1.055),  # rear axle -- quarter-panel bulge, belt/roof rejoin
-    (-1.75, 0.92,  1.02,  0.205, 1.02),   # deck start
-    (-2.10, 0.885, 0.99,  0.19,  0.99),
-    (-2.34, 0.845, 0.955, 0.32,  0.955),
-    (-2.51, 0.76,  0.92,  0.50,  0.92),   # tail -- yL raised so the cap fan's apex doesn't
-                                           # read as an inverted-V boat hull from behind
+    # R1: RE-AUTHORED to Gen-4 Cup proportions. The rows below are no longer a
+    # transcription of index.html's CAR_ST.
+    #
+    # The old table came over verbatim from the JS prototype and described a
+    # rounded FASTBACK coupe, which is why four rounds of props and paint on
+    # top of it never made the car read as a stock car:
+    #
+    #   * roofY exceeded beltY only at stations 7-10 and REJOINED it at 11 --
+    #     the definition of a fastback. A Gen-4 is a notchback: a long flat
+    #     roof, a distinct steeply-raked rear window, then a flat deck.
+    #   * the nose tapered to halfWidth 0.50 and came to a point. Gen-4 noses
+    #     are blunt and nearly full width at the bumper, over a deep air dam.
+    #   * the roof peaked mid-cabin at station 9 rather than running flat.
+    #
+    # Targets, against a real Gen-4 Cup car: 5.08 m long (HALF_LEN, unchanged),
+    # 1.90 m wide (halfWidth 0.95 max, unchanged), roof 1.30 m, ~1.0 m of flat
+    # roof, windshield raked ~33 deg from horizontal, rear glass ~22 deg, deck
+    # flat at ~1.00 m, air dam 0.09 m off the ground.
+    (2.51,  0.84,  0.60,  0.09,  0.72),   # bumper/valance -- BLUNT and wide, deep air dam
+    (2.30,  0.90,  0.66,  0.09,  0.78),   # front fascia
+    (2.00,  0.93,  0.72,  0.10,  0.83),   # hood leading edge
+    (1.70,  0.95,  0.76,  0.11,  0.86),   # front fender -- full width
+    (1.40,  0.95,  0.80,  0.13,  0.88),   # front axle
+    (1.10,  0.94,  0.84,  0.15,  0.90),   # hood mid
+    (0.80,  0.93,  0.90,  0.16,  0.95),   # cowl / windshield base
+    (0.55,  0.92,  0.93,  0.17,  1.12),   # windshield lower
+    (0.28,  0.91,  0.95,  0.18,  1.30),   # A-pillar top -- ROOF STARTS
+    (-0.20, 0.91,  0.97,  0.19,  1.30),   # roof, flat
+    (-0.72, 0.92,  0.99,  0.19,  1.30),   # C-pillar top -- ROOF ENDS
+    (-1.05, 0.94,  1.00,  0.20,  1.16),   # rear glass, mid
+    (-1.40, 0.95,  1.01,  0.20,  1.02),   # rear axle -- deck starts, belt/roof rejoin
+    (-1.85, 0.94,  1.00,  0.20,  1.00),   # deck, flat
+    (-2.25, 0.90,  0.99,  0.24,  0.99),   # deck rear
+    (-2.51, 0.84,  0.97,  0.34,  0.97),   # tail panel -- wide and square, not a point
 ]
 CHASSIS_STATIONS = [_station(*row) for row in _CAR_ST_JS]
 
@@ -594,22 +668,22 @@ def car_u(x):
 def car_v(k):
     """Ring index -> livery V.
 
-    JS's own carV() is `0.03 + k/(NK-1)*0.94`, but this port's livery is
-    mirrored relative to JS's (livery.cpp paints the +z flank at HIGH v --
-    see the previous loft's own corner rule, which used v=0.945 for p[2]>0),
-    so the mapping is reversed here. That keeps every band livery.cpp
-    already paints exactly where it is today.
+    R1: an explicit table lookup, not `0.97 - k/(NK-1)*0.94`.
 
-    Checked against the four anchors the old 4-corner rule pinned:
-      k=0  (+z rocker)   -> 0.970   (old 0.945, inside the same rocker band)
-      k=4  (+z beltline) -> 0.681   (old 0.700)
-      k=6/7 (roof edges) -> 0.536 / 0.464, straddling 0.500 as before
-      k=9  (-z beltline) -> 0.319   (old 0.300)
-      k=13 (-z rocker)   -> 0.030   (old 0.055, same seam band)
-    Every one lands within ~0.03 of the value the old mesh used, so this is
-    a refinement of the existing unwrap rather than a new one.
+    Deriving V from the ring INDEX silently couples every band livery.cpp
+    paints to the ring's point count, and it was already wrong: the roof
+    number panel is painted across v [0.420, 0.580], 0.160 wide, while the old
+    14-point ring's roof plateau spanned only v [0.464, 0.536], 0.072 wide. The
+    roof number has been overflowing onto the drip rail and the tumblehome for
+    the whole life of this mesh. RINGV lets the roof plateau be authored to
+    land exactly on the painted panel, and lets the ring gain crease pairs
+    without sliding every other band.
+
+    This port's livery is mirrored relative to JS's (livery.cpp paints the +z
+    flank at HIGH v), which is why RINGV runs 0.985 at the +z rocker down to
+    0.015 at the -z rocker rather than the other way round.
     """
-    return 0.97 - (k / (NK - 1)) * 0.94
+    return RINGV[k]
 
 def _rv(i, k):
     """(position, normal, uv) for ring point k of station i."""

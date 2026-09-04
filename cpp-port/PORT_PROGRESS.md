@@ -10933,3 +10933,75 @@ than re-derived.
 Worth recording plainly: **the instrument found a bug in itself at exactly the
 angles it exists to reach**, on its first use, before a single triangle of car
 work. Those are the angles four previous rounds could not see.
+
+## R1 -- The car is a Gen-4 stock car now, not a JS-prototype fastback
+
+User feedback after G32: *"still way off from nascar thunder graphics... Most
+disappointing feature is look of car"*, and asked what specifically, **"they
+don't look like gen 4 nascar race cars."**
+
+Four previous rounds (H1, I, J, K) added props and paint. None of them touched
+the proportions, and the proportions were the problem.
+
+### The station table was a transcription, and it described the wrong car
+
+`_CAR_ST_JS` came over verbatim from the JS prototype's `CAR_ST`. Read as
+geometry rather than as a port, it describes a rounded fastback coupe:
+
+| the data | a Gen-4 Cup car |
+|---|---|
+| roof plateau at wf **0.22** -- a 0.18 m half-width RIDGE | a flat roof ~0.60 half-width |
+| `roofY` above `beltY` only at stations 7-10, **rejoining** at 11 -- a fastback | a notchback: flat roof, distinct steep backlite, flat deck |
+| nose tapering to halfWidth **0.50**, pointed | blunt, near full width at the bumper, deep air dam |
+| ring narrowing to 0.885 at the shoulder | flat slab sides with a hard beltline crease |
+
+Re-authored both. The roof is the headline: **wf 0.22 -> 0.72**, which at a
+cabin half-width of 0.93 is a 1.34 m roof against the old 0.34 m. Stations 8-10
+now hold `roofY` at a flat 1.30, then drop to a 1.02 deck.
+
+### Two things the redesign forced, both of which were latent bugs
+
+**1. Creases have to be duplicated point PAIRS.** `ring_normals()` takes a
+*central* difference around the ring, so a lone crease point has its normal
+averaged across the crease and shades perfectly smooth. The first attempt at
+this round used single slope-breaks and would have produced the right
+silhouette with the same bar-of-soap shading. The ring now carries three
+crease pairs per side (rocker lip, beltline, drip rail), a few millimetres
+apart, so each side of the edge keeps its own tangent.
+
+**2. V had to stop being a function of the ring index.** `car_v()` was
+`0.97 - k/(NK-1)*0.94`, which couples every livery band to the point count --
+and it was **already wrong**: `livery.cpp` paints the roof number panel across
+v [0.420, 0.580], 0.160 wide, while the old ring's roof plateau spanned v
+[0.464, 0.536], only 0.072. **The roof number has been overflowing onto the
+drip rail and down the tumblehome for the entire life of this mesh**, and
+nothing caught it because every V check only asked whether a band fell
+somewhere on the ring at all.
+
+`RINGV` makes V explicit per point. The roof plateau is now authored to land
+exactly on the painted panel, the beltline lands on the livery's 0.677 seam to
+three decimals, and the rocker sits inside the black rocker band. A new
+assertion pins the roof panel INSIDE the plateau rather than merely on the car.
+
+### Result
+
+1322 -> **1578 triangles** (NK 14 -> 22), comfortably inside the headroom P2
+measured. `check_car_rig.py`'s ring assertions were rewritten from magic counts
+(`NK == 14`) to structure -- mirror symmetry of heights, widths and V -- which
+catches an asymmetric ring, something a count never could. Role-named indices
+(`K_ROCKER`/`K_BELT_HI`/`K_ROOF_P`) replace literal k values so a future crease
+pair cannot silently slide a band again.
+
+**Verified on the V1 turntable, all eight angles** -- the first time any car
+change in this project has been looked at from more than one side. The cabin
+reads as a boxy greenhouse with real pillars and a flat roof, the nose is
+square, the tail is a flat panel.
+
+### Still open, and deliberately not hidden
+
+`check_car_rig.py` reports two REAL failures, both the same defect and both
+R2's target: tire-barrel intrusion (0.121 against a 0.080 tolerance) and the
+wheel relief. The relief only reaches `hf <= 0.30`, but at the axle stations
+the tire's crown sits at **hf 0.68** -- so the bodywork encloses the tire from
+30% to 68% of section height. **The wheels are not small, they are buried.**
+That is why they read as dark stubs, and it is what R2 fixes.

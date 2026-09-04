@@ -419,7 +419,13 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // to the windshield/rear-glass edges) and the glass section itself
     // below (index.html:2692-2727), which is where these were originally
     // declared.
-    const double uWS0 = carU(0.68), uWS1 = carU(0.02);
+    // R1: re-anchored to the Gen-4 station table. These are expressed as
+    // carU() of the real station x they belong to, so they move with the
+    // geometry rather than being independent numbers -- the cowl went 0.68 ->
+    // 0.80 and the A-pillar top 0.02 -> 0.28 when the greenhouse became a
+    // notchback, and check_car_rig.py asserts these still land on the real
+    // stations.
+    const double uWS0 = carU(0.80), uWS1 = carU(0.28);
     // K2 (car visual fidelity plan, part 3): uSG0 used to be carU(0.30),
     // which landed 42% of the way inside the windshield's own real U-range
     // [uWS0,uWS1] -- the side window started well past "windshield mid"
@@ -428,11 +434,12 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // that overlap and visibly bled onto both front door windows -- a real
     // "bad window lines" bug, not just a theoretical one, found while
     // investigating the rear-glass bug below. Anchored instead to the
-    // A-pillar station (x=0.02), the same real boundary uWS1 already uses,
-    // with the same kSeamW reveal margin every other seam in this file
-    // uses. uSG1 is unchanged -- carU(-0.95) already sits just before
-    // uRG0 (fastback glass start), already well-tuned to real geometry.
-    const double uSG0 = carU(0.02) + kSeamW, uSG1 = carU(-0.95);
+    // A-pillar station, the same real boundary uWS1 already uses, with the
+    // same kSeamW reveal margin every other seam in this file uses.
+    // R1: A-pillar 0.02 -> 0.28, and uSG1 -0.95 -> -0.67 so the side glass
+    // still ends just ahead of where the rear glass now starts (the C-pillar
+    // moved forward from -1.00 to -0.72 with the notchback roof).
+    const double uSG0 = carU(0.28) + kSeamW, uSG1 = carU(-0.67);
     // K2: uRG1 used to be carU(-1.75) (station 12, "deck start"), but the
     // real glass-adjacent roofline rise ends two stations earlier, at
     // carU(-1.40) (station 11, "rear axle... belt/roof rejoin" -- beltY
@@ -440,7 +447,10 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // glass width; ~47% of it landed on the opaque trunk decklid, not
     // glass. Pulled in to the real boundary with the same kSeamW reveal
     // margin, so trunk paint can't bleed onto glass at the seam either.
-    const double uRG0 = carU(-1.00), uRG1 = carU(-1.40) - kSeamW;
+    // R1: uRG0 -1.00 -> -0.72. The old value was the "fastback glass start"
+    // station; the notchback puts the rear glass between the C-pillar top
+    // (-0.72) and the rear axle where belt and roof rejoin (-1.40, unchanged).
+    const double uRG0 = carU(-0.72), uRG1 = carU(-1.40) - kSeamW;
     constexpr double GV0 = 0.335, GVH = 0.330;
     // K2: the beltline V-span (GV0/GVH) is inset only ~0.016 from the real
     // beltline [car_v(4),car_v(9)]=[0.319,0.681] (thin but non-zero --

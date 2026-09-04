@@ -28,7 +28,16 @@ def check(cond, what):
 print("geometry")
 check(len(R.RINGS) == 16, "16 stations")
 check(all(len(r) == R.NK for r in R.RINGS), "every station has NK=%d ring points" % R.NK)
-check(R.NK == 14, "ring is JS's 14 points")
+# R1: assert the ring's STRUCTURE, not a magic count. A count check could
+# never catch an asymmetric ring; these can, and they survive future point
+# additions (the crease pairs were exactly such an addition).
+check(R.NK % 2 == 0, "ring has an even point count (mirrored halves)")
+check(all(abs(R.RINGF[k][0] - R.RINGF[R.NK - 1 - k][0]) < 1e-12 for k in range(R.NK)),
+      "ring heights are mirror-symmetric")
+check(all(abs(R.RINGF[k][1] + R.RINGF[R.NK - 1 - k][1]) < 1e-12 for k in range(R.NK)),
+      "ring widths are mirror-symmetric (wf -> -wf)")
+check(all(abs(R.RINGV[k] + R.RINGV[R.NK - 1 - k] - 1.0) < 1e-12 for k in range(R.NK)),
+      "ring V is mirror-symmetric (v -> 1-v)")
 
 # The ring is deliberately NOT z-monotonic -- RINGF goes 0.76 -> 0.96 ->
 # 1.00 at the bottom, i.e. the rocker tucks in under the widest point, which
@@ -115,12 +124,27 @@ check(untouched, "relief touches nothing above hf=0.30 (no fender dent)")
 
 # --- UV ---------------------------------------------------------------------
 print("UV / livery band alignment")
-anchors = [(0, 0.945, "+z rocker"), (4, 0.700, "+z beltline"),
-           (9, 0.300, "-z beltline"), (13, 0.055, "-z rocker")]
-for k, old_v, name in anchors:
-    v = R.car_v(k)
-    check(abs(v - old_v) < 0.035, "%s: v=%.3f vs old %.3f (delta %.3f)" % (name, v, old_v, abs(v - old_v)))
-check(abs((R.car_v(6) + R.car_v(7)) / 2 - 0.5) < 1e-6, "roof edges straddle v=0.5")
+# R1: anchored by ROLE, not by literal index, so adding crease pairs cannot
+# silently slide a band. These indices are named once here and in RINGF.
+K_ROCKER, K_BELT_HI, K_ROOF_P = 0, 7, 10
+K_ROOF_N = R.NK - 1 - K_ROOF_P
+check(R.RINGV[K_ROCKER] >= 0.948,
+      "+z rocker v=%.3f sits inside livery's black rocker band [0.948,1.0]" % R.RINGV[K_ROCKER])
+check(abs(R.RINGV[K_BELT_HI] - 0.677) < 0.005,
+      "+z beltline v=%.3f lands on livery's beltline seam (0.677)" % R.RINGV[K_BELT_HI])
+check(abs((R.RINGV[K_ROOF_P] + R.RINGV[K_ROOF_N]) / 2 - 0.5) < 1e-9, "roof edges straddle v=0.5")
+
+# THE ASSERTION THAT WOULD HAVE CAUGHT THE ROOF-NUMBER BUG.
+#
+# livery.cpp paints the roof number panel across v [0.420, 0.580] -- 0.160
+# wide. The old 14-point ring's roof plateau spanned v [0.464, 0.536], only
+# 0.072, so the number overflowed onto the drip rail and down the tumblehome
+# for the whole life of that mesh. Nothing checked it, because every V check
+# only ever asked whether a band fell somewhere on the ring at all.
+_ROOF_PANEL = (0.420, 0.580)
+check(R.RINGV[K_ROOF_N] <= _ROOF_PANEL[0] and R.RINGV[K_ROOF_P] >= _ROOF_PANEL[1],
+      "roof number panel [%.3f,%.3f] fits INSIDE the roof plateau [%.3f,%.3f]"
+      % (_ROOF_PANEL[0], _ROOF_PANEL[1], R.RINGV[K_ROOF_N], R.RINGV[K_ROOF_P]))
 check(all(R.car_v(k) > R.car_v(k + 1) for k in range(R.NK - 1)), "v strictly decreasing around the ring")
 
 # livery.cpp's painted bands must still fall on real body surface.
@@ -160,7 +184,7 @@ def _turn(a, b):
 # was describing.
 worst_len = max(_turn(R.RING_NRM[i][k], R.RING_NRM[i + 1][k])
                 for k in range(R.NK) for i in range(len(R.RINGS) - 1))
-check(worst_len < 45.0, "lengthwise normal turn peaks at %.1f deg (was a hard facet at every span)" % worst_len)
+check(worst_len < 60.0, "lengthwise normal turn peaks at %.1f deg (notchback header/backlite are deliberate creases)" % worst_len)
 
 # AROUND the ring, real creases are expected and wanted -- a car has a rocker
 # line and a wheel-arch lip. The arch is at the two axle stations, where the
@@ -172,8 +196,8 @@ worst_ring_other = max(_turn(R.RING_NRM[i][k], R.RING_NRM[i][k + 1])
                        for k in range(R.NK - 1))
 worst_ring_axle = max(_turn(R.RING_NRM[i][k], R.RING_NRM[i][k + 1])
                       for i in AXLE_ST for k in range(R.NK - 1))
-check(worst_ring_other < 70.0,
-      "around-ring turn away from the axles peaks at %.1f deg" % worst_ring_other)
+check(worst_ring_other < 95.0,
+      "around-ring turn peaks at %.1f deg (crease pairs and the hood/deck shoulder are deliberate)" % worst_ring_other)
 print("  note  wheel-arch crease at the axle stations: %.1f deg (expected -- a car has an arch lip)"
       % worst_ring_axle)
 
@@ -239,35 +263,37 @@ def _carU_raw(x):
     return 0.02 + (2.51 - x) / 5.02 * 0.76
 
 _K_SEAM_W = 0.0035  # livery.cpp's own kSeamW, copied here for the same reason
-_uWS0, _uWS1 = _carU_raw(0.68), _carU_raw(0.02)
-_uSG0 = _carU_raw(0.02) + _K_SEAM_W
-_uRG0, _uRG1 = _carU_raw(-1.00), _carU_raw(-1.40) - _K_SEAM_W
+_uWS0, _uWS1 = _carU_raw(0.80), _carU_raw(0.28)
+_uSG0 = _carU_raw(0.28) + _K_SEAM_W
+_uRG0, _uRG1 = _carU_raw(-0.72), _carU_raw(-1.40) - _K_SEAM_W
 
 _st6_u = R.car_u(R.CHASSIS_STATIONS[6][0])   # cowl/windshield base
 _st8_u = R.car_u(R.CHASSIS_STATIONS[8][0])   # A-pillar top
-_st10_u = R.car_u(R.CHASSIS_STATIONS[10][0])  # fastback glass start
-_st11_u = R.car_u(R.CHASSIS_STATIONS[11][0])  # rear axle, belt/roof rejoin
+_st10_u = R.car_u(R.CHASSIS_STATIONS[10][0])  # R1: C-pillar top / roof trailing edge
+_st12_u = R.car_u(R.CHASSIS_STATIONS[12][0])  # R1: rear axle moved 11 -> 12
 
 check(abs(_uWS0 - _st6_u) < 1e-9, "windshield uWS0 exactly matches the cowl station (regression guard)")
 check(abs(_uWS1 - _st8_u) < 1e-9, "windshield uWS1 exactly matches the A-pillar station (regression guard)")
 check(abs(_uSG0 - (_st8_u + _K_SEAM_W)) < 1e-9,
       "side-glass uSG0 anchors to the A-pillar station + seam margin (K2 fix)")
-check(abs(_uRG0 - _st10_u) < 1e-9, "rear-glass uRG0 exactly matches the fastback-glass-start station (regression guard)")
+check(abs(_uRG0 - _st10_u) < 1e-9, "rear-glass uRG0 exactly matches the C-pillar station (regression guard)")
 # The actual bug-catcher: fails against the pre-K2 uRG1 (carU(-1.75), which
 # overshoots station 11 by far more than 0.01), passes after the fix, and
 # would catch a future regression that widens it back out.
-check(0 < _st11_u - _uRG1 <= 0.01,
-      "rear-glass uRG1 sits strictly inside the real station-11 boundary, with a small bounded margin (%.4f)"
-      % (_st11_u - _uRG1))
+check(0 < _st12_u - _uRG1 <= 0.02,
+      "rear-glass uRG1 sits strictly inside the real rear-axle station, with a small bounded margin (%.4f)"
+      % (_st12_u - _uRG1))
 
 # GV0/GVH deliberately unchanged this phase (see livery.cpp's own K2
 # comment) -- documents the real target span is still satisfied today,
 # groundwork for a future tightening rather than an assertion of a fix.
+# R1: the real beltline is now read from the ROLE index, not the literal k=4
+# and k=9 the 14-point ring happened to put it at.
 _GV0, _GVH = 0.335, 0.330
-_real_belt_lo, _real_belt_hi = R.car_v(9), R.car_v(4)
-check(_GV0 >= _real_belt_lo and _GV0 + _GVH <= _real_belt_hi,
-      "beltline V-span [%.3f,%.3f] still stays within the real beltline [%.3f,%.3f]"
-      % (_GV0, _GV0 + _GVH, _real_belt_lo, _real_belt_hi))
+_BELT_LO, _BELT_HI = R.RINGV[R.NK - 1 - K_BELT_HI], R.RINGV[K_BELT_HI]
+check(_BELT_LO <= _GV0 and _GV0 + _GVH <= _BELT_HI,
+      "livery glass V-span [%.3f,%.3f] stays within the real beltline [%.3f,%.3f]"
+      % (_GV0, _GV0 + _GVH, _BELT_LO, _BELT_HI))
 
 # --- exhaust pipes (J2, car visual fidelity plan part 2) --------------------
 # Identified by swatch + joint rather than a hand-picked x/z box: SW_SIDEWALL
