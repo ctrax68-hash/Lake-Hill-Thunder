@@ -170,6 +170,24 @@ bool showStats() {
     return on;
 }
 
+// V1: LHT_SHOWCASE_ANGLE -- orbit the menu's Showcase camera around the car,
+// in degrees. Native/debug only, and deliberately so: this is a verification
+// instrument, not a feature. See the Showcase branch in renderFrame() for why
+// it had to exist -- the fixed front-3/4 from the car's left was the ONLY view
+// of the car this project has ever had, and four rounds of car work shipped
+// without being able to see the surfaces they changed.
+double showcaseOrbitDegFromEnv() {
+#ifdef __EMSCRIPTEN__
+    return 0.0;
+#else
+    static const double deg = [] {
+        const char* s = std::getenv("LHT_SHOWCASE_ANGLE");
+        return s ? std::atof(s) : 0.0;
+    }();
+    return deg;
+#endif
+}
+
 // Builds a full RGBA8 box-filter mip chain (level 0 through 1x1) from a
 // square, power-of-two base image, concatenated in the order
 // bgfx::createTexture2D(_hasMips=true, ...) expects. Written by hand rather
@@ -2131,11 +2149,37 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             const Vec3 up3 = surfaceUp(*track_, car.s);
             // Eye sits ahead of and to the side of the car, looking back at
             // it -- the geometry that actually produces a front-3/4 shot.
+            //
+            // V1: the same shot, re-expressed as an ORBIT so it can be aimed.
+            //
+            // This camera was a fixed front-3/4 from the car's LEFT, and that
+            // is the only view of the car this project has ever had. Four
+            // rounds of car work (H1, I, J, K) shipped without anyone being
+            // able to look at the right flank, the tail, or the exhaust side
+            // -- J2/J3/J5 all record verification falling back to decoding the
+            // compiled glTF blob and reading livery pixels, because no camera
+            // could resolve what they changed. That is not a tooling nicety,
+            // it is why four attempts at the car did not land.
+            //
+            // kDistFront/kLateral are kept as the DEFAULT azimuth and radius
+            // rather than replaced, so with no override the framing is
+            // bit-identical to what shipped: atan2(4.5, 7.0) = 32.7 degrees
+            // off the nose at a radius of 8.32 m.
             constexpr double kDistFront = 7.0, kLateral = 4.5, kEyeHeight = 1.4, kLookHeight = 0.7;
-            const bx::Vec3 eye = {
-                (float)(base.x + fwx * kDistFront + sx * kLateral + up3.x * kEyeHeight),
-                (float)(base.y + up3.y * kEyeHeight),
-                (float)(base.z + fwz * kDistFront + sz * kLateral + up3.z * kEyeHeight)};
+            const double kBaseAzim = std::atan2(kLateral, kDistFront);
+            const double kOrbitR = std::sqrt(kDistFront * kDistFront + kLateral * kLateral);
+            // LHT_SHOWCASE_ANGLE, in degrees, rotates the eye around the car:
+            // 0 keeps the shipped shot, +90 swings to the driver's side, 180
+            // looks at the tail. Deterministic (no wall clock) so a headless
+            // capture at a given angle is reproducible.
+            showcaseOrbitDeg_ = showcaseOrbitDegFromEnv();
+            const double azim = kBaseAzim + showcaseOrbitDeg_ * 3.14159265358979323846 / 180.0;
+            const double ca = std::cos(azim), sa = std::sin(azim);
+            const double ox = (fwx * ca + sx * sa) * kOrbitR;
+            const double oz = (fwz * ca + sz * sa) * kOrbitR;
+            const bx::Vec3 eye = {(float)(base.x + ox + up3.x * kEyeHeight),
+                                  (float)(base.y + up3.y * kEyeHeight),
+                                  (float)(base.z + oz + up3.z * kEyeHeight)};
             const bx::Vec3 at = {(float)(base.x + up3.x * kLookHeight), (float)(base.y + up3.y * kLookHeight),
                                   (float)(base.z + up3.z * kLookHeight)};
             const bx::Vec3 up = {(float)up3.x, (float)up3.y, (float)up3.z};

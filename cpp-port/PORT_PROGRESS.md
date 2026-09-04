@@ -10880,3 +10880,40 @@ The lesson, which this round has now paid for three times: **the desktop build
 could not reproduce the view, so every hypothesis was untested reasoning until
 a device screenshot arrived.** Two of the three G32 fixes were verified by
 measurement before shipping and both worked; this one was not, and did not.
+
+## V1 -- Being able to see the car
+
+The next round is a rebuild of the car's proportions. Before any of it, this:
+**there was no way to look at the car.**
+
+`CameraMode::Showcase` was a fixed front-3/4 shot taken from the car's LEFT
+(`kDistFront = 7.0`, `kLateral = 4.5` along the left-perpendicular). Chase sits
+behind at racing distance; TopDown is an orthographic overview of the whole
+circuit. So the right flank, the tail, the exhaust side and the underside have
+never appeared in any camera this game has.
+
+That is not a tooling nicety. Four rounds of car work shipped through it:
+
+- **J2** (exhaust pipes) -- on the side Showcase can never see
+- **J3** (spoiler endplates), **J5** (wheel hub nut) -- both record verification
+  falling back to decoding the compiled glTF blob and reading livery pixels,
+  because no camera could resolve them
+- **K1/K2/K3** -- nose and glass work, followed by "still not met, without
+  further specifics"
+
+Every one of those rounds was followed by the user saying the car still looked
+wrong. A team that cannot see its own work will keep shipping work that does
+not land, and this project has now demonstrated that four times on the car and
+three times this week on the crowd.
+
+**`LHT_SHOWCASE_ANGLE`** (degrees) orbits the Showcase eye around the car. The
+shipped constants are kept as the DEFAULT azimuth and radius rather than
+replaced -- `atan2(4.5, 7.0) = 32.7` degrees off the nose at a radius of
+`sqrt(7^2 + 4.5^2) = 8.32` m -- so with no override the framing is
+algebraically identical to what shipped, not merely similar.
+
+**`tools/car_turntable.py`** captures N angles and assembles one contact sheet.
+One command, one image, the whole car.
+
+Native/debug only, and deliberately so: this is an instrument, not a feature.
+The menu still shows the same hero shot it always did.

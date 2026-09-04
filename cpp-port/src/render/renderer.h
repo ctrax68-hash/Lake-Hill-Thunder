@@ -150,6 +150,13 @@ private:
     CameraMode cameraMode_ = CameraMode::Chase;
     int chaseCarIdx_ = 0;
 
+    // V1: degrees to orbit the Showcase camera around the car, from
+    // LHT_SHOWCASE_ANGLE. 0 is the shipped front-3/4 from the left; +90 swings
+    // to the driver's side, 180 looks at the tail. Exists because the fixed
+    // Showcase shot was the only view of the car this project had, and four
+    // car rounds shipped unable to see the surfaces they changed.
+    double showcaseOrbitDeg_ = 0.0;
+
     // Set by setTrack(); needed by the chase camera's corner-lookahead bias
     // (Track::pointAt() ahead of the chased car). Not owned -- caller's
     // Track must outlive this Renderer, true for main.cpp's usage.
