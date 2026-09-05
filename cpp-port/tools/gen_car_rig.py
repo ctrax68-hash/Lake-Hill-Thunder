@@ -1033,10 +1033,20 @@ for (idx, outward) in ((0, (1, 0, 0)), (len(RINGS) - 1, (-1, 0, 0))):
 # TRACK_HALF*0.6, which accidentally coupled the spoiler's width to the
 # wheel track -- so moving the wheels inboard would have silently narrowed
 # the spoiler too.
-_spz = CHASSIS_STATIONS[-1][1] * 0.6
+# R2d: 0.6 -> 0.80 of the tail half-width. At 0.6 the blade was 1.01 m wide
+# on a 1.90 m car and stood 0.24 m proud of the deck -- narrow and tall is
+# exactly the "detached plate" the G8 comment above says the riser blocks
+# exist to avoid, and the turntable shows it reading that way from every
+# rear angle. A Gen-4 spoiler is ~1.45 m wide and ~0.17 m tall. 0.80 puts
+# the blade's tips at 0.672, between the tail section's own top-plateau edge
+# (0.538) and its widest upper point (0.756), so the ends land on the
+# tumblehome instead of floating clear of it -- which is the constraint that
+# put the original number low, just solved with the right value rather than
+# by shrinking the blade until it could not overhang anything.
+_spz = CHASSIS_STATIONS[-1][1] * 0.80
 _sp_x0, _sp_x1 = -(HALF_LEN - 0.12), -(HALF_LEN + 0.06)
 _sp_deckY = CHASSIS_STATIONS[-1][4]  # tail station's own yTop
-_sp_y0, _sp_y1, _sp_th = _sp_deckY + 0.02, _sp_deckY + 0.24, 0.03
+_sp_y0, _sp_y1, _sp_th = _sp_deckY + 0.02, _sp_deckY + 0.18, 0.03
 
 def _p(x, y, z):
     return (x, y, z)

@@ -11096,3 +11096,19 @@ The turntable shows two things this round did not touch: the spoiler reads as
 a tall detached plate, and the nose carries a deep angular chin under the
 bumper. Both are hand-placed props rather than loft geometry, and both are
 next.
+
+### R2d: the spoiler
+
+Follow-on from the same turntable pass. The blade was `tailHalfWidth * 0.6` =
+1.01 m wide on a 1.90 m car and stood 0.24 m proud of the deck. G8's own
+comment says the riser blocks exist so the spoiler "reads as intentional
+rather than a detached plate" -- narrow and tall is precisely how you get a
+detached plate anyway, and that is what every rear angle showed.
+
+A Gen-4 spoiler is roughly 1.45 m wide and 0.17 m tall. Widened to `* 0.80`
+(tips at 0.672) and lowered to 0.18 above the deck. The constraint that
+originally pushed the number down is real -- the loft is a faceted tube, so a
+full-width blade floats clear of the quarter panels -- but 0.672 lands between
+the tail section's top-plateau edge (0.538) and its widest upper point
+(0.756), i.e. on the tumblehome. The fix was the right value, not a smaller
+blade.
