@@ -1,0 +1,5 @@
+
+# Python bytecode from tools/ (stale copies of it have twice masked a
+# real gen_car_rig.py change this session)
+__pycache__/
+*.pyc

@@ -26,7 +26,32 @@ def check(cond, what):
     if not cond: ok = False
 
 print("geometry")
-check(len(R.RINGS) == 16, "16 stations")
+# R2: the station list is now the hand-authored silhouette keyframes PLUS
+# arch samples inserted either side of both axles, so a fixed count is the
+# wrong assertion. Check the structure instead: every keyframe survived, the
+# list is ordered, and there are enough samples to resolve the arch.
+check(len(R.RINGS) == len(R.CHASSIS_STATIONS), "one ring per station")
+check(len(R.CHASSIS_STATIONS) >= 24, "enough stations to resolve the arch (%d)" % len(R.CHASSIS_STATIONS))
+_key_xs = [st[0] for st in R._KEY_STATIONS]
+_all_xs = [st[0] for st in R.CHASSIS_STATIONS]
+check(all(any(abs(kx - ax) < 1e-9 for ax in _all_xs) for kx in _key_xs),
+      "every hand-authored keyframe station survives into the final list")
+check(all(_all_xs[i] > _all_xs[i + 1] for i in range(len(_all_xs) - 1)),
+      "stations are strictly ordered nose -> tail")
+
+# R2: the arch is a real opening, not a pinch. At each axle the lip must rise
+# clear of the tire's crown; a pinch leaves it at rocker height.
+_TIRE_TOP = R.WHEEL_RADIUS * 2.0
+for _wx in R._WHEEL_AXLE_X:
+    _i = min(range(len(_all_xs)), key=lambda j: abs(_all_xs[j] - _wx))
+    _lip_y = R.RINGS[_i][R.K_LIP][1]
+    check(_lip_y > _TIRE_TOP,
+          "axle x=%+.2f: arch lip y=%.3f clears the tire crown %.3f" % (_wx, _lip_y, _TIRE_TOP))
+    check(abs(R.RINGS[_i][1][2]) <= R.ARCH_INNER_Z + 1e-6,
+          "axle x=%+.2f: wheelhouse wall pulled to ARCH_INNER_Z (|z|=%.3f)" % (_wx, abs(R.RINGS[_i][1][2])))
+check(R.ARCH_R >= R.WHEEL_RADIUS + R.SUSP_MAX_TRAVEL,
+      "arch radius clears a fully compressed wheel (%.3f >= %.3f)"
+      % (R.ARCH_R, R.WHEEL_RADIUS + R.SUSP_MAX_TRAVEL))
 check(all(len(r) == R.NK for r in R.RINGS), "every station has NK=%d ring points" % R.NK)
 # R1: assert the ring's STRUCTURE, not a magic count. A count check could
 # never catch an asymmetric ring; these can, and they survive future point
@@ -74,53 +99,82 @@ for axle_x in R._WHEEL_AXLE_X:
                     depth = min(az - inner, outer - az)
                     if worst is None or depth > worst[0]:
                         worst = (depth, i, k, p)
-# The relief tapers with distance from the axle, so a station part-way along
-# the notch range keeps a sliver inside the barrel. JS has the identical
-# formula and constants, and every "fix" for it (hard-clamping, widening the
-# range) trades this graze for a visible STEP in the rocker line between
-# stations -- which is the CAR-L/CAR-M dent all over again. So bound it
-# instead of demanding zero: it must be shallow, and confined to the low
-# (hf<=0.30) rocker points that live behind the tire from every external
-# viewpoint. Anything at fender height would be the real bug.
-TOL = 0.08
-check(worst is None or worst[0] <= TOL,
-      "tire-barrel intrusion within tolerance (%.3f <= %.3f)%s"
-      % (0.0 if worst is None else worst[0], TOL,
-         "" if worst is None else " at station %d k=%d %s" % (worst[1], worst[2], worst[3])))
-check(worst is None or R.RINGF[worst[2]][0] <= R._WHEEL_RELIEF_HF,
-      "any intrusion is at rocker height (hf=%.2f <= %.2f), not fender height"
-      % (0.0 if worst is None else R.RINGF[worst[2]][0], R._WHEEL_RELIEF_HF))
-check(abs((abs(R.TRACK_HALF) - HW) - R._WHEEL_INNER_Z) < 1e-6,
-      "tire inner face (%.3f) == WHEEL_INNER_Z (%.3f), so the JS-tuned relief targets the real tire"
-      % (abs(R.TRACK_HALF) - HW, R._WHEEL_INNER_Z))
+# R2: TIGHTENED TO ZERO. The old bound was TOL = 0.08 with a long comment
+# explaining why a sliver inside the tire barrel was unavoidable -- true of a
+# relief that only pinches |z| at constant height, and the CAR-L/CAR-M/CAR-N
+# history is all attempts to tune that graze away. A real arch has no graze:
+# every lip point lies on a circle of radius ARCH_R = 0.45 about the axle,
+# outside the tire's 0.35 barrel, so the intrusion is exactly none.
+TOL = 0.0
+check(worst is None,
+      "tire-barrel intrusion is exactly zero%s"
+      % ("" if worst is None else " -- %.3f at station %d k=%d %s" % (worst[0], worst[1], worst[2], worst[3])))
+check(R.ARCH_INNER_Z <= abs(R.TRACK_HALF) - HW - 0.02,
+      "wheelhouse wall (%.3f) stays inboard of the tire's inner face (%.3f) with margin"
+      % (R.ARCH_INNER_Z, abs(R.TRACK_HALF) - HW))
 check(abs(R.TRACK_HALF) + HW <= max(st[1] for st in R.CHASSIS_STATIONS) + 1e-9,
       "tire outer face (%.3f) is inside the widest bodywork (%.3f)"
       % (abs(R.TRACK_HALF) + HW, max(st[1] for st in R.CHASSIS_STATIONS)))
 
-# The relief must actually be doing something at the axle stations. It
-# TAPERS with distance from the axle (JS's `t = 1 - dx/RANGE`), so it only
-# reaches WHEEL_INNER_Z exactly at dx=0 -- assert it gets close, not that it
-# snaps.
-for si, name in ((4, "front axle"), (11, "rear axle")):
+# R2: the arch must be an OPENING, not a pinch, and must leave the upper body
+# alone. These replace the old "relief pulls low points inboard" checks, which
+# described a mechanism that no longer exists.
+_axle_idx = [min(range(len(R.CHASSIS_STATIONS)),
+                 key=lambda j: abs(R.CHASSIS_STATIONS[j][0] - wx))
+             for wx in R._WHEEL_AXLE_X]
+for si, name in zip(_axle_idx, ("front axle", "rear axle")):
     st = R.CHASSIS_STATIONS[si]
-    relieved = [k for k, (hf, wf) in enumerate(R.RINGF)
-                if hf <= R._WHEEL_RELIEF_HF and abs(wf * st[1]) > R._WHEEL_INNER_Z + 1e-9]
-    worst_k = max(relieved, key=lambda k: abs(R.RINGS[si][k][2])) if relieved else None
-    got = all(abs(R.RINGS[si][k][2]) < abs(R.RINGF[k][1] * st[1]) - 1e-9        # moved inboard
-              and abs(R.RINGS[si][k][2]) <= R._WHEEL_INNER_Z + 0.05             # nearly all the way
-              for k in relieved)
-    check(len(relieved) > 0 and got,
-          "%s station: all %d low ring points pulled to ~WHEEL_INNER_Z (worst |z|=%.3f vs target %.3f)"
-          % (name, len(relieved), abs(R.RINGS[si][worst_k][2]) if worst_k is not None else -1,
-             R._WHEEL_INNER_Z))
-# ...and must NOT be touching anything above hf=0.30 (the old visible-dent bug).
-untouched = True
-for si in (4, 11):
-    st = R.CHASSIS_STATIONS[si]
+    # An opening: the lip must stand well proud of where the un-arched
+    # section would have put it. A pinch leaves it at rocker height.
+    lip_hf = R.RINGF[R.K_LIP][0]
+    y_base = st[3] + (lip_hf / R.SHOULDER) * (st[2] - st[3])
+    lip_y = R.RINGS[si][R.K_LIP][1]
+    check(lip_y - y_base >= 0.30,
+          "%s: arch lip stands %.3f above the un-arched section (>= 0.30 means an opening)"
+          % (name, lip_y - y_base))
+    # And it must never REACH the beltline -- that would be a fender dent.
     for k, (hf, wf) in enumerate(R.RINGF):
-        if hf > R._WHEEL_RELIEF_HF and abs(abs(R.RINGS[si][k][2]) - abs(wf * st[1])) > 1e-9:
-            untouched = False
-check(untouched, "relief touches nothing above hf=0.30 (no fender dent)")
+        if hf >= R.SHOULDER:
+            check(abs(abs(R.RINGS[si][k][2]) - abs(wf * st[1])) < 1e-9,
+                  "%s: arch leaves the beltline and roof untouched (k=%d)" % (name, k))
+            break
+
+# The arch must never LOWER any point -- it only ever lifts the section onto
+# the lip. This is the assertion that catches a mis-tuned arch folding the ring.
+_no_lowering = True
+for si, st in enumerate(R.CHASSIS_STATIONS):
+    for k, (hf, wf) in enumerate(R.RINGF):
+        y_plain = st[3] + (hf / R.SHOULDER) * (st[2] - st[3]) if hf <= R.SHOULDER else None
+        if y_plain is not None and R.RINGS[si][k][1] < y_plain - 1e-9:
+            _no_lowering = False
+check(_no_lowering, "the arch only ever lifts the section, never lowers it (no ring fold-back)")
+
+# R2c: the wheelhouse wall must EASE back out to the body line toward the ends
+# of the mouth. The first arch pulled it fully inboard at every station it
+# touched, turning a 1.16 m stretch of the car's flank into a trench that the
+# (black) tire vanished into. Assert the shape of the taper directly: full
+# depth where the tire's radial shadow reaches, and materially shallower at
+# the last station before the mouth closes.
+_taper_ok, _full_ok = True, True
+for _wx in R._WHEEL_AXLE_X:
+    _in_mouth = [(si, st) for si, st in enumerate(R.CHASSIS_STATIONS)
+                 if 1e-9 < abs(st[0] - _wx) < R.ARCH_X_MAX - 1e-9]
+    for si, st in _in_mouth:
+        _dx = abs(st[0] - _wx)
+        _z = abs(R.RINGS[si][1][2])           # k=1: the wheelhouse wall
+        _body_z = abs(R.RINGF[1][1]) * st[1]  # where it would sit un-arched
+        if _dx <= R.ARCH_WALL_FULL and _z > R.ARCH_INNER_Z + 1e-6:
+            _full_ok = False
+    # The outermost station still inside the mouth must be closer to the body
+    # line than to the wall, or the taper is not doing anything.
+    if _in_mouth:
+        si, st = max(_in_mouth, key=lambda p: abs(p[1][0] - _wx))
+        _z = abs(R.RINGS[si][1][2])
+        _body_z = abs(R.RINGF[1][1]) * st[1]
+        if _z - R.ARCH_INNER_Z <= (_body_z - R.ARCH_INNER_Z) * 0.5:
+            _taper_ok = False
+check(_full_ok, "wheelhouse wall is at full depth everywhere the tire's radial shadow reaches")
+check(_taper_ok, "wheelhouse wall eases back toward the body line at the mouth's ends (not a trench)")
 
 # --- UV ---------------------------------------------------------------------
 print("UV / livery band alignment")
@@ -177,25 +231,60 @@ def _turn(a, b):
     d = max(-1.0, min(1.0, sum(x * y for x, y in zip(a, b))))
     return math.degrees(math.acos(d))
 
+# R2: stations must be addressed BY X, never by index. _build_stations()
+# interleaves auto-generated arch samples with the hand-authored silhouette
+# rows, so every literal index in this file went stale the moment the arch
+# landed -- four glass-U guards started failing against geometry that was
+# fine, because index 6 was no longer the cowl. Look the row up by the x_js
+# value the table itself is written in, and fail loudly if it is not there.
+def _key_station_x(x_js):
+    x = x_js * (R.HALF_LEN / 2.51)
+    for st in R.CHASSIS_STATIONS:
+        if abs(st[0] - x) < 1e-9:
+            return st[0]
+    raise SystemExit("check_car_rig: no station at x_js=%.3f -- the silhouette "
+                     "table moved and this file was not updated with it" % x_js)
+
+# Spans touched by a wheel arch. The arch opening's leading and trailing edges
+# are where the lip circle meets the fender at a VERTICAL tangent (dx ==
+# ARCH_R), which is a genuine crease on a real car -- the same reasoning the
+# around-ring check has always applied to the lip itself. Scoped rather than
+# bounded loosely, so the smooth-shell guard keeps its teeth everywhere else.
+_ARCH_ST = set(i for i, st in enumerate(R.CHASSIS_STATIONS)
+               if any(abs(st[0] - wx) <= R.ARCH_X_MAX + 1e-9 for wx in R._WHEEL_AXLE_X))
+_ARCH_SPAN = set()
+for _i in _ARCH_ST:
+    _ARCH_SPAN.add(_i)
+    _ARCH_SPAN.add(_i - 1)
+
 # LENGTHWISE smoothness is the metric that actually decides whether the body
 # reads as a curved shell or as a stack of plates: the old mesh gave every
 # station-to-station quad one flat normal, so this was a hard facet edge at
 # every one of the 15 spans. It is the thing "looks like folded cardboard"
 # was describing.
 worst_len = max(_turn(R.RING_NRM[i][k], R.RING_NRM[i + 1][k])
-                for k in range(R.NK) for i in range(len(R.RINGS) - 1))
-check(worst_len < 60.0, "lengthwise normal turn peaks at %.1f deg (notchback header/backlite are deliberate creases)" % worst_len)
+                for k in range(R.NK) for i in range(len(R.RINGS) - 1)
+                if i not in _ARCH_SPAN)
+check(worst_len < 60.0, "lengthwise normal turn peaks at %.1f deg away from the arches (notchback header/backlite are deliberate creases)" % worst_len)
+worst_len_arch = max(_turn(R.RING_NRM[i][k], R.RING_NRM[i + 1][k])
+                     for k in range(R.NK) for i in range(len(R.RINGS) - 1)
+                     if i in _ARCH_SPAN)
+# The arch mouth is a crease, but it is not a fold. R2's first cut peaked at
+# 154 deg here because the lip (ARCH_CY + ARCH_R = 0.80) reached the front
+# axle's beltY (also 0.80) and flattened the entire flank into a horizontal
+# shelf. That is the number this bound exists to catch.
+check(worst_len_arch < 95.0,
+      "arch-mouth lengthwise turn peaks at %.1f deg -- a lip crease, not a folded flank" % worst_len_arch)
 
 # AROUND the ring, real creases are expected and wanted -- a car has a rocker
 # line and a wheel-arch lip. The arch is at the two axle stations, where the
 # relief tucks the low points inboard while the fender above stays flared;
 # that crease is the arch, not an artifact. Everywhere else should be gentle.
-AXLE_ST = (4, 11)
 worst_ring_other = max(_turn(R.RING_NRM[i][k], R.RING_NRM[i][k + 1])
-                       for i in range(len(R.RINGS)) if i not in AXLE_ST
+                       for i in range(len(R.RINGS)) if i not in _ARCH_ST
                        for k in range(R.NK - 1))
 worst_ring_axle = max(_turn(R.RING_NRM[i][k], R.RING_NRM[i][k + 1])
-                      for i in AXLE_ST for k in range(R.NK - 1))
+                      for i in sorted(_ARCH_ST) for k in range(R.NK - 1))
 check(worst_ring_other < 95.0,
       "around-ring turn peaks at %.1f deg (crease pairs and the hood/deck shoulder are deliberate)" % worst_ring_other)
 print("  note  wheel-arch crease at the axle stations: %.1f deg (expected -- a car has an arch lip)"
@@ -263,14 +352,14 @@ def _carU_raw(x):
     return 0.02 + (2.51 - x) / 5.02 * 0.76
 
 _K_SEAM_W = 0.0035  # livery.cpp's own kSeamW, copied here for the same reason
-_uWS0, _uWS1 = _carU_raw(0.80), _carU_raw(0.28)
-_uSG0 = _carU_raw(0.28) + _K_SEAM_W
-_uRG0, _uRG1 = _carU_raw(-0.72), _carU_raw(-1.40) - _K_SEAM_W
+_uWS0, _uWS1 = _carU_raw(0.80), _carU_raw(0.35)
+_uSG0 = _carU_raw(0.35) + _K_SEAM_W
+_uRG0, _uRG1 = _carU_raw(-0.95), _carU_raw(-1.40) - _K_SEAM_W
 
-_st6_u = R.car_u(R.CHASSIS_STATIONS[6][0])   # cowl/windshield base
-_st8_u = R.car_u(R.CHASSIS_STATIONS[8][0])   # A-pillar top
-_st10_u = R.car_u(R.CHASSIS_STATIONS[10][0])  # R1: C-pillar top / roof trailing edge
-_st12_u = R.car_u(R.CHASSIS_STATIONS[12][0])  # R1: rear axle moved 11 -> 12
+_st6_u = R.car_u(_key_station_x(0.80))    # cowl/windshield base
+_st8_u = R.car_u(_key_station_x(0.35))    # A-pillar top / roof leading edge
+_st10_u = R.car_u(_key_station_x(-0.95))  # C-pillar top / roof trailing edge
+_st12_u = R.car_u(_key_station_x(-1.40))  # rear axle / deck start
 
 check(abs(_uWS0 - _st6_u) < 1e-9, "windshield uWS0 exactly matches the cowl station (regression guard)")
 check(abs(_uWS1 - _st8_u) < 1e-9, "windshield uWS1 exactly matches the A-pillar station (regression guard)")
@@ -404,7 +493,12 @@ check(_worst_spl is None, "splitter clears the front tire's cylindrical volume%s
 # pre-existing hub-disc fan's centre point share the same (x,y) and would
 # otherwise be ambiguous without also checking z.
 print("wheel hub center-lock nut")
-_HR = R.WHEEL_RADIUS * 0.68 * R._HUB_R_FRAC  # R_INNER * _HUB_R_FRAC (R_INNER = radius*0.68 in add_wheel())
+# R2b: read the rim-face radius from the generator's own constant instead of
+# repeating the literal 0.68. That literal was a silent trap -- when the rim
+# was cut back to a real 15-inch wheel every assertion here would still have
+# "passed" while describing geometry that no longer existed.
+_R_BEAD = R.WHEEL_RADIUS * R.WHEEL_R_BEAD
+_HR = _R_BEAD * R._HUB_R_FRAC
 _hw = R.WHEEL_RADIUS * 0.4  # half_width, matching the add_wheel() call site's own WHEEL_RADIUS*0.4
 _hub_ring_ok = True
 _hub_joint_ok = True
@@ -415,7 +509,9 @@ for _wi, (wx, wz) in enumerate(R.wheel_offsets):
     _outer_sign = 1 if _cz > 0 else -1
     for _side_sign in (1, -1):
         _z = _cz + _side_sign * _hw
-        _hub_z = _z + _side_sign * (_hw * R._HUB_Z_OFFSET_FRAC)
+        # R2b: the rim face is dished inboard, and the nut sits proud of THAT.
+        _z_rim = _z - _side_sign * (_hw * R.WHEEL_Z_DISH)
+        _hub_z = _z_rim + _side_sign * (_hw * R._HUB_Z_OFFSET_FRAC)
         _found = [i for i, (uv, j, p) in enumerate(zip(R.uvs, R.joints0, R.positions))
                   if uv == R.SW_RIM and j[0] == _joint
                   and abs(p[2] - _hub_z) < 1e-9
@@ -429,9 +525,32 @@ check(_hub_ring_ok, "every wheel's outer cap carries exactly %d hub-nut ring ver
 check(_hub_joint_ok,
       "every hub-nut vertex is bound to its own wheel's joint (1-4), never chassis joint 0")
 check(_hub_outer_only_ok, "no hub-nut geometry on any wheel's inner (never-seen) cap")
-check(0 < _HR < R.WHEEL_RADIUS * 0.68,
-      "hub-nut radius (%.4f) stays strictly inside the hub disc's own R_INNER (%.4f)"
-      % (_HR, R.WHEEL_RADIUS * 0.68))
+check(0 < _HR < _R_BEAD,
+      "hub-nut radius (%.4f) stays strictly inside the rim face's own R_INNER (%.4f)"
+      % (_HR, _R_BEAD))
+# R2b: the defect the turntable caught -- the rim face reached 0.68 of the
+# radius, so the black sidewall was a 0.22-wide ring and every wheel rendered
+# as a pale disc. Assert the tire, not the rim, is the dominant band.
+_sidewall = R.WHEEL_R_SHOULDER - R.WHEEL_R_BEAD
+check(_sidewall >= 0.35,
+      "sidewall band is %.2f of the radius (>= 0.35; the I1 wheel that read as a pale disc had 0.32)"
+      % _sidewall)
+check(R.WHEEL_R_BEAD < 0.60,
+      "rim face (%.2f of the radius) stays inside a real 15-in-wheel-in-a-28-in-tire proportion"
+      % R.WHEEL_R_BEAD)
+# The spoke gaps must actually be a DIFFERENT swatch from the spokes, or the
+# face is a flat disc again with extra triangles. Count both on one outer cap.
+_fx, _fz = R.wheel_offsets[0]
+_f_rim = sum(1 for uv, j, p in zip(R.uvs, R.joints0, R.positions)
+             if j[0] == 1 and uv == R.SW_RIM
+             and abs(math.hypot(p[0] - _fx, p[1] - R.WHEEL_RADIUS) - _R_BEAD) < 1e-9)
+_f_gap = sum(1 for uv, j, p in zip(R.uvs, R.joints0, R.positions)
+             if j[0] == 1 and uv == R.SW_TREAD
+             and abs(math.hypot(p[0] - _fx, p[1] - R.WHEEL_RADIUS) - _R_BEAD) < 1e-9)
+_exp = R.WHEEL_RIM_SECTORS  # sectors/2 wedges * 2 rim verts each, per class
+check(_f_rim == _exp and _f_gap == _exp,
+      "rim face is %d spoke wedges alternating with %d dark gaps (got %d metal / %d dark rim verts)"
+      % (R.WHEEL_SPOKES, R.WHEEL_SPOKES, _f_rim, _f_gap))
 check(_hw * R._HUB_Z_OFFSET_FRAC < 0.3 * _hw,
       "hub-nut z-embed offset stays small relative to half_width")
 

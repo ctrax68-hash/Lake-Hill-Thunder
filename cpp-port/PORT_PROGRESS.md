@@ -11005,3 +11005,94 @@ wheel relief. The relief only reaches `hf <= 0.30`, but at the axle stations
 the tire's crown sits at **hf 0.68** -- so the bodywork encloses the tire from
 30% to 68% of section height. **The wheels are not small, they are buried.**
 That is why they read as dark stubs, and it is what R2 fixes.
+
+## R2: wheel arches and wheels -- and the vertical profile the arch exposed
+
+Continuing "fix the wheels and car body is still Awkward". The two turned out
+to be one problem, and the arch work is what found it.
+
+### The arch could not fit, because the body sat too low over the wheels
+
+R2's first cut replaced the old inward pinch with a real circular opening
+about each axle (`ARCH_R`/`ARCH_CY`/`ARCH_X_MAX`, sampled by stations inserted
+either side of both axles). It immediately produced a **154 degree normal
+fold** across the front flank.
+
+The cause was not the arch. The lip peaks at `ARCH_CY + ARCH_R` = 0.80 m, and
+the front axle's `beltY` was **also 0.80** -- so the lip landed exactly on the
+beltline and collapsed everything between the rocker and the shoulder into one
+horizontal shelf. R1 had re-authored the silhouette in plan and in the
+greenhouse but left the JS prototype's `beltY` column nearly intact, and that
+column ran 0.60 at the nose to 1.01 at the rear axle: **a 0.41 m wedge**, with
+50 mm of fender over a 700 mm tire. There was no room for an arch because
+there was no fender.
+
+`beltY` is now a near-level cowl/cabin/deck line (0.98-1.02) with the hood
+stepping down ahead of it. The arch lip clears the tire crown by 100 mm with
+140 mm of fender above it, and the worst lengthwise normal turn drops
+**154 -> 79 degrees**, all four of the remaining peaks being the arch mouth
+itself, which is a real crease on a real car. The notchback rakes were wrong
+in the same way and are fixed with it: R1 had the windshield at 34 degrees and
+the backlite at **22**, i.e. the rear glass shallower than the front, which
+reads as a fastback slope. They are now 32 and 30 with a 1.3 m flat roof
+between them.
+
+### The wheels were a pale disc, and the arch was a trench
+
+Both were found by looking at the turntable, and neither was visible in any
+number this project had been checking.
+
+**The rim reached 0.68 of the wheel radius**, leaving the black sidewall as a
+0.22-wide ring -- from every angle the wheel rendered as a bright disc with a
+dark edge. A Gen-4 ran a 15 in wheel in a ~28 in tire, so the rim face is 0.54
+of the radius and the *sidewall* is the dominant feature. Rebuilt with that
+proportion, plus a rounded tread shoulder (the tread was a straight cylinder,
+so the tire ended in a hard 90 degree corner and read as a stamped coin), a
+dished rim face, and 5 spokes with dark gaps between them -- the face was one
+flat fan before, structurally incapable of showing a spoke, which is the same
+argument I1's own docstring makes about swatch fans. The inner cap, which
+faces the wheelhouse and is never visible, drops to a single flat disc and
+pays for all of it: **192 -> 236 tris/wheel**.
+
+**The wheelhouse wall was pulled fully inboard at every station the arch
+touched** -- literally `* 1.0` -- so the flank was yanked 0.36 m inboard along
+the whole 1.16 m mouth whether or not the lip above it had risen. A black tire
+in a black trench is a cave, not an opening. The pull is now weighted by
+`_arch_wall_w()`, full depth only where the tire's radial shadow reaches and
+easing back to the body line at the ends, and the mouth is 1.04 m rather than
+1.16 m. `ARCH_R` could not come down with it: `renderer.cpp`'s `kMaxTravel` is
+0.08 m of real suspension travel, which pins `ARCH_R >= 0.43`. The mouth is
+tightened lengthwise only, the axis that budget does not constrain.
+
+### Guard changes, and one trap removed
+
+Every station lookup in `check_car_rig.py` was **by index**, and inserting
+arch samples silently invalidated all of them -- four glass-U guards started
+failing against geometry that was fine, because index 6 was no longer the
+cowl. `_key_station_x()` looks stations up by the x value the silhouette table
+is written in and **exits loudly** if the row is gone, rather than quietly
+asserting something else. The same trap existed in the wheel checks, which
+repeated the literal `0.68` rim radius; they now read the generator's own
+constants.
+
+New assertions, each verified to fail on the code it describes:
+
+| assertion | fails against |
+|---|---|
+| arch-mouth lengthwise turn < 95 deg | the 154 deg fold (measured 118 with `beltY` put back) |
+| wheelhouse wall eases back at the mouth's ends | the `* 1.0` trench |
+| wall at full depth where the tire's shadow reaches | any taper that re-opens the tire-barrel intrusion |
+| sidewall band >= 0.35 of the radius | the I1 wheel's 0.32 |
+| rim face < 0.60 of the radius | the I1 wheel's 0.68 |
+| rim face is 5 spoke wedges alternating with 5 gaps | a single-swatch fan |
+| `_key_station_x` | any silhouette move this file was not updated with |
+
+1578 -> **2338 triangles**, still well inside the headroom P2 measured (menu
+to race is 6.4x the triangles for 3 ms of a 17 ms frame). `ctest` 36/36.
+
+### Still open
+
+The turntable shows two things this round did not touch: the spoiler reads as
+a tall detached plate, and the nose carries a deep angular chin under the
+bumper. Both are hand-placed props rather than loft geometry, and both are
+next.

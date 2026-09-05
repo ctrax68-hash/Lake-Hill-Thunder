@@ -425,7 +425,9 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // 0.80 and the A-pillar top 0.02 -> 0.28 when the greenhouse became a
     // notchback, and check_car_rig.py asserts these still land on the real
     // stations.
-    const double uWS0 = carU(0.80), uWS1 = carU(0.28);
+    // R2b: A-pillar 0.28 -> 0.35. The roof plateau grew and the backlite got
+    // steeper when the vertical profile was corrected; both roof stations moved.
+    const double uWS0 = carU(0.80), uWS1 = carU(0.35);
     // K2 (car visual fidelity plan, part 3): uSG0 used to be carU(0.30),
     // which landed 42% of the way inside the windshield's own real U-range
     // [uWS0,uWS1] -- the side window started well past "windshield mid"
@@ -439,7 +441,9 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // R1: A-pillar 0.02 -> 0.28, and uSG1 -0.95 -> -0.67 so the side glass
     // still ends just ahead of where the rear glass now starts (the C-pillar
     // moved forward from -1.00 to -0.72 with the notchback roof).
-    const double uSG0 = carU(0.28) + kSeamW, uSG1 = carU(-0.67);
+    // R2b: A-pillar 0.28 -> 0.35, and uSG1 -0.67 -> -0.90 so the side glass
+    // still ends just ahead of the C-pillar, which moved back to -0.95.
+    const double uSG0 = carU(0.35) + kSeamW, uSG1 = carU(-0.90);
     // K2: uRG1 used to be carU(-1.75) (station 12, "deck start"), but the
     // real glass-adjacent roofline rise ends two stations earlier, at
     // carU(-1.40) (station 11, "rear axle... belt/roof rejoin" -- beltY
@@ -450,7 +454,9 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // R1: uRG0 -1.00 -> -0.72. The old value was the "fastback glass start"
     // station; the notchback puts the rear glass between the C-pillar top
     // (-0.72) and the rear axle where belt and roof rejoin (-1.40, unchanged).
-    const double uRG0 = carU(-0.72), uRG1 = carU(-1.40) - kSeamW;
+    // R2b: C-pillar -0.72 -> -0.95 (a Gen-4 backlite is steeper than its
+    // windshield; R1 had it shallower, which read as a fastback slope).
+    const double uRG0 = carU(-0.95), uRG1 = carU(-1.40) - kSeamW;
     constexpr double GV0 = 0.335, GVH = 0.330;
     // K2: the beltline V-span (GV0/GVH) is inset only ~0.016 from the real
     // beltline [car_v(4),car_v(9)]=[0.319,0.681] (thin but non-zero --

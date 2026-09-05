@@ -98,12 +98,46 @@ SW_SPOILER_DARK = (0.97, 0.75)  # underside/edges/risers -- fixed near-black
 # this one file instead of across gen_car_rig.py/livery.cpp. Fraction of
 # R_INNER (add_wheel()'s own inner-disc radius), not an absolute size, so
 # it scales automatically if WHEEL_RADIUS ever changes.
-_HUB_R_FRAC = 0.22
+# R2b: 0.22 -> 0.28 purely to HOLD the nut's absolute size. It is a fraction
+# of R_INNER, and R_INNER moved 0.68 -> 0.54 of the radius when the rim face
+# was cut back to a real 15-inch wheel: 0.54*0.28 == 0.68*0.22 to three
+# decimals, so the nut on screen is unchanged.
+_HUB_R_FRAC = 0.28
 _HUB_SIDES = 8
 _HUB_Z_OFFSET_FRAC = 0.06  # fraction of half_width; avoids z-fighting
                            # against the coplanar SW_RIM disc beneath it,
                            # not a visible-gap risk like the mirror's own
                            # embed-vs-float tuning -- a different problem.
+
+# R2b: WHEEL PROPORTIONS, all fractions of the wheel's own radius/half_width.
+#
+# The turntable is what found this. I1 built the end cap as three concentric
+# bands with the metallic rim disc reaching 0.68 of the radius, so the black
+# rubber was reduced to a 0.22-wide outer ring -- from every angle the wheel
+# renders as a pale disc with a thin dark edge, which is exactly what "fix the
+# wheels" is pointing at. A Gen-4 ran a 15 in wheel inside a ~28 in tire, so
+# the rim face is 0.54 of the radius and the SIDEWALL is the dominant feature,
+# not the rim.
+#
+# Three other things the old wheel could not express, all cheap here:
+#   * the tread was a straight cylinder, so the tire had a hard 90 deg corner
+#     at each face -- it read as a coin. WHEEL_R_SHOULDER/WHEEL_Z_CROWN round
+#     it into the sidewall.
+#   * the rim face was coplanar with the tire's outer face. Real wheels are
+#     dished; WHEEL_Z_DISH recesses it so the arch has depth to it.
+#   * the rim face was one flat fan, structurally incapable of showing spokes
+#     (the same argument I1's own docstring makes about swatch fans). The face
+#     is now built as WHEEL_RIM_SECTORS separate wedges, alternating rim metal
+#     and near-black, giving WHEEL_SPOKES spokes and a dark gap between each.
+WHEEL_R_SHOULDER = 0.90   # tread rolls into the sidewall here
+WHEEL_R_LETTER_O = 0.80   # sidewall lettering ring, outer edge
+WHEEL_R_LETTER_I = 0.73   # sidewall lettering ring, inner edge
+WHEEL_R_BEAD = 0.54       # tire bead / rim flange -- a 15 in wheel in a 28 in tire
+WHEEL_Z_CROWN = 0.72      # tread crown, as a fraction of half_width
+WHEEL_Z_DISH = 0.34       # rim face recessed inboard, as a fraction of half_width
+WHEEL_SPOKES = 5
+WHEEL_RIM_SECTORS = 20    # 4 sectors per spoke: 2 metal, 2 open
+assert WHEEL_RIM_SECTORS % (WHEEL_SPOKES * 2) == 0, "sectors must split evenly into spoke/gap pairs"
 
 def emit_swatch_quad(p0, p1, p2, p3, outward_hint, swatch, joint_idx=0):
     """Like emit_quad(), but every vertex samples one fixed swatch texel
@@ -162,10 +196,14 @@ def add_wheel(cx, cy, cz, radius, half_width, joint_idx, sides=10):
         joints0.append((joint_idx, 0, 0, 0))
         weights0.append((1.0, 0.0, 0.0, 0.0))
 
-    # I1: end-cap radii for the three concentric bands.
-    R_OUTER = radius
-    R_MID = radius * 0.78
-    R_INNER = radius * 0.68
+    # R2b: end-cap radii. R_INNER is the rim face's outer edge and is now the
+    # tire BEAD (0.54 of the radius), not 0.68 -- see the WHEEL_R_* block for
+    # why. R_OUTER is the shoulder, where the rounded tread hands off to the
+    # sidewall, rather than the full radius.
+    R_OUTER = radius * WHEEL_R_SHOULDER
+    R_LET_O = radius * WHEEL_R_LETTER_O
+    R_LET_I = radius * WHEEL_R_LETTER_I
+    R_INNER = radius * WHEEL_R_BEAD
 
     # End caps: normals/winding are hand-set per vertex (not derived from
     # winding, as emit_quad() does), and this renderer applies no backface
@@ -194,23 +232,49 @@ def add_wheel(cx, cy, cz, radius, half_width, joint_idx, sides=10):
                 else:
                     indices.extend([a0, b1, b0, a0, a1, b1])
 
-        outer_o = make_ring(R_OUTER, SW_SIDEWALL)
-        outer_i = make_ring(R_MID, SW_SIDEWALL)
-        annulus_tris(outer_o, outer_i)
+        # R2b: the INNER cap faces the chassis and lives inside the wheelhouse.
+        # It is never visible from any camera this game has, so it gets one
+        # flat rubber disc rather than the four-band treatment -- that pays for
+        # the extra outer-cap detail below instead of growing the wheel's
+        # triangle count. It still exists, so the tire is a closed solid if a
+        # spin or the mirror ever does show it edge-on.
+        outer_face = (side_sign == (1 if cz > 0 else -1))
+        if not outer_face:
+            flat = make_ring(R_OUTER, SW_SIDEWALL)
+            flat_c = len(positions)
+            add_vertex((cx, cy, z), n, SW_SIDEWALL)
+            for i in range(sides):
+                i0, i1 = flat + i, flat + (i + 1) % sides
+                indices.extend([flat_c, i1, i0])
+            continue
 
-        mid_o = make_ring(R_MID, SW_TIRE_LETTER)
-        mid_i = make_ring(R_INNER, SW_TIRE_LETTER)
-        annulus_tris(mid_o, mid_i)
+        # Sidewall, outer half.
+        annulus_tris(make_ring(R_OUTER, SW_SIDEWALL), make_ring(R_LET_O, SW_SIDEWALL))
+        # The lettering ring, sitting ON the sidewall the way a real one does,
+        # rather than being the last thing before the rim as it was in I1.
+        annulus_tris(make_ring(R_LET_O, SW_TIRE_LETTER), make_ring(R_LET_I, SW_TIRE_LETTER))
+        # Sidewall, inner half, down to the bead.
+        annulus_tris(make_ring(R_LET_I, SW_SIDEWALL), make_ring(R_INNER, SW_SIDEWALL))
 
-        inner_ring = make_ring(R_INNER, SW_RIM)
-        center_idx = len(positions)
-        add_vertex((cx, cy, z), n, SW_RIM)
-        for i in range(sides):
-            i0, i1 = inner_ring + i, inner_ring + (i + 1) % sides
+        # R2b: the rim face as WHEEL_SPOKES spokes with dark gaps between
+        # them, and dished inboard so the face is not coplanar with the tire.
+        # Each sector is its own three vertices because adjacent sectors carry
+        # different swatches and a shared vertex can only sample one of them --
+        # the same constraint that forced I1's concentric bands apart.
+        z_rim = z - side_sign * (half_width * WHEEL_Z_DISH)
+        _per = WHEEL_RIM_SECTORS // WHEEL_SPOKES        # 4
+        for s in range(WHEEL_RIM_SECTORS):
+            a0 = 2 * math.pi * s / WHEEL_RIM_SECTORS
+            a1 = 2 * math.pi * (s + 1) / WHEEL_RIM_SECTORS
+            sw = SW_RIM if (s % _per) < _per // 2 else SW_TREAD
+            c_i = len(positions)
+            add_vertex((cx, cy, z_rim), n, sw)
+            add_vertex((cx + math.cos(a0) * R_INNER, cy + math.sin(a0) * R_INNER, z), n, sw)
+            add_vertex((cx + math.cos(a1) * R_INNER, cy + math.sin(a1) * R_INNER, z), n, sw)
             if side_sign > 0:
-                indices.extend([center_idx, i0, i1])
+                indices.extend([c_i, c_i + 1, c_i + 2])
             else:
-                indices.extend([center_idx, i1, i0])
+                indices.extend([c_i, c_i + 2, c_i + 1])
 
         # J5 (car visual fidelity plan, part 2): a single center-lock hub
         # nut, not 5 street-car lug nuts -- period-correct for the Gen-4/Cup
@@ -233,9 +297,12 @@ def add_wheel(cx, cy, cz, radius, half_width, joint_idx, sides=10):
         # would sit still while the tire visibly rotates around it), which
         # is exactly why check_car_rig.py asserts the joint binding directly
         # rather than trusting a screenshot to catch it.
-        if side_sign == (1 if cz > 0 else -1):
+        if outer_face:
             _hub_r = R_INNER * _HUB_R_FRAC
-            _hub_z = z + side_sign * (half_width * _HUB_Z_OFFSET_FRAC)
+            # R2b: measured from the DISHED rim face, not the tire's outer
+            # plane -- otherwise the nut floats half a wheel-width proud of
+            # the face it is supposed to be bolted to.
+            _hub_z = z_rim + side_sign * (half_width * _HUB_Z_OFFSET_FRAC)
             _hub_ring_base = len(positions)
             for _hi in range(_HUB_SIDES):
                 _ha = 2 * math.pi * _hi / _HUB_SIDES
@@ -249,19 +316,34 @@ def add_wheel(cx, cy, cz, radius, half_width, joint_idx, sides=10):
                 else:
                     indices.extend([_hub_center, _hi1, _hi0])
 
-    # Cylindrical tread band connecting the two rings.
-    z0, z1 = cz - half_width, cz + half_width
-    ring0_base = len(positions)
-    for (rx, ry) in ring:
-        add_vertex((cx + rx * radius, cy + ry * radius, z0), (rx, ry, 0), SW_TREAD)
-    ring1_base = len(positions)
-    for (rx, ry) in ring:
-        add_vertex((cx + rx * radius, cy + ry * radius, z1), (rx, ry, 0), SW_TREAD)
-    for i in range(sides):
-        i2 = (i + 1) % sides
-        a0, a1 = ring0_base + i, ring0_base + i2
-        b0, b1 = ring1_base + i, ring1_base + i2
-        indices.extend([a0, b0, b1, a0, b1, a1])
+    # R2b: tread band with a ROUNDED SHOULDER. Four rings instead of two --
+    # the crown runs flat across the middle at full radius, then each edge
+    # falls away to WHEEL_R_SHOULDER where it meets the end cap, so the tire
+    # turns into its sidewall instead of ending in a 90 deg corner. That hard
+    # corner is most of why the old wheel read as a stamped coin: a cylinder
+    # has one silhouette from every angle and no highlight rolls across it.
+    #
+    # Normals are radial-plus-axial on the shoulder rings so the fall-off
+    # actually shades as a curve; the crown rings stay purely radial, which
+    # keeps the flat middle of the tread reading flat.
+    _sh = radius * WHEEL_R_SHOULDER
+    _zc = half_width * WHEEL_Z_CROWN
+    _bands = [(-half_width, _sh, -1.0), (-_zc, radius, 0.0),
+              (_zc, radius, 0.0), (half_width, _sh, 1.0)]
+    _prev = None
+    for (_dz, _r, _na) in _bands:
+        _b = len(positions)
+        _nl = math.hypot(1.0, _na)
+        for (rx, ry) in ring:
+            add_vertex((cx + rx * _r, cy + ry * _r, cz + _dz),
+                       (rx / _nl, ry / _nl, _na / _nl), SW_TREAD)
+        if _prev is not None:
+            for i in range(sides):
+                i2 = (i + 1) % sides
+                a0, a1 = _prev + i, _prev + i2
+                b0, b1 = _b + i, _b + i2
+                indices.extend([a0, b0, b1, a0, b1, a1])
+        _prev = _b
     return base
 
 def add_box(cx, cy, cz, hx, hy, hz, joint_idx, top_livery_uv):
@@ -527,9 +609,87 @@ SHOULDER = 0.80
 # what used to show up as a visible dent (index.html:2440-2446, and this
 # port's own CAR-L/CAR-M/CAR-N history).
 _WHEEL_AXLE_X = [WHEELBASE / 2.0, -WHEELBASE / 2.0]
-_WHEEL_NOTCH_RANGE = 0.45
-_WHEEL_INNER_Z = 0.62
-_WHEEL_RELIEF_HF = 0.30
+
+# R2: a REAL wheel arch, replacing an inward pinch that could never be one.
+#
+# The old relief pulled |z| toward 0.62 for ring points below hf 0.30, within
+# 0.45 m of an axle. That cannot produce an arch, because it only ever moves
+# the section INBOARD at constant height -- the body's lower edge stays down at
+# yLow, so from the side there is no opening at all.
+#
+# Worse, it did not even cover the tire. At the front-axle station the tire's
+# crown (y = WHEEL_RADIUS*2 = 0.70) sits at hf 0.68, while the relief stopped
+# at hf 0.30. So the bodywork enclosed the tire from 30% to 68% of section
+# height and only the bottom of it poked out below. The wheels were never
+# small; they were BURIED, which is exactly how they read on the turntable.
+#
+# The arch is now a circular opening about the axle: the four lowest ring
+# points are lifted onto a lip curve and pulled inboard to form a wheelhouse,
+# and everything above the lip is re-anchored so the section cannot fold.
+ARCH_R = 0.45          # opening radius about the axle centre
+ARCH_CY = WHEEL_RADIUS # opening centre sits at axle height, 0.35
+ARCH_INNER_Z = 0.58    # wheelhouse wall; the tire's inner face is at 0.62
+# R2c: 0.58 -> 0.52. A 1.16 m mouth around a 0.70 m tire is not an arch, it
+# is a slot; the opening now runs 1.04 m. ARCH_R cannot come down with it --
+# it is pinned at >= 0.43 by the suspension travel below -- so the mouth is
+# tightened lengthwise only, which is the axis the travel budget does not
+# constrain.
+ARCH_X_MAX = 0.52      # half-length of the opening along the body
+K_LIP = 3              # ring index of the lip's outer edge (mirror: NK-1-K_LIP)
+
+# ARCH_R must clear a fully compressed wheel: renderer.cpp lifts the wheel
+# joint by up to kMaxTravel under load, and nothing previously knew that.
+SUSP_MAX_TRAVEL = 0.08
+assert ARCH_R >= WHEEL_RADIUS + SUSP_MAX_TRAVEL, "arch would clip a compressed wheel"
+assert ARCH_INNER_Z <= TRACK_HALF - 0.14 - 0.02, "wheelhouse wall would touch the tire"
+
+def _arch_lip_y(x, axle_x, y_base):
+    """Height of the arch lip at station x, for one axle."""
+    dx = abs(x - axle_x)
+    if dx >= ARCH_X_MAX:
+        return y_base
+    if dx <= ARCH_R:
+        return ARCH_CY + math.sqrt(max(0.0, ARCH_R * ARCH_R - dx * dx))
+    t = (dx - ARCH_R) / (ARCH_X_MAX - ARCH_R)
+    return ARCH_CY + (y_base - ARCH_CY) * (t * t * (3.0 - 2.0 * t))
+
+# The arch needs stations to resolve its curve; the silhouette table only has
+# one at each axle. These offsets are inserted either side of both axles and
+# interpolated from the hand-authored neighbours.
+#
+# 0.44 exists because the circle has a VERTICAL tangent at dx == ARCH_R (0.45)
+# -- that is the arch opening's leading and trailing edge, a genuine crease on
+# a real car, not an artifact. Without a sample just inside it the lip appears
+# to fall 0.31 m between two stations 0.135 m apart and the crease smears into
+# the fender instead of reading as an edge.
+ARCH_SAMPLE_DX = (0.20, 0.34, 0.42, 0.47, 0.52)
+
+# R2c: how far inboard the wheelhouse wall is pulled at a given station.
+#
+# The first cut applied the pull at FULL strength at every station the arch
+# touched -- literally `* 1.0` -- so the body's lower flank was yanked 0.36 m
+# inboard along the whole 1.16 m mouth regardless of whether the lip above it
+# had risen at all. The turntable showed the result exactly: the tire is black,
+# the recess behind it is black, and the wheel disappears into a cave instead
+# of standing in an opening. An arch is a hole cut in a fender, not a trench
+# down the side of the car.
+#
+# The wall now eases back out to the body line toward the ends of the mouth.
+# It reaches full depth inside ARCH_WALL_FULL, which is keyed to the TIRE and
+# not to the lip: every ring point the tire's own radial shadow can reach must
+# be fully inboard, or bodywork ends up between the tire's two faces, which is
+# the CAR-F/CAR-M defect check_car_rig.py holds at exactly zero.
+ARCH_WALL_FULL = WHEEL_RADIUS + 0.04
+
+def _arch_wall_w(x, axle_x):
+    dx = abs(x - axle_x)
+    if dx <= ARCH_WALL_FULL:
+        return 1.0
+    if dx >= ARCH_X_MAX:
+        return 0.0
+    t = 1.0 - (dx - ARCH_WALL_FULL) / (ARCH_X_MAX - ARCH_WALL_FULL)
+    return t * t * (3.0 - 2.0 * t)
+ARCH_DEDUP_TOL = 0.05
 
 def _station(x_js, w, belt_y, y_low, roof_y):
     # x scaled so the nose/tail stations land exactly on +-HALF_LEN, keeping
@@ -579,27 +739,75 @@ _CAR_ST_JS = [
     #   * the roof peaked mid-cabin at station 9 rather than running flat.
     #
     # Targets, against a real Gen-4 Cup car: 5.08 m long (HALF_LEN, unchanged),
-    # 1.90 m wide (halfWidth 0.95 max, unchanged), roof 1.30 m, ~1.0 m of flat
-    # roof, windshield raked ~33 deg from horizontal, rear glass ~22 deg, deck
-    # flat at ~1.00 m, air dam 0.09 m off the ground.
-    (2.51,  0.84,  0.60,  0.09,  0.72),   # bumper/valance -- BLUNT and wide, deep air dam
-    (2.30,  0.90,  0.66,  0.09,  0.78),   # front fascia
-    (2.00,  0.93,  0.72,  0.10,  0.83),   # hood leading edge
-    (1.70,  0.95,  0.76,  0.11,  0.86),   # front fender -- full width
-    (1.40,  0.95,  0.80,  0.13,  0.88),   # front axle
-    (1.10,  0.94,  0.84,  0.15,  0.90),   # hood mid
-    (0.80,  0.93,  0.90,  0.16,  0.95),   # cowl / windshield base
-    (0.55,  0.92,  0.93,  0.17,  1.12),   # windshield lower
-    (0.28,  0.91,  0.95,  0.18,  1.30),   # A-pillar top -- ROOF STARTS
-    (-0.20, 0.91,  0.97,  0.19,  1.30),   # roof, flat
-    (-0.72, 0.92,  0.99,  0.19,  1.30),   # C-pillar top -- ROOF ENDS
-    (-1.05, 0.94,  1.00,  0.20,  1.16),   # rear glass, mid
-    (-1.40, 0.95,  1.01,  0.20,  1.02),   # rear axle -- deck starts, belt/roof rejoin
-    (-1.85, 0.94,  1.00,  0.20,  1.00),   # deck, flat
-    (-2.25, 0.90,  0.99,  0.24,  0.99),   # deck rear
-    (-2.51, 0.84,  0.97,  0.34,  0.97),   # tail panel -- wide and square, not a point
+    # 1.90 m wide (halfWidth 0.95 max, unchanged), roof 1.30 m, ~1.3 m of flat
+    # roof, windshield raked ~35 deg from horizontal, rear glass ~31 deg, deck
+    # flat at ~1.02 m, air dam 0.09 m off the ground.
+    #
+    # R2b: THE VERTICAL PROFILE WAS THE "still awkward" DEFECT, and the arch
+    # work found it by folding. R1 kept the JS prototype's beltY column almost
+    # untouched -- it ran 0.60 at the nose to 1.01 at the rear axle, a 0.41 m
+    # wedge, so the car nosed down like a sports coupe. Two measurable
+    # consequences:
+    #
+    #   * At the front axle beltY was 0.80 and the tire crown sits at 0.70:
+    #     50 mm of fender above a 700 mm tire. There was no room for an arch,
+    #     which is why the R2 arch lip (peak ARCH_CY + ARCH_R = 0.80) landed
+    #     exactly ON the beltline and collapsed the whole flank from the rocker
+    #     to the shoulder into one horizontal shelf -- a 154 deg normal fold.
+    #   * The hood plane at the nose was 0.72 m off the ground against a 1.30 m
+    #     roof. A Gen-4's nose is ~0.86 and its hood is close to level.
+    #
+    # So beltY is now a near-level line at cowl/cabin/deck height (0.98-1.02)
+    # with the hood stepping down ahead of it, which is what the real car does,
+    # and the arch lip clears the tire by 100 mm with 140 mm of fender above it.
+    (2.51,  0.84,  0.78,  0.09,  0.86),   # bumper/valance -- BLUNT and wide, deep air dam
+    (2.30,  0.90,  0.83,  0.09,  0.90),   # front fascia
+    (2.00,  0.93,  0.88,  0.10,  0.93),   # hood leading edge
+    (1.70,  0.95,  0.92,  0.11,  0.96),   # front fender -- full width
+    (1.40,  0.95,  0.94,  0.13,  0.98),   # front axle -- 0.14 of fender over the arch lip
+    (1.10,  0.94,  0.96,  0.15,  1.00),   # hood mid
+    (0.80,  0.93,  0.98,  0.16,  1.02),   # cowl / windshield base
+    (0.55,  0.92,  0.99,  0.17,  1.16),   # windshield lower
+    (0.35,  0.91,  1.00,  0.18,  1.30),   # A-pillar top -- ROOF STARTS
+    (-0.20, 0.91,  1.00,  0.19,  1.30),   # roof, flat
+    (-0.95, 0.92,  1.01,  0.19,  1.30),   # C-pillar top -- ROOF ENDS
+    (-1.15, 0.94,  1.01,  0.20,  1.16),   # rear glass, mid
+    (-1.40, 0.95,  1.02,  0.20,  1.04),   # rear axle -- deck starts, belt/roof rejoin
+    (-1.85, 0.94,  1.01,  0.20,  1.02),   # deck, flat
+    (-2.25, 0.90,  1.00,  0.24,  1.01),   # deck rear
+    (-2.51, 0.84,  0.98,  0.34,  0.99),   # tail panel -- wide and square, not a point
 ]
-CHASSIS_STATIONS = [_station(*row) for row in _CAR_ST_JS]
+_KEY_STATIONS = [_station(*row) for row in _CAR_ST_JS]
+
+def _lerp_station(x):
+    """Interpolate w/beltY/yLow/roofY at an arbitrary x from the key table."""
+    xs = [st[0] for st in _KEY_STATIONS]
+    if x >= xs[0]:
+        return _KEY_STATIONS[0]
+    if x <= xs[-1]:
+        return _KEY_STATIONS[-1]
+    for i in range(len(xs) - 1):
+        if xs[i] >= x >= xs[i + 1]:
+            a, b = _KEY_STATIONS[i], _KEY_STATIONS[i + 1]
+            t = (a[0] - x) / (a[0] - b[0])
+            return tuple([x] + [a[j] + (b[j] - a[j]) * t for j in range(1, 5)])
+    return _KEY_STATIONS[-1]
+
+# R2: the silhouette table has one station at each axle, which cannot resolve
+# a 1.16 m arch opening. Insert samples either side of both axles, dropping any
+# that land on top of a hand-authored station.
+def _build_stations():
+    xs = [st[0] for st in _KEY_STATIONS]
+    extra = []
+    for wx in _WHEEL_AXLE_X:
+        for d in ARCH_SAMPLE_DX:
+            for x in (wx + d, wx - d):
+                if all(abs(x - e) > ARCH_DEDUP_TOL for e in xs + extra):
+                    extra.append(x)
+    allx = sorted(xs + extra, reverse=True)
+    return [_lerp_station(x) if x in extra else _KEY_STATIONS[xs.index(x)] for x in allx]
+
+CHASSIS_STATIONS = _build_stations()
 
 def ring_pts(station):
     """Direct port of index.html's ringPts() (:2447)."""
@@ -611,14 +819,39 @@ def ring_pts(station):
         else:
             py = belt_y + ((hf - SHOULDER) / (1.0 - SHOULDER)) * (roof_y - belt_y)
         pz = wf * w
-        if hf <= _WHEEL_RELIEF_HF:
-            for wx in _WHEEL_AXLE_X:
-                dx = abs(x - wx)
-                if dx < _WHEEL_NOTCH_RANGE and abs(pz) > _WHEEL_INNER_Z:
-                    t = 1.0 - dx / _WHEEL_NOTCH_RANGE
-                    pz += ((_WHEEL_INNER_Z if pz > 0 else -_WHEEL_INNER_Z) - pz) * t
-        out.append((x, py, pz))
-    return out
+        out.append([x, py, pz])
+
+    # R2: carve the arch. Done as a second pass over the finished ring so the
+    # lip height and the re-anchoring above it can both see the un-arched
+    # section they are derived from.
+    lip_hf = RINGF[K_LIP][0]
+    y_base_lip = y_low + (lip_hf / SHOULDER) * (belt_y - y_low)
+    for wx in _WHEEL_AXLE_X:
+        lip_y = _arch_lip_y(x, wx, y_base_lip)
+        if lip_y <= y_base_lip + 1e-9:
+            continue                      # this station is clear of the arch
+        wall_w = _arch_wall_w(x, wx)
+        for k, (hf, wf) in enumerate(RINGF):
+            km = min(k, NK - 1 - k)       # mirrored index: 0..K_LIP are the low points
+            sgn = 1.0 if wf > 0 else -1.0
+            if km <= K_LIP:
+                # Lift the low points onto the lip, and pull the inner ones in
+                # to form the wheelhouse wall. k=K_LIP stays at full width --
+                # it IS the lip's outer edge, i.e. the fender's bottom lip.
+                frac = km / float(K_LIP)          # 0 at the floor, 1 at the lip
+                out[k][1] = max(out[k][1], y_low + frac * (lip_y - y_low))
+                if km < K_LIP:
+                    inner = sgn * ARCH_INNER_Z
+                    out[k][2] = out[k][2] + (inner - out[k][2]) * wall_w
+            else:
+                # Re-anchor the fender skin above the lip. Without this the
+                # ring folds: at the axle the lip reaches 0.80 while the next
+                # point up would still sit at its un-arched height.
+                span = SHOULDER - lip_hf
+                if span > 1e-9 and hf < SHOULDER:
+                    t = (hf - lip_hf) / span
+                    out[k][1] = max(out[k][1], lip_y + t * (belt_y - lip_y))
+    return [tuple(p) for p in out]
 
 RINGS = [ring_pts(st) for st in CHASSIS_STATIONS]
 
