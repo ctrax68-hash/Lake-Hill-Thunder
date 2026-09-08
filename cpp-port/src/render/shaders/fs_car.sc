@@ -125,9 +125,15 @@ void main()
 	// line. It stays a two-colour hemisphere approximation -- no cubemap, no
 	// new texture fetch, no new uniform -- so the cost is two extra ALU ops
 	// on a shader that already computes reflectDir.
-	float reflT = clamp((reflectDir.y * 0.5 + 0.5 - 0.5) * 4.5 + 0.5, 0.0, 1.0);
+	float reflT = clamp((reflectDir.y * 0.5 + 0.5 - 0.5) * 3.5 + 0.5, 0.0, 1.0);
 	reflT = reflT * reflT * (3.0 - 2.0 * reflT);
-	vec3 envColor = mix(u_hemiGround.rgb, u_hemiSky.rgb, reflT);
+	// The hemisphere constants are IRRADIANCE -- what a diffuse surface
+	// integrates over the whole sky. A mirror reflects RADIANCE, which is
+	// brighter than that for the sky and darker for the ground, so reusing the
+	// ambient pair directly understates the contrast a reflection should have.
+	// Pushing them apart costs nothing and is the difference between a hint of
+	// a horizon and the hard bright line the reference photographs show.
+	vec3 envColor = mix(u_hemiGround.rgb * 0.55, u_hemiSky.rgb * 1.35, reflT);
 
 	// H6: color-match against livery.cpp's own taillight/amber-bar paint
 	// constants (RGB, not affected by texture filtering enough to matter --
@@ -177,7 +183,7 @@ void main()
 	// what you ever see, carried none of it. Real clearcoat reflects a few
 	// percent head-on and rises to near-total at glancing angles; 0.10 is
 	// that floor, and the Fresnel term keeps doing the rest.
-	float reflectMix = 0.10 + fresnel * 0.35 + glassMatch * 0.35;
+	float reflectMix = 0.16 + fresnel * 0.35 + glassMatch * 0.35;
 
 	// Metallic rim: SW_RIM's bright, well-separated color (198,200,206)/255
 	// has no collision risk with the near-black cluster above, so the

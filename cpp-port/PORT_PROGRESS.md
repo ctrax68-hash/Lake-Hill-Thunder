@@ -11189,10 +11189,30 @@ no cubemap, no new texture fetch, no new uniform:
 
 ### Verification status, stated plainly
 
-`check_car_rig.py` **PASSES** on R3a, including every UV and arch assertion,
-unedited. `ctest` and the turntable are NOT yet run: the container was
-recycled mid-round and took the build directory, the git submodules and the
-system GL packages with it. All three are restored and a from-scratch rebuild
-is in progress. **R3b has not been compiled at all.** Neither change is merged
-to `main`, and neither will be until the turntable has been looked at against
-the reference photographs.
+`check_car_rig.py` passes on R3a including every UV and arch assertion,
+unedited. `ctest` **36/36**. Turntable rendered at all eight angles.
+
+R3b was measured rather than assumed, because the identical mistake was made
+earlier this session: the haze cap was declared "too subtle to see" when in
+fact it had never been compiled. A/B of the same frame, old constants against
+new, cropped to the car:
+
+| | pixels changed >3/255 | mean abs diff | max |
+|---|---|---|---|
+| first cut (base 0.10, sky x1.0) | 20.6% | 6.10 | 81 |
+| stronger (base 0.18, sky x1.50) | 25.0% | 13.19 | 146 |
+| **shipped** (base 0.16, sky x1.35, sharpen 3.5) | **21.3%** | **11.22** | **126** |
+
+The first cut was real but weak, and the reason is worth recording: the
+hemisphere constants are IRRADIANCE, what a diffuse surface integrates over
+the whole sky, whereas a mirror reflects RADIANCE -- brighter for the sky,
+darker for the ground. Reusing the ambient pair directly understates a
+reflection's contrast, and with `reflectMix` at 0.10 and exposure at 0.394 the
+horizon band arrived as about 8/255. Pushing the pair apart and raising the
+base is what turns it into a band you can see. The middle setting washed the
+paint milky on the upper flank, so the shipped values sit between the two --
+the sheen follows the curvature and the livery colour survives.
+
+The container was recycled mid-round and took the build directory, the git
+submodules and the system GL packages with it; all three were restored and the
+toolchain rebuilt from scratch before any of the above was measured.
