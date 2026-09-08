@@ -11112,3 +11112,87 @@ full-width blade floats clear of the quarter panels -- but 0.672 lands between
 the tail section's top-plateau edge (0.538) and its widest upper point
 (0.756), i.e. on the tumblehome. The fix was the right value, not a smaller
 blade.
+
+## R3a/R3b: the car was boxy, and it was boxy for two separate reasons
+
+User feedback with reference photographs of real Gen-4 Cup cars: *"The cars
+you've created are boxy as fuck this is what they need to look like."*
+
+The photographs settle a question R1 got wrong from its own plan, and they
+also point at something that is not geometry at all.
+
+### R3a -- the ring had eight unique points and three hard creases
+
+R1's plan specified **"flat slab sides with a hard beltline crease"** and
+"`RINGF` holds width ~1.0 to hf ~0.72, then a tight shoulder radius". The
+reference shows the opposite: above the rocker a Gen-4 has essentially no hard
+edge, just one continuous curve from the sill, over a widest point low in the
+door, through a soft beltline and into a strongly tumbled greenhouse.
+
+Worse, of the eleven half-points, **three were spent on duplicate crease
+pairs** -- the crease mechanism requires a duplicated point, which is correct,
+but it means eight points were describing the actual curve and three of the
+gaps between them were hard-edged by construction. That is a faceted tube
+however many stations it is lofted through, and no amount of station density
+was ever going to fix it.
+
+11 -> 16 half-points (NK 22 -> 32), every added point spent on curvature. The
+beltline crease is **gone**. The drip rail becomes a tight radius resolved by
+three closely-spaced points rather than a duplicated pair -- sheet metal
+turning quickly reads as a highlight, which is what the photos show. The
+rocker lip survives as the one real crease, which a Cup car genuinely has and
+which the wheel arch anchors to.
+
+V is no longer hand-authored per point. At eleven points that was workable; at
+sixteen it is not, because the livery is one wrapped image and V has to
+advance with distance travelled around the section or the paint stretches
+wherever points bunch -- which is exactly where the new curvature points went.
+V is now computed from arc length, then reparameterised in two linear pieces
+so the beltline seam lands on the painted 0.677 and the roof plateau edge
+lands outside the roof number panel, both exactly.
+
+Role indices (`K_ROCKER`/`K_LIP`/`K_BELT`/`K_ROOF_EDGE`) are now **exported**
+from the generator and read by the validator. Both times this session a
+literal index was left behind -- the by-index station lookups and the wheel's
+0.68 rim radius -- the guard kept passing while describing geometry that had
+moved. The ring grew by five points and the beltline crease vanished, and no
+UV assertion needed editing; that is the check on this change.
+
+1578 -> **2938 triangles**.
+
+### R3b -- and the paint had no horizon in it
+
+Every reference photograph is dominated by one feature: a hard, bright horizon
+line reflected in the flank, bending as it crosses the doors and the arch. It
+is the strongest single cue that a surface is both curved and glossy, and
+`fs_car.sc` had none of it.
+
+The "environment reflection" was `mix(ground, sky, reflectDir.y * 0.5 + 0.5)`
+-- a linear ramp spread across the entire hemisphere, so a curved panel's
+bottom edge and top edge differ by a few percent. There is nothing in that for
+curvature to bend, which is why the paint reads as flat plastic **regardless
+of polygon count**. Half of "boxy" was never a geometry problem.
+
+Three changes, all inside the existing two-colour hemisphere approximation --
+no cubemap, no new texture fetch, no new uniform:
+
+1. **Sharpen the horizon.** Compress the ramp into a band around
+   `reflectDir.y == 0` and smoothstep it. Two extra ALU ops.
+2. **A base reflectivity.** `reflectMix` was `fresnel * 0.30`, i.e. purely
+   `pow(1-N.V, 5)`, so the reflection existed only at grazing angles -- the
+   broad side of a car facing the camera, which is most of what anyone ever
+   sees, carried none at all. Real clearcoat reflects a few percent head-on.
+   Now `0.10 + fresnel * 0.35`.
+3. **A broad specular lobe** under the tight one. A single power-90 highlight
+   is a small hot dot that usually misses the panel entirely. The tight lobe
+   is unchanged, so bloom bright-pass behaviour at `ndoth == 1` is unchanged.
+
+### Verification status, stated plainly
+
+`check_car_rig.py` **PASSES** on R3a, including every UV and arch assertion,
+unedited. `ctest` and the turntable are NOT yet run: the container was
+recycled mid-round and took the build directory, the git submodules and the
+system GL packages with it. All three are restored and a from-scratch rebuild
+is in progress. **R3b has not been compiled at all.** Neither change is merged
+to `main`, and neither will be until the turntable has been looked at against
+the reference photographs.

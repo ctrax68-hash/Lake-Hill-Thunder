@@ -180,7 +180,13 @@ check(_taper_ok, "wheelhouse wall eases back toward the body line at the mouth's
 print("UV / livery band alignment")
 # R1: anchored by ROLE, not by literal index, so adding crease pairs cannot
 # silently slide a band. These indices are named once here and in RINGF.
-K_ROCKER, K_BELT_HI, K_ROOF_P = 0, 7, 10
+# R3a: READ the role indices from the generator instead of restating them.
+# Naming them here was the same latent trap as the index-based station lookups
+# and the literal 0.68 rim radius -- a ring edit slides every one of them and
+# the guards keep "passing" against something else. The ring grew 11 -> 16
+# half-points and the beltline crease was removed in R3a; nothing below had to
+# change, which is the point.
+K_ROCKER, K_BELT_HI, K_ROOF_P = R.K_ROCKER, R.K_BELT, R.K_ROOF_EDGE
 K_ROOF_N = R.NK - 1 - K_ROOF_P
 check(R.RINGV[K_ROCKER] >= 0.948,
       "+z rocker v=%.3f sits inside livery's black rocker band [0.948,1.0]" % R.RINGV[K_ROCKER])

@@ -98,13 +98,35 @@ void main()
 	// tripping any harder than it already does for the same view/light
 	// geometry.
 	float ndoth = max(dot(n, halfDir), 0.0);
-	float spec = pow(ndoth, 90.0) * 0.30;
+	// R3b: a second, much broader lobe under the tight one. A single power-90
+	// highlight is a small hot dot: it either lands on a panel or misses it
+	// entirely, and on a body this size it usually misses, leaving the paint
+	// matte. The broad lobe is the sheen that rolls along a flank and reads
+	// as clearcoat depth; the tight lobe stays exactly as it was so the
+	// existing bloom bright-pass behaviour is unchanged at ndoth == 1.
+	float spec = pow(ndoth, 90.0) * 0.30 + pow(ndoth, 8.0) * 0.07;
 
 	float ndotv = max(dot(n, viewDir), 0.0);
 	float fresnel = pow(1.0 - ndotv, 5.0);
 
 	vec3 reflectDir = reflect(-viewDir, n);
-	float reflT = clamp(reflectDir.y * 0.5 + 0.5, 0.0, 1.0);
+	// R3b: SHARPEN THE HORIZON.
+	//
+	// This term was a straight linear ramp from ground colour to sky colour
+	// across the whole hemisphere, so a curved panel got a wash that changes
+	// by a few percent from its bottom edge to its top. That is why the paint
+	// reads as flat plastic: there is nothing in it for the curvature to bend.
+	// Reference photographs of real Cup cars are dominated by ONE feature --
+	// a hard, bright horizon line reflected in the flank, bending as it
+	// crosses the doors and the arch. It is the single strongest cue that a
+	// surface is curved AND glossy, and this shader had none of it.
+	//
+	// Compressing the ramp into a band around reflectDir.y == 0 gives that
+	// line. It stays a two-colour hemisphere approximation -- no cubemap, no
+	// new texture fetch, no new uniform -- so the cost is two extra ALU ops
+	// on a shader that already computes reflectDir.
+	float reflT = clamp((reflectDir.y * 0.5 + 0.5 - 0.5) * 4.5 + 0.5, 0.0, 1.0);
+	reflT = reflT * reflT * (3.0 - 2.0 * reflT);
 	vec3 envColor = mix(u_hemiGround.rgb, u_hemiSky.rgb, reflT);
 
 	// H6: color-match against livery.cpp's own taillight/amber-bar paint
@@ -149,7 +171,13 @@ void main()
 	// diffuse/ambient response and let the reflection sweep dominate more
 	// of the mix than the body paint's fixed 0.30 weight.
 	diffuse *= (1.0 - glassMatch * 0.55);
-	float reflectMix = fresnel * 0.30 + glassMatch * 0.35;
+	// R3b: a BASE reflectivity alongside the Fresnel term. Weighting the
+	// reflection purely by pow(1-N.V, 5) means it exists only at grazing
+	// angles -- the broad side of a car facing the camera, which is most of
+	// what you ever see, carried none of it. Real clearcoat reflects a few
+	// percent head-on and rises to near-total at glancing angles; 0.10 is
+	// that floor, and the Fresnel term keeps doing the rest.
+	float reflectMix = 0.10 + fresnel * 0.35 + glassMatch * 0.35;
 
 	// Metallic rim: SW_RIM's bright, well-separated color (198,200,206)/255
 	// has no collision risk with the near-black cluster above, so the

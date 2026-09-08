@@ -575,23 +575,95 @@ FLOOR_Y = 0.45
 # to the beltline, so the car's widest point is AT the belt -- what a Cup car's
 # slab doors actually do. The roof plateau at wf 0.640 gives 1.19 m / 46.9 in
 # against a real Gen-4's 47 in; the old 0.22 gave 0.18 m.
-_RING_HALF = [
-    (0.000, 0.640, 0.985),   #  0 underbody / floor edge
-    (0.022, 0.850, 0.955),   #  1 rocker bottom face   (inside livery's black rocker band)
-    (0.055, 0.930, 0.912),   #  2 rocker lip  A   ] crease pair
-    (0.075, 0.955, 0.888),   #  3 rocker lip  B   ]
-    (0.300, 0.995, 0.815),   #  4 lower door
-    (0.580, 1.000, 0.752),   #  5 door mid            (door number band)
-    (0.793, 1.000, 0.690),   #  6 BELTLINE A      ] crease pair, straddles SHOULDER
-    (0.807, 0.9975, 0.677),  #  7 BELTLINE B      ]   (livery's beltline seam, v=0.677)
-    (0.890, 0.900, 0.630),   #  8 side glass / tumblehome
-    (0.980, 0.720, 0.596),   #  9 drip rail   A   ] crease pair
-    (1.000, 0.640, 0.590),   # 10 drip rail   B   ]   (roof plateau edge)
+# R3a: THE CAR WAS BOXY, AND THIS TABLE IS WHY.
+#
+# Reference photographs of real Gen-4 Cup cars show a body with essentially no
+# hard edges above the rocker: one continuous curve from the sill, over the
+# widest point low in the door, up through a SOFT beltline, into a strongly
+# tumbled greenhouse. R1 built the opposite on purpose -- its own plan said
+# "flat slab sides with a hard beltline crease" and "RINGF holds width ~1.0 to
+# hf ~0.72, then a tight shoulder radius" -- and then spent three of eleven
+# half-points on duplicate crease pairs. Eight unique points per side, three of
+# the gaps between them hard-edged, is a faceted tube however many stations you
+# loft it through.
+#
+# So: 11 -> 16 half-points, all of the extra spend going into curvature, and
+# the BELTLINE CREASE IS GONE. What survives as a real crease is the rocker
+# lip, which a Cup car genuinely has (a hard-edged skirt), and which the wheel
+# arch anchors to via K_LIP. The drip rail is now a tight radius resolved by
+# three closely-spaced points instead of a duplicated pair -- sheet metal
+# turning quickly reads as a highlight, which is what the photos show; a
+# duplicated pair reads as a fold.
+#
+# (hf, wf): heightFrac up the section, widthFrac of the station's half-width.
+_RING_HALF_F = [
+    (0.000, 0.610),   #  0 underbody / floor edge
+    (0.020, 0.800),   #  1 rocker bottom face
+    (0.045, 0.895),   #  2 rocker lip  A   ] the one surviving crease pair
+    (0.062, 0.930),   #  3 rocker lip  B   ]   K_LIP: the arch anchors here
+    (0.120, 0.963),   #  4 lower door
+    (0.210, 0.988),   #  5
+    (0.330, 0.999),   #  6
+    (0.460, 1.000),   #  7 widest point, low in the door -- as on the real car
+    (0.590, 0.995),   #  8
+    (0.700, 0.984),   #  9
+    (0.800, 0.962),   # 10 BELTLINE -- SOFT. no duplicate, no crease.
+    (0.858, 0.918),   # 11 side glass, tumblehome begins
+    (0.905, 0.858),   # 12
+    (0.945, 0.788),   # 13
+    (0.978, 0.702),   # 14 drip rail, a radius rather than a fold
+    (1.000, 0.610),   # 15 roof plateau edge
 ]
-RINGF = [(hf, wf) for (hf, wf, _v) in _RING_HALF] + \
-        [(hf, -wf) for (hf, wf, _v) in reversed(_RING_HALF)]
-RINGV = [v for (_h, _w, v) in _RING_HALF] + \
-        [1.0 - v for (_h, _w, v) in reversed(_RING_HALF)]
+
+# Role indices, EXPORTED so check_car_rig.py and any future consumer read them
+# instead of hardcoding k. Both times this session that a literal index was
+# left behind -- the glass-U station lookups and the wheel's 0.68 rim radius --
+# the guard kept "passing" while describing geometry that no longer existed.
+K_ROCKER = 0
+K_LIP = 3
+K_BELT = 10
+K_ROOF_EDGE = len(_RING_HALF_F) - 1
+
+# V is now derived from ARC LENGTH around the section, not hand-authored per
+# point. Hand-authored V was workable at 11 points and is not at 16: the livery
+# is a single wrapped image, so V has to advance in proportion to distance
+# travelled around the ring or the paint stretches wherever the points bunch --
+# and they bunch hardest exactly where the new curvature points were added.
+#
+# Two anchors are then pinned exactly, because livery.cpp paints against them:
+# the beltline seam at v=0.677, and the roof plateau edge, which has to sit
+# outside the roof number panel's own [0.420, 0.580].
+_V_ROCKER, _V_ROOF = 0.985, 0.588
+_V_BELT = 0.677
+
+def _ring_v_table():
+    # Arc length measured on a representative section: hf and wf are in
+    # different units, so scale them to the metres they stand for at a typical
+    # door station (0.85 m of section height, 0.95 m of half-width).
+    pts = [(hf * 0.85, wf * 0.95) for (hf, wf) in _RING_HALF_F]
+    cum = [0.0]
+    for i in range(1, len(pts)):
+        cum.append(cum[-1] + math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]))
+    t = [c / cum[-1] for c in cum]
+    # Two-piece linear reparameterisation so t[K_BELT] lands exactly on the
+    # painted seam while both ends stay put. Monotonic by construction, which
+    # is what the "v strictly decreasing" guard requires.
+    tb = t[K_BELT]
+    out = []
+    for ti in t:
+        if ti <= tb:
+            f = ti / tb
+            out.append(_V_ROCKER + (_V_BELT - _V_ROCKER) * f)
+        else:
+            f = (ti - tb) / (1.0 - tb)
+            out.append(_V_BELT + (_V_ROOF - _V_BELT) * f)
+    return out
+
+_RING_HALF_V = _ring_v_table()
+
+RINGF = [(hf, wf) for (hf, wf) in _RING_HALF_F] + \
+        [(hf, -wf) for (hf, wf) in reversed(_RING_HALF_F)]
+RINGV = list(_RING_HALF_V) + [1.0 - v for v in reversed(_RING_HALF_V)]
 NK = len(RINGF)
 
 # heightFrac at/below this rides the beltline curve (yLow -> beltY); above
@@ -635,7 +707,8 @@ ARCH_INNER_Z = 0.58    # wheelhouse wall; the tire's inner face is at 0.62
 # tightened lengthwise only, which is the axis the travel budget does not
 # constrain.
 ARCH_X_MAX = 0.52      # half-length of the opening along the body
-K_LIP = 3              # ring index of the lip's outer edge (mirror: NK-1-K_LIP)
+# K_LIP is defined with the ring itself (role indices live next to the table
+# they index, so a ring edit cannot leave a stale k behind here).
 
 # ARCH_R must clear a fully compressed wheel: renderer.cpp lifts the wheel
 # joint by up to kMaxTravel under load, and nothing previously knew that.
