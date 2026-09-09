@@ -11398,3 +11398,72 @@ physical model; the alternative is a shadow map.
 Verified on all four tracks' presets: noon-grass, hazy-noon, sunset and
 dusk-lights all produce a plausible shadow, with the low-sun clamp holding on
 Big Sable. `ctest` 36/36.
+
+## T4: sponsor decals, and a texture nobody had ever looked at
+
+The reference cars are covered in graphics. Ours had large blank painted
+panels, and at chase-cam distance that density is most of what separates a race
+car from a coloured shape. It also costs **no geometry**, which is why it earns
+more per unit of effort than anything else left in the plan.
+
+`Canvas::drawText()` blits wordmarks into the livery through **G26's existing
+glyph atlas**. Deliberately not a second font path: `font::pushText` already
+lays a string out with the atlas's real metrics and kerning and only happens to
+emit GPU quads, so this calls it and rasterises the quads it produced against
+the decoded atlas. Layout lives in one place and a future rebake carries
+through for free.
+
+**All names are invented** — standing project rule. Match the layout and the
+density of the real thing, never its branding.
+
+### LHT_DUMP_LIVERY, which should have existed rounds ago
+
+The livery is the one asset in this project authored completely blind: it is
+only ever seen wrapped, at an angle, at distance. Several rounds of paint have
+shipped without anyone looking at the flat image. `LHT_DUMP_LIVERY=<dir>` now
+writes each car's finished texture as a PPM, and it earned its keep on the
+first run by catching two placement bugs immediately: the quarter wordmark ran
+off the end of the body's U span, and the deck wordmark landed directly
+underneath the tail number. Every mark is now positioned against its own
+`measureText()` width, because brand names here differ in length by more than
+2x and a fixed left edge can only ever be correct for one of them.
+
+### Two bugs the dump found, and one the renders did
+
+**Ink chosen from body luminance was wrong.** A mark does not necessarily land
+on body colour — the quarter wordmark on a green car was landing on a white
+scheme panel, in light ink, and vanishing. Every mark now carries its own
+backing plate, which makes contrast independent of whatever the scheme put
+underneath and is also what a real decal is: printed on its own background and
+applied over the paint.
+
+**Every wordmark shipped mirrored, and I got the fix wrong twice.** The obvious
+tube argument says u advances in opposite screen directions on the two flanks,
+so exactly one side needs flipping. It does not: measured at **2560×1440** via
+`LHT_WINDOW_W/H`, the mirrored instances read forwards from *both* sides and
+the unmirrored ones read backwards from both. carU() runs nose→tail while the
+mesh's winding puts u advancing toward screen-left in both flank views, so the
+two effects never cancel.
+
+The real lesson is about the instrument, not the geometry. At the turntable's
+usual crop a letter is about **six pixels tall**, which is nowhere near enough
+to tell N from И — three rounds of "looks right / no, looks wrong" came from
+squinting at that, and I twice reasoned my way to a rule and shipped it wrong.
+Rendering large enough to actually read the glyphs settled it in one shot.
+
+### The guard, which was worthless on its first draft
+
+The first version counted dark pixels in the badge band — and **passed with
+`drawText()` stubbed out to return immediately**, because it was measuring the
+`fillRect()` plate the letters sit on rather than the letters. What proves the
+text rendered is light ink *inside* a dark plate, so the assertion now counts
+both and requires both. Verified to fail against the stub.
+
+A second assertion pins the legibility floor: the smallest decal is 0.011 of
+the texture, which is 11 texels of cap height on the **1024** livery non-player
+cars get. It is written against the small texture on purpose, since that is the
+one that decides whether a glyph survives in a 20-car pack.
+
+`livery_test` needed `font_atlas.cpp` and `texture_import.cpp` linked in; both
+are bgfx-free (stb_image plus pure metric math) so it stays a plain host
+binary. `ctest` 36/36.

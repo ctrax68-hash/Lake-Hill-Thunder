@@ -638,8 +638,15 @@ add_test(NAME atlas_texture_test COMMAND atlas_texture_test)
 # Phase 5f (PORT_PROGRESS.md): livery_test exercises buildLiveryPixels()'s
 # pure pixel math, bgfx-free (links track.cpp/car.cpp for ROSTER data).
 # gear_rpm.cpp: car.cpp now calls gearRpm() (drivetrain upgrade).
+# T4: font_atlas.cpp joins the list -- livery.cpp now blits sponsor wordmarks
+# through G26's baked glyph atlas rather than only drawing rects and ellipses.
+# Still bgfx-free: decodeAtlas() inflates a PNG into a byte vector and the
+# metrics helpers are pure math, so nothing here needs a GPU context.
+# texture_import.cpp comes with it for decodeImageRGBA8(); it is stb_image
+# only, no bgfx, so the test stays a plain host binary.
 add_executable(livery_test tests/livery_test.cpp src/sim/track.cpp src/sim/car.cpp src/render/livery.cpp
-  src/render/gear_rpm.cpp)
+  src/render/gear_rpm.cpp src/render/font_atlas.cpp src/render/texture_import.cpp)
+target_include_directories(livery_test PRIVATE ${LHT_STB_INCLUDE_DIR})
 add_test(NAME livery_test COMMAND livery_test)
 
 # Phase 5g (PORT_PROGRESS.md): digit_mesh_test exercises addDigitQuads()/

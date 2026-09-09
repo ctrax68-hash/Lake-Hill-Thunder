@@ -2,8 +2,21 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+#include <vector>
+
+#include "font_atlas.h"
 
 namespace {
+
+// T4: decoded once for the whole process. Every car's livery is painted
+// through this, and decodeAtlas() re-inflates a PNG each call.
+const font::AtlasImage& liveryFontAtlas() {
+    static const font::AtlasImage kAtlas = font::decodeAtlas();
+    return kAtlas;
+}
 
 std::array<double, 3> mixC(const std::array<double, 3>& a, const std::array<double, 3>& b, double t) {
     return {a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t};
@@ -61,6 +74,98 @@ public:
                 if (localX >= lx0 && localX < lx1) blend(px, py, color, 1.0);
             }
         }
+    }
+
+    // T4: blit a wordmark into the texture, reusing G26's baked glyph atlas.
+    //
+    // The reference photographs are covered in graphics -- a contingency
+    // sticker strip along the lower doors, sponsor blocks on the quarters,
+    // wordmarks on hood and deck. Ours had large blank painted panels, and
+    // that density is most of what separates a race car from a coloured shape
+    // at chase-cam distance. It also costs no geometry, which is why it is
+    // worth more per unit of effort than anything else left.
+    //
+    // This deliberately does NOT introduce a second font path. font::pushText
+    // already lays out a string with the atlas's real metrics and kerning; it
+    // just emits GPU quads instead of pixels. So we call it, then rasterise
+    // the quads it produced against the decoded atlas. Layout stays in exactly
+    // one place, and a future atlas rebake carries through here for free.
+    //
+    // `fh` is CAP HEIGHT as a fraction of the texture, not the em size, so a
+    // caller can size a decal against the panel it sits on. Non-player cars
+    // only get a 1024 livery (see livery.h's memory note), so anything below
+    // roughly 0.010 of the texture turns to mush in the pack -- callers are
+    // responsible for staying above that, and the test pins it.
+    // `mirrorU` flips the string about its own left edge, so it reads
+    // correctly on the flank whose U axis runs the other way across the
+    // screen. The body is a lofted TUBE: u is the same function of x on both
+    // sides, so going around the ring reverses which screen direction u
+    // advances in, and a string that reads forward on one flank necessarily
+    // reads backward on the other. The 3D render is the only thing that can
+    // say which -- see the T4 note where the marks are placed.
+    void drawText(double fx, double fy, double fh, const std::string& text,
+                  const std::array<double, 3>& color, double alpha = 1.0, bool centered = false,
+                  bool mirrorU = false) {
+        const font::AtlasImage& atlas = liveryFontAtlas();
+        if (!atlas.ok || text.empty()) return;
+
+        // ascent() scales linearly with pixelSize, so one division converts a
+        // wanted cap height into the pixelSize that produces it.
+        const double baked = (double)font::bakedPixelSize();
+        const double ascentAtBaked = font::ascent((float)baked);
+        if (ascentAtBaked <= 0.0) return;
+        const double target = fh * size_;
+        const float px = (float)(target * baked / ascentAtBaked);
+
+        std::vector<PosColorUvVertex> quads;
+        font::pushText(quads, 0.0f, font::ascent(px), text, px, 0xffffffffu);
+        if (quads.empty()) return;
+
+        double ox = fx * size_;
+        if (centered) ox -= font::measure(text, px) * 0.5;
+        const double oy = fy * size_;
+
+        // pushText emits 6 vertices per glyph; [0] is the top-left corner and
+        // [2] the bottom-right, which is all a blit needs.
+        const double runW = font::measure(text, px);
+        for (size_t g = 0; g + 5 < quads.size(); g += 6) {
+            const PosColorUvVertex& a = quads[g];
+            const PosColorUvVertex& b = quads[g + 2];
+            // Mirror the glyph's BOX about the run's centre as well as its
+            // sampling, so the whole string reverses rather than each letter
+            // being flipped in place.
+            const double gx0 = mirrorU ? runW - b.x : a.x;
+            const double gx1 = mirrorU ? runW - a.x : b.x;
+            const int x0 = (int)std::floor(ox + gx0), x1 = (int)std::ceil(ox + gx1);
+            const int y0 = (int)std::floor(oy + a.y), y1 = (int)std::ceil(oy + b.y);
+            if (x1 <= x0 || y1 <= y0) continue;
+            for (int py = std::max(0, y0); py < std::min(size_, y1); ++py) {
+                for (int pxx = std::max(0, x0); pxx < std::min(size_, x1); ++pxx) {
+                    double tx = (pxx + 0.5 - (ox + gx0)) / (gx1 - gx0);
+                    const double ty = (py + 0.5 - (oy + a.y)) / (double)(b.y - a.y);
+                    if (tx < 0.0 || tx >= 1.0 || ty < 0.0 || ty >= 1.0) continue;
+                    if (mirrorU) tx = 1.0 - tx;
+                    const double u = a.u + (b.u - a.u) * tx, v = a.v + (b.v - a.v) * ty;
+                    const int ax = std::clamp((int)(u * atlas.width), 0, atlas.width - 1);
+                    const int ay = std::clamp((int)(v * atlas.height), 0, atlas.height - 1);
+                    // The atlas is 8-bit coverage expanded to RGBA, so any
+                    // channel is the coverage; red is as good as alpha and
+                    // needs no swizzle on the GLES2 path.
+                    const double cov = atlas.rgba8[((size_t)ay * atlas.width + ax) * 4] / 255.0;
+                    if (cov > 0.004) blend(pxx, py, color, alpha * cov);
+                }
+            }
+        }
+    }
+
+    // Width the same call would occupy, as a fraction of the texture -- so a
+    // caller can lay a row of wordmarks out without guessing.
+    double measureText(double fh, const std::string& text) const {
+        const double baked = (double)font::bakedPixelSize();
+        const double ascentAtBaked = font::ascent((float)baked);
+        if (ascentAtBaked <= 0.0) return 0.0;
+        const float px = (float)(fh * size_ * baked / ascentAtBaked);
+        return font::measure(text, px) / (double)size_;
     }
 
     std::vector<uint8_t> take() { return std::move(pixels_); }
@@ -647,6 +752,120 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         }
     }
 
+    // ---- T4: wordmarks ----
+    //
+    // G16 put the contingency STRIP in and left it as blank coloured chips,
+    // because there was no way to draw text into a texture. G26's font atlas
+    // changed that and nothing came back to use it. Every reference car is
+    // covered in lettering, and blank panels are most of what still reads as
+    // "coloured shape" rather than "race car" at chase-cam distance.
+    //
+    // ALL NAMES ARE INVENTED. Standing project rule: match the layout and the
+    // density of the real thing, never its branding. These are deliberately
+    // synthetic words that no series has ever run.
+    {
+        static const std::array<const char*, 12> kBrands{{
+            "VALKOR", "NORVAL", "KESTREL", "HALVERN", "TORQ-9", "DRIFTLINE",
+            "IRONWAY", "CROSSCUT", "LUMEN", "SABLECO", "REDSHIFT", "APEXA",
+        }};
+        static const std::array<const char*, 6> kSmall{{
+            "AXLON", "PRIMEX", "VERTAC", "OKAMI", "BRIGHT", "NUFUEL",
+        }};
+        const std::array<double, 3> inkDark{18 / 255.0, 18 / 255.0, 22 / 255.0};
+        const std::array<double, 3> inkLight{244 / 255.0, 244 / 255.0, 246 / 255.0};
+
+        // Every mark gets its OWN backing plate rather than being painted
+        // straight onto the paint. Two reasons, and the first is a bug the
+        // LHT_DUMP_LIVERY dump caught: choosing ink from the car's BODY
+        // luminance is wrong, because a mark does not necessarily land on body
+        // colour -- the quarter wordmark on a green car was landing on a white
+        // scheme panel in light ink and disappearing completely. A plate makes
+        // contrast independent of whatever the scheme put underneath.
+        //
+        // The second reason is that it is what the reference actually shows: a
+        // real sponsor decal is printed on its own background and applied on
+        // top of the paint, not painted into it.
+        // EVERY mark is mirrored, on both flanks. That is not what the
+        // obvious tube argument predicts -- u is the same function of x all
+        // the way round, so going over the roof ought to reverse which screen
+        // direction u advances in and leave exactly one flank needing the
+        // flip. It does not, and the measurement is unambiguous: rendered at
+        // 2560x1440 (LHT_WINDOW_W/H), the mirrored instances read forwards
+        // from both sides and the unmirrored ones read backwards from both.
+        //
+        // How that was established is the part worth keeping. carU() runs
+        // nose -> tail while the mesh's own winding puts u advancing toward
+        // screen-left in both flank views, so the two effects do not cancel
+        // the way the tube argument assumes. I reasoned my way to "mirror one
+        // half" twice and shipped it wrong twice; what settled it was giving
+        // up on inference and rendering big enough to actually READ the
+        // glyphs. At the turntable's usual crop a letter is about six pixels
+        // tall, which is far too small to tell N from И -- three rounds of
+        // "looks right / no, looks wrong" came from squinting at that.
+        auto badge = [&](double x, double vy, double h, const char* t, bool lightPlate, double a) {
+            const double w = c.measureText(h, t);
+            const double padX = h * 0.45, padY = h * 0.40;
+            const std::array<double, 3>& plate = lightPlate ? inkLight : inkDark;
+            const std::array<double, 3>& ink = lightPlate ? inkDark : inkLight;
+            c.fillRect(x - padX, vy - padY, w + 2 * padX, h + 2 * padY, plate, a);
+            c.drawText(x, vy, h, t, ink, 1.0, false, true);
+        };
+
+        const char* primary = kBrands[(size_t)(idx % (int)kBrands.size())];
+        const char* second = kSmall[(size_t)((idx + 3) % (int)kSmall.size())];
+        const char* third = kBrands[(size_t)((idx + 7) % (int)kBrands.size())];
+
+        // Cap height 0.020 of the texture: 41 texels at 2048 and still 20 at
+        // the 1024 non-player cars get, comfortably above the ~4-texel floor
+        // where a glyph stops resolving in the pack.
+        constexpr double kMarkH = 0.020;
+
+        // EVERY mark below is placed against its own measured width. The first
+        // cut hardcoded left edges and the LHT_DUMP_LIVERY dump showed exactly
+        // why that does not work: the quarter wordmark ran off the end of the
+        // body's U span and the deck one landed underneath the tail number.
+        // Brand names here differ in length by more than 2x, so a fixed left
+        // edge is only ever correct for one of them.
+        // Quarter-panel sponsor, both sides: right-aligned against its own
+        // measured width so it stops clear of the tail column the taillight
+        // cluster owns. The first cut hardcoded a left edge and the dump showed
+        // it running off the end of the body's U span -- brand names here
+        // differ in length by more than 2x, so one fixed edge cannot fit them.
+        for (double vy : {0.170, 0.790}) {
+            badge(0.752 - c.measureText(kMarkH, primary), vy, kMarkH, primary, false, 0.90);
+        }
+        // Associate mark forward of the door number, where the real cars carry
+        // one, and a third on the lower door above the rocker band. 0.185 for
+        // the second, not 0.310: at 0.310 the dump showed it buried under the
+        // door-number roundel.
+        for (double vy : {0.145, 0.815}) badge(0.290, vy, 0.014, second, true, 0.90);
+        for (double vy : {0.262, 0.702}) badge(0.185, vy, 0.013, third, false, 0.85);
+
+        // Hood wordmark, centred on the hood's own U span. Reads nose-on in
+        // every mirror. Plated like the rest: the scheme's own white blocks sit
+        // right here on several styles and a bare mark half-vanishes into them.
+        badge(0.170 - c.measureText(0.024, primary) * 0.5, 0.480, 0.024, primary, false, 0.88);
+        // Deck wordmark at 0.62, not 0.70: the dump caught it landing directly
+        // underneath the tail number.
+        badge(0.620 - c.measureText(0.018, second) * 0.5, 0.480, 0.018, second, false, 0.88);
+
+        // A lettered contingency row beside the chips, which G16 left as blank
+        // colour blocks because when it shipped there was no way to draw text
+        // into a texture at all. Light plates with dark text, which is what a
+        // real contingency sticker is.
+        static const std::array<const char*, 4> kTiny{{"OKAMI", "AXLON", "VERTAC", "NUFUEL"}};
+        for (double vy : {0.070, 0.906}) {
+            double ux = 0.690;
+            for (int i = 0; i < 3; ++i) {
+                const char* t = kTiny[(size_t)((idx + i) % (int)kTiny.size())];
+                const double w = c.measureText(0.011, t);
+                if (ux + w > 0.760) break;
+                badge(ux, vy, 0.011, t, true, 0.92);
+                ux += w + 0.010;
+            }
+        }
+    }
+
     // ---- numbers (index.html:2732-2744; simplified per this file's note #3) ----
     const std::array<double, 3> white{250 / 255.0, 250 / 255.0, 250 / 255.0};
     const std::array<double, 3> dark{10 / 255.0, 10 / 255.0, 12 / 255.0};
@@ -841,5 +1060,21 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     c.fillRect(0.95, 0.0, 0.05, 0.5, tone(kBaseM));                                                // spoiler top (body color)
     c.fillRect(0.95, 0.5, 0.05, 0.5, std::array<double, 3>{10 / 255.0, 10 / 255.0, 12 / 255.0});  // spoiler underside/risers
 
-    return downsampleBox(c.take(), kLiveryTextureSize * kSupersample, kSupersample);
+    std::vector<uint8_t> out = downsampleBox(c.take(), kLiveryTextureSize * kSupersample, kSupersample);
+    // T4: LHT_DUMP_LIVERY=<dir> writes each car's finished texture as a PPM.
+    // The livery is the one asset in this project that is authored blind --
+    // it is only ever seen wrapped, at an angle, at chase-cam distance, and
+    // several rounds of paint have shipped without anyone looking at the flat
+    // image. Desktop-only debug hook, same idiom as the LHT_* flags in
+    // main.cpp; no-ops on web, which has no environment to read.
+    if (const char* dir = std::getenv("LHT_DUMP_LIVERY")) {
+        char path[512];
+        std::snprintf(path, sizeof(path), "%s/livery_%02d.ppm", dir, num);
+        if (FILE* f = std::fopen(path, "wb")) {
+            std::fprintf(f, "P6\n%d %d\n255\n", kLiveryTextureSize, kLiveryTextureSize);
+            for (size_t i = 0; i < out.size(); i += 4) std::fwrite(&out[i], 1, 3, f);
+            std::fclose(f);
+        }
+    }
+    return out;
 }

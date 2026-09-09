@@ -356,6 +356,58 @@ int main() {
         expectTrue("corrected rear-glass boundary: former overshoot area is no longer glassHi", px != glassHi);
     }
 
+    // T4: the wordmark decals must actually put ink on the car, and must stay
+    // legible at the 1024 texture non-player cars get.
+    //
+    // Two things this pins that nothing else could. First, drawText() fails
+    // SILENTLY if the font atlas does not decode -- it returns early and the
+    // livery is simply blank where a sponsor should be, which is invisible in
+    // any 3D render until you go looking for it. Second, the decals are sized
+    // in fractions of the texture, so a future resolution change or a "make
+    // them a bit smaller" tweak can quietly cross the point where a glyph
+    // stops resolving in a 20-car pack.
+    {
+        LiveryScheme scheme{0, 0, 0, CarPalette::White};
+        const auto pixels = buildLiveryPixels(red, 7, 1, &scheme);
+
+        // The quarter-panel badge is a dark plate. Assert RELATIVE to the body
+        // it sits on, not against an absolute threshold: the plate is laid at
+        // 0.90 alpha so it blends with whatever is underneath, and an absolute
+        // bound would be a different number for every car colour. (The first
+        // version of this used < 0.12 and failed for exactly that reason --
+        // 0.9*0.07 + 0.1*body lands above it on a red car.)
+        // Assert the GLYPHS, not the plate. The first version of this counted
+        // dark pixels in the badge band and PASSED with drawText() stubbed out
+        // to return immediately -- it was measuring the fillRect() plate the
+        // letters sit on, which is exactly the worthless-guard failure this
+        // file's own history warns about. What proves the text rendered is
+        // LIGHT ink inside a DARK plate: count pixels far brighter than the
+        // plate but confined to the plate's own band.
+        const int vRow = (int)(0.170 * kLiveryTextureSize);
+        int plateHits = 0, glyphHits = 0;
+        for (int u = (int)(0.60 * kLiveryTextureSize); u < (int)(0.77 * kLiveryTextureSize); ++u) {
+            for (int dv = -12; dv <= 12; ++dv) {
+                const auto px = pixelAt(pixels, u, vRow + dv);
+                const double lum = px[0] * 0.5 + px[1] * 0.4 + px[2] * 0.1;
+                if (lum < 0.20) ++plateHits;        // the dark sponsor plate
+                else if (lum > 0.70) ++glyphHits;   // light lettering on it
+            }
+        }
+        expectTrue("T4: quarter-panel sponsor plate is painted", plateHits > 200);
+        expectTrue("T4: sponsor wordmark glyphs are actually blitted onto the plate",
+                   glyphHits > 60);
+
+        // The smallest decal shipped is the contingency row at 0.011 of the
+        // texture. At the 1024 a non-player car gets that is 11 texels of cap
+        // height; below ~8 a glyph stops resolving in the pack. This is the
+        // number to move if the decals are ever resized, and it is deliberately
+        // expressed against the SMALL texture, not the 2048 the player gets.
+        constexpr double kSmallestDecalH = 0.011;
+        constexpr int kNonPlayerTexture = 1024;
+        expectTrue("T4: smallest decal stays legible at the non-player 1024 livery",
+                   kSmallestDecalH * kNonPlayerTexture >= 8.0);
+    }
+
     if (g_failures == 0) {
         std::printf("livery_test: shading bands, stripe styles, and number decals all match expectations.\n");
         return 0;
