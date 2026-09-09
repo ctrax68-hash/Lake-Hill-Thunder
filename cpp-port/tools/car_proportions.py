@@ -76,7 +76,20 @@ def station(role):
 
 
 # --- overall box: published Gen-4 Cup dimensions --------------------------
-measure("overall length (m)", LENGTH, 5.08, 0.02, "spec")
+# T7: measured over the real geometry, not 2*HALF_LEN. The published 200 in
+# Cup length is taken OVER THE BUMPERS, so comparing it against the loft alone
+# was measuring the wrong thing -- and once the tips became domes standing
+# proud of the last section ring, 2*HALF_LEN would have quietly under-reported
+# by the two cap depths. min/max over every chassis vertex cannot drift.
+# Bumper to bumper, using the cap vertex ranges gen_car_rig exposes. NOT
+# min/max over every chassis vertex: the front splitter's lip reaches
+# HALF_LEN + 0.18 and the spoiler blade HALF_LEN + 0.06, so that measured 5.32
+# and would have had me shaving a body that was already the right length. A
+# quoted Cup length is over the bumpers; aero appendages are not in it.
+_nose_x = [R.positions[i][0] for i in range(*R.NOSE_CAP_RANGE)]
+_tail_x = [R.positions[i][0] for i in range(*R.TAIL_CAP_RANGE)]
+TRUE_LENGTH = max(_nose_x) - min(_tail_x)
+measure("overall length over bumpers (m)", TRUE_LENGTH, 5.08, 0.02, "spec")
 measure("overall width (m)", 2.0 * MAX_HALF_W, 1.842, 0.03, "spec",
         "72.5 in mandated body width")
 measure("roof height (m)", ROOF, 1.295, 0.03, "spec", "51 in")

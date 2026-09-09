@@ -11573,3 +11573,50 @@ The T-series has been optimising the SIDE PROFILE against a side-profile
 photograph. The player almost never sees that view. That is a targeting error
 in the loop itself, not in any individual fix, and it is the next thing to
 correct.
+
+## T7: the nose and tail were both flat discs, and one mechanism fixed both
+
+Both caps were a single fan from the last section ring to one apex point. The
+nose was a **0.06 m bulge on a 0.77 m tall face — 7.8% depth**, and the tail
+was flat by construction. From the chase camera that made the rear of the car
+read as a billboard.
+
+Each cap is now a **dome**: `CAP_RINGS` shrinking rings following a quarter
+ellipse before closing on the apex, which is what a bumper fascia actually is.
+Rings interpolate toward the apex in Y and Z and push out in X, so the cap
+inherits the section's own shape — wide flat-ish bottom, tumbled top — instead
+of collapsing everything to a circle. Nose depth 0.09, tail 0.045: a bumper
+fascia bulges, a tail panel only softens its corners.
+
+### An assertion deliberately reversed
+
+`check_car_rig.py` has asserted since K1 that **the tail cap is flat**. K1
+rounded the nose only, on a reported symptom, and that check existed so nobody
+would "helpfully" round the tail without one. There is now a reported symptom:
+the high-resolution chase frame from T6b. The scope boundary was right when it
+was set and wrong now, so it was **moved rather than quietly deleted** — the
+check now asserts the tail IS a dome, of exactly `TAIL_CAP_DEPTH`, and that the
+nose dome is deeper than it.
+
+### Two measurement errors caught on the way
+
+**The tip stations were pulled in by exactly the cap depths**, so the car's true
+extent including bumpers is still 5.08 m. Without that the domes would have
+made a correctly-sized car 0.135 m too long. `car_proportions.py` was measuring
+`2 * HALF_LEN`, which ignores the caps entirely and would never have noticed.
+
+Replacing that with a real measurement then went wrong in the other direction:
+min/max over every chassis vertex reported **5.320 m**, because the front
+splitter's lip reaches `HALF_LEN + 0.18` and the spoiler blade `HALF_LEN +
+0.06`. Chasing that number would have had me shaving a body that was already
+the right length. A quoted Cup length is taken **over the bumpers**; aero
+appendages are not in it. The measure now uses the cap vertex ranges the
+generator already exposes.
+
+The loft's last rings no longer land on the painted U range's exact ends, so
+the two `u == 0.02` / `u == 0.78` assertions became bounded ranges — the caps
+occupy that sliver, sampling their own station's u per this file's long-standing
+flat-swatch convention.
+
+3146 → **3602 triangles**. `check_car_rig.py` PASS, `car_proportions.py` 16/16,
+`ctest` 36/36.

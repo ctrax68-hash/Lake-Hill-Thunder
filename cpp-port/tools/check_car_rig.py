@@ -245,8 +245,13 @@ for name, lo, hi in bands:
 
 # U must still span the livery's paint range exactly at the tips.
 us = [R.car_u(st[0]) for st in R.CHASSIS_STATIONS]
-check(abs(us[0] - 0.02) < 1e-6, "nose station u == 0.02")
-check(abs(us[-1] - 0.78) < 1e-6, "tail station u == 0.78")
+# T7: the tips are DOMES now, and the loft's last section ring sits one cap
+# depth inside the car's true extent -- so the last ring no longer lands on the
+# painted range's exact end. The cap fills that sliver (it samples its own
+# station's u, this file's long-standing flat-swatch convention). What still
+# has to hold is that the loft starts inside the paint and close to its edge.
+check(0.02 <= us[0] <= 0.045, "nose section ring starts just inside the painted range (u=%.4f)" % us[0])
+check(0.755 <= us[-1] <= 0.78, "tail section ring ends just inside the painted range (u=%.4f)" % us[-1])
 
 # --- normals ----------------------------------------------------------------
 print("normals")
@@ -355,9 +360,27 @@ check(0.02 < nose_dx < 0.15, "nose apex offset is bounded and plausible (%.4f)" 
 # guard: if a future edit "helpfully" applies the same forward-offset
 # treatment to the tail without its own reported symptom and its own
 # justification, this fails instead of silently drifting.
+# T7: THIS ASSERTION IS DELIBERATELY REVERSED, and the reason is worth stating
+# because it used to guard the opposite property.
+#
+# K1 rounded the nose and left the tail flat on purpose, and this check existed
+# so nobody "helpfully" rounded the tail without a reported symptom. There is
+# now a reported symptom. A high-resolution CHASE frame -- the view the player
+# looks at for an entire race, which no round before T6b had examined -- shows
+# the rear reading as a flat billboard: a single 0.60 x 1.64 m plane with one
+# normal and square corners. The scope boundary was right when it was set and
+# is wrong now, so it moves rather than being quietly deleted.
 tail_xs = {round(p[0], 9) for p in tail_positions}
-check(len(tail_xs) == 1,
-      "tail cap vertices all share one X (deliberately untouched -- K1 is nose-only by design)")
+check(len(tail_xs) > 1,
+      "tail cap is a DOME, not a flat plane (%d distinct X layers)" % len(tail_xs))
+_tail_depth = max(tail_xs) - min(tail_xs) if len(tail_xs) > 1 else 0.0
+check(abs(_tail_depth - R.TAIL_CAP_DEPTH) < 1e-6,
+      "tail dome stands exactly TAIL_CAP_DEPTH (%.3f) off its section ring" % _tail_depth)
+# And the nose is deeper than the tail: a bumper fascia bulges, a tail panel
+# only softens its corners. 0.06 on a 0.77 m face was the flat-disc figure.
+check(R.NOSE_CAP_DEPTH > R.TAIL_CAP_DEPTH and R.NOSE_CAP_DEPTH >= 0.08,
+      "nose dome (%.3f) is deeper than the tail dome (%.3f) and no longer a disc"
+      % (R.NOSE_CAP_DEPTH, R.TAIL_CAP_DEPTH))
 
 all_cap_normals = nose_normals + tail_normals
 check(all(all(c == c for c in n) for n in all_cap_normals), "no NaN in any cap normal")

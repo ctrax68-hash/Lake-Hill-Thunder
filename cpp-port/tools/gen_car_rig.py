@@ -936,7 +936,7 @@ _CAR_ST_JS = [
     # it from a misread photo reintroduced exactly the 154-degree fold R2 fixed,
     # at 158 degrees. The beltline is therefore nearly level from the front axle
     # to the deck, which is what a Cup car has anyway.
-    (2.51,  0.83,  0.63,  0.08,  0.72),   # bumper/valance -- LOW, deep air dam
+    (2.421, 0.83,  0.63,  0.08,  0.72),   # last section ring -- the bumper DOME is ahead of it
     (2.30,  0.89,  0.71,  0.08,  0.76),   # front fascia
     (2.00,  0.91,  0.80,  0.09,  0.82),   # hood leading edge
     (1.78,  0.921, 0.88,  0.10,  0.85),   # front fender -- full width
@@ -951,7 +951,7 @@ _CAR_ST_JS = [
     (-1.67, 0.921, 0.932, 0.19,  0.951),  # deck starts
     (-2.03, 0.905, 0.932, 0.21,  0.945),  # deck, flat
     (-2.32, 0.875, 0.928, 0.25,  0.940),  # deck rear
-    (-2.51, 0.82,  0.912, 0.33,  0.930),  # tail panel -- wide and square
+    (-2.466, 0.82, 0.912, 0.36,  0.930),  # last section ring -- the tail DOME is behind it
 ]
 
 # T6: landmark stations BY NAME. Every consumer that wants "the cowl" or "the
@@ -960,7 +960,7 @@ _CAR_ST_JS = [
 # index or coordinate would have let a check keep passing against geometry that
 # had moved out from under it, so the names are now the interface.
 STATION_ROLES = {
-    "nose": 2.51,
+    "nose": 2.421,
     "hood_lead": 2.00,
     "front_axle": 1.60,
     "cowl": 0.585,
@@ -970,7 +970,7 @@ STATION_ROLES = {
     "rear_axle": -1.16,
     "deck_start": -1.67,
     "deck_flat": -2.03,
-    "tail": -2.51,
+    "tail": -2.466,
 }
 
 def station_x(role):
@@ -1175,7 +1175,22 @@ def _cap_v(z, wmax):
 # inverted-V boat hull from behind"). check_car_rig.py's own new checks
 # assert the tail cap stays flat, so this boundary is enforced, not just
 # stated in a comment.
-NOSE_APEX_DX = 0.06
+# T7: the caps are domes now, and these are how far they stand off the last
+# section ring. The nose was 0.06 on a 0.77 m tall face -- a disc with a dimple
+# -- and the tail was 0.0, flat by construction.
+#
+# The station table's nose and tail were pulled IN by the same amounts, so the
+# car's true extent including bumpers is still 5.08 m. That matters because the
+# published 200 in Cup length is measured over the bumpers, so comparing it to
+# the loft alone was measuring the wrong thing.
+#
+# Clearance: the front splitter's own forward tip sits at HALF_LEN + 0.18, and
+# the nose cap now reaches HALF_LEN, so the splitter still leads the bumper by
+# 0.18 m -- the protruding lip it is supposed to be.
+NOSE_CAP_DEPTH = 0.09
+TAIL_CAP_DEPTH = 0.045
+CAP_RINGS = 3
+NOSE_APEX_DX = NOSE_CAP_DEPTH  # kept: check_car_rig references it by name
 
 # K1: exposed so check_car_rig.py can isolate exactly the cap vertices to
 # check -- caps sample ordinary body-livery UV (no distinguishing swatch
@@ -1190,7 +1205,7 @@ for (idx, outward) in ((0, (1, 0, 0)), (len(RINGS) - 1, (-1, 0, 0))):
     wmax = max(abs(p[2]) for p in ring) or 1.0
     u = car_u(st[0])
     apex_y = (st[2] + st[3]) / 2.0
-    apex_x = st[0] + NOSE_APEX_DX * outward[0] if idx == 0 else st[0]
+    apex_x = st[0] + (NOSE_CAP_DEPTH if idx == 0 else TAIL_CAP_DEPTH) * outward[0]
     apex_pos = (apex_x, apex_y, 0.0)
     _cap_start = len(positions)
 
@@ -1208,11 +1223,55 @@ for (idx, outward) in ((0, (1, 0, 0)), (len(RINGS) - 1, (-1, 0, 0))):
         apex_v = (apex_pos, n, (u, _cap_v(0.0, wmax)))
         return apex_v, (p1, n, (u, _cap_v(p1[2], wmax))), (p2, n, (u, _cap_v(p2[2], wmax)))
 
+    # T7: A DOME, NOT A CONE.
+    #
+    # Both caps were a single fan from the section ring to one apex point, so
+    # the nose was a flat disc with a 0.06 m bulge on a 0.77 m tall face --
+    # 7.8% depth -- and the tail was flat by construction. From the chase
+    # camera, the view the player actually spends a race looking at, that made
+    # the rear of the car read as a billboard.
+    #
+    # The cap is now built as CAP_RINGS shrinking rings following a quarter
+    # ellipse before it closes on the apex, which is what a bumper fascia
+    # actually is. One mechanism fixes both ends: the nose gets a rounded
+    # shell, and the tail gets radiused corners instead of a slab edge.
+    #
+    # Rings are interpolated toward the apex in Y and Z and pushed out in X, so
+    # the cap inherits the section's own shape -- a wide flat-ish bottom and a
+    # tumbled top -- rather than collapsing everything to a circle.
+    depth = NOSE_CAP_DEPTH if idx == 0 else TAIL_CAP_DEPTH
+    layers = [ring]
+    for i in range(1, CAP_RINGS + 1):
+        t = i / float(CAP_RINGS + 1)
+        shrink = math.sqrt(max(0.0, 1.0 - t * t))      # quarter ellipse
+        dx = depth * t
+        layers.append([
+            (apex_pos[0] + outward[0] * (dx - depth),
+             apex_pos[1] + (p[1] - apex_pos[1]) * shrink,
+             apex_pos[2] + (p[2] - apex_pos[2]) * shrink)
+            for p in ring
+        ])
+
+    def cap_quad(p0, p1, q1, q0):
+        n = _norm(_cross(_sub(p1, p0), _sub(q0, p0)))
+        if _dot(n, outward) < 0:
+            n = (-n[0], -n[1], -n[2])
+        vt = lambda p: (p, n, (u, _cap_v(p[2], wmax)))
+        return vt(p0), vt(p1), vt(q1), vt(q0)
+
+    for li in range(len(layers) - 1):
+        inner, outer = layers[li], layers[li + 1]
+        for k in range(NK):
+            k2 = (k + 1) % NK
+            q = cap_quad(inner[k], inner[k2], outer[k2], outer[k])
+            emit_smooth_tri(q[0], q[1], q[2], outward)
+            emit_smooth_tri(q[0], q[2], q[3], outward)
+
+    tip = layers[-1]
     for k in range(NK - 1):
-        a, b, c = cap_tri(ring[k], ring[k + 1])
+        a, b, c = cap_tri(tip[k], tip[k + 1])
         emit_smooth_tri(a, b, c, outward)
-    # close the fan across the underbody edge
-    a, b, c = cap_tri(ring[NK - 1], ring[0])
+    a, b, c = cap_tri(tip[NK - 1], tip[0])
     emit_smooth_tri(a, b, c, outward)
 
     if idx == 0:
