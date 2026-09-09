@@ -326,25 +326,88 @@ ShadowBasis carShadowBasis(const Track& track, double s, double heading) {
 // (mat4Translate/mat4RotateY above): col0=right*W, col1=fw*L, col2=up,
 // col3=position -- a direct adaptation of JS's m4fromBasis(right, fw, upF,
 // pos), which uses the same column layout.
-Mat4f carShadowModelMat(const Track& track, double s, double heading, const Vec3& base) {
+// T3: the shadow now knows where the sun is.
+//
+// It did not before, at all: this took (track, s, heading, base) and put a
+// fixed 2.3 x 4.6 footprint directly beneath the car, identically at noon and
+// at sunset. Every one of the reference photographs the user supplied has a
+// hard shadow thrown off to one side, and a decal pinned under the car reads
+// as an object floating above a surface rather than standing on it. This is
+// the cheapest change in the round and the strongest cue that the car is in a
+// real scene.
+//
+// Not a shadow map -- deliberately out of scope. The decal is offset along the
+// sun's own ground-projected direction and stretched along it, which is what a
+// low sun does to a real one.
+//
+// `sunDir` is the unit direction TOWARD the sun. It comes from the renderer's
+// existing sunDir_ member -- the same vector fs_lit/fs_car are already lit by,
+// set from envSunDirection() -- rather than being re-derived here, so there is
+// exactly one sun convention in this renderer and not two that can drift.
+Mat4f carShadowModelMat(const Track& track, double s, double heading, const Vec3& base,
+                        const Vec3& sunDir) {
     const ShadowBasis b = carShadowBasis(track, s, heading);
     constexpr double kShadowW = 2.3, kShadowL = 4.6, kShadowLift = 0.02;
+
+    // Project the sun onto the track surface. `away` points along the ground
+    // in the direction the shadow is cast (i.e. away from the sun).
+    const double sunUp = sunDir.x * b.up.x + sunDir.y * b.up.y + sunDir.z * b.up.z;
+    Vec3 away{-(sunDir.x - b.up.x * sunUp), -(sunDir.y - b.up.y * sunUp), -(sunDir.z - b.up.z * sunUp)};
+    const double awayLen = std::sqrt(away.x * away.x + away.y * away.y + away.z * away.z);
+
+    // How far the shadow runs past the car, in metres. This is the car's own
+    // HEIGHT projected along the ground by the sun's elevation -- not a
+    // function of the footprint, which is the mistake the first cut of this
+    // made: it derived the offset from the stretch and clamped the stretch at
+    // >= 1, so any sun above 45 degrees produced exactly zero of both. Every
+    // daylight preset here is above 45 (noon-grass is at 55), so the whole
+    // change was a no-op and a deterministic showcase A/B showed 0.00% of
+    // pixels moving. A real car at 55 degrees throws its roof nearly a metre.
+    //
+    // dusk-lights sits at 6 degrees where 1/tan reaches 9.5, so the extension
+    // is capped: past kMaxExtend the decal stops growing rather than becoming
+    // a runway stripe. That is a deliberate cheat, not a physical model -- the
+    // alternative is a shadow map, which is out of scope for this round.
+    constexpr double kCarHeight = 1.30, kMaxExtend = 3.0;
+    double extend = 0.0;
+    if (awayLen > 1e-6) {
+        away = {away.x / awayLen, away.y / awayLen, away.z / awayLen};
+        // sunUp is sin(elevation) against the BANKED surface and awayLen its
+        // cosine, so awayLen/sunUp is 1/tan(elevation) with no trig call and
+        // with the track's banking already folded in for free.
+        const double invTan = sunUp > 1e-3 ? awayLen / sunUp : kMaxExtend;
+        extend = std::min(kMaxExtend, kCarHeight * invTan);
+    } else {
+        away = {0.0, 0.0, 0.0};
+    }
+
+    // The extension runs along the SUN's ground direction, not the car's, so a
+    // side-on sun widens the decal and a head-on one lengthens it. Decompose
+    // `away` onto the car's own basis and give each axis its share. The centre
+    // moves half the extension, since the shadow grows away from the car
+    // rather than around it.
+    const double aR = away.x * b.right.x + away.y * b.right.y + away.z * b.right.z;
+    const double aF = away.x * b.fw.x + away.y * b.fw.y + away.z * b.fw.z;
+    const double sW = kShadowW + extend * std::abs(aR);
+    const double sL = kShadowL + extend * std::abs(aF);
+    const double offset = extend * 0.5;
+
     Mat4f m{};
-    m[0] = (float)(b.right.x * kShadowW);
-    m[1] = (float)(b.right.y * kShadowW);
-    m[2] = (float)(b.right.z * kShadowW);
+    m[0] = (float)(b.right.x * sW);
+    m[1] = (float)(b.right.y * sW);
+    m[2] = (float)(b.right.z * sW);
     m[3] = 0.0f;
-    m[4] = (float)(b.fw.x * kShadowL);
-    m[5] = (float)(b.fw.y * kShadowL);
-    m[6] = (float)(b.fw.z * kShadowL);
+    m[4] = (float)(b.fw.x * sL);
+    m[5] = (float)(b.fw.y * sL);
+    m[6] = (float)(b.fw.z * sL);
     m[7] = 0.0f;
     m[8] = (float)b.up.x;
     m[9] = (float)b.up.y;
     m[10] = (float)b.up.z;
     m[11] = 0.0f;
-    m[12] = (float)(base.x + b.up.x * kShadowLift);
-    m[13] = (float)(base.y + b.up.y * kShadowLift);
-    m[14] = (float)(base.z + b.up.z * kShadowLift);
+    m[12] = (float)(base.x + b.up.x * kShadowLift + away.x * offset);
+    m[13] = (float)(base.y + b.up.y * kShadowLift + away.y * offset);
+    m[14] = (float)(base.z + b.up.z * kShadowLift + away.z * offset);
     m[15] = 1.0f;
     return m;
 }
@@ -2273,6 +2336,10 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
     // resolved into `draws` first, because the loop that builds them advances
     // wall-clock wheel state -- see WorldDrawList's comment in renderer.h.
     WorldDrawList draws;
+    // T3: the sun, in the same units and the same convention the lit shaders
+    // already use, hoisted once per frame rather than rebuilt per car.
+    const Vec3 sunVec{(double)sunDir_[0], (double)sunDir_[1], (double)sunDir_[2]};
+
     draws.particles = particles; // H4: shared read-only across every view
     draws.skids = skids;         // L6: likewise -- world-space, so genuinely view-independent
 
@@ -2373,7 +2440,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
                 // rather than reused wholesale since the shadow decal needs
                 // its own width/length scale and lift, not the rig's
                 // unscaled basis.
-                draws.shadows.push_back(carShadowModelMat(*track_, pose.s, pose.hdg, carPos));
+                draws.shadows.push_back(carShadowModelMat(*track_, pose.s, pose.hdg, carPos, sunVec));
             }
         }
 
@@ -2413,7 +2480,7 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             draws.cars.push_back({paceModel, std::move(paceBoneFloats), (int)paceBones.size(),
                                   getOrBuildPaceTexture(), /*isPace=*/true});
             // H3: JS gives the pace car a shadow too (index.html:4098).
-            draws.shadows.push_back(carShadowModelMat(*track_, pS, pHdg, pacePos));
+            draws.shadows.push_back(carShadowModelMat(*track_, pS, pHdg, pacePos, sunVec));
         }
     }
 

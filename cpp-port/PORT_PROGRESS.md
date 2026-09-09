@@ -11348,3 +11348,53 @@ carries V anchor 0.588, and the half-ring stops strictly above v=0.5 so its
 mirror is not a duplicate (which would break the no-fold-back guard).
 
 2938 → **3298 triangles**. `check_car_rig.py` passed unedited. `ctest` 36/36.
+
+## T3: the contact shadow did not know where the sun was
+
+`carShadowModelMat()` took `(track, s, heading, base)`. There was no sun term
+anywhere in it — a fixed 2.3 × 4.6 decal directly beneath the car, identical at
+noon and at dusk. Every reference photograph has a hard shadow thrown off to
+one side, and a decal pinned under a car reads as an object hovering over a
+surface rather than standing on it.
+
+The decal is now offset and extended along the sun's ground-projected
+direction. Not a shadow map — deliberately out of scope; this is the existing
+decal placed where a real shadow would fall.
+
+`sunDir` is fed in from the renderer's existing `sunDir_`, the same vector
+`fs_lit`/`fs_car` are already lit by, rather than re-derived — so there is one
+sun convention in this renderer and not two that can drift apart. `sunUp` is
+sin(elevation) against the **banked** surface and `awayLen` its cosine, so
+`awayLen/sunUp` is 1/tan(elevation) with no trig call and with the track's
+banking already folded in for free.
+
+### I shipped it as a no-op first, and the A/B caught it
+
+The first cut derived the offset from the *stretch* and clamped the stretch at
+≥ 1. Every daylight preset here sits above 45° of elevation (noon-grass is at
+55°), where `1/tan < 1` — so the clamp produced **exactly zero offset and zero
+stretch, on every track**. A deterministic showcase A/B measured **0.00% of
+pixels changed at all three angles.**
+
+The offset is not a function of the footprint. It is the car's own **height**
+projected along the ground: at 55° a real car throws its roof nearly a metre.
+Rewritten that way, `extend = kCarHeight / tan(elevation)`, the same A/B moves.
+
+**This is the third time this session the "measure it, don't assume it" rule
+paid for itself** — after the haze cap that was never compiled and the R3b
+reflection that was real but far too weak. It is also the second time a race-
+frame A/B proved useless: the first attempt here measured 1.2–1.4% of pixels
+changing and the densest region turned out to be the HUD minimap, because the
+sim runs on wall-clock `dt` and two runs simply diverge. **Only the parked
+showcase is deterministic enough to A/B against.**
+
+### Clamps, stated as the cheat they are
+
+`kMaxExtend = 3.0 m`. dusk-lights sits at 6° of elevation where 1/tan reaches
+9.5 and the honest extension would be 12.4 m. Past the cap the decal stops
+growing rather than becoming a runway stripe. That is a deliberate cheat, not a
+physical model; the alternative is a shadow map.
+
+Verified on all four tracks' presets: noon-grass, hazy-noon, sunset and
+dusk-lights all produce a plausible shadow, with the low-sun clamp holding on
+Big Sable. `ctest` 36/36.
