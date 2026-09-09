@@ -11620,3 +11620,60 @@ flat-swatch convention.
 
 3146 → **3602 triangles**. `check_car_rig.py` PASS, `car_proportions.py` 16/16,
 `ctest` 36/36.
+
+## T8: the back of the car could not be painted, structurally
+
+T7 rounded the tail's corners and the chase view still showed flat colour
+bands. The reason is in the UV, not the paint: `_cap_v()` maps a cap vertex's
+**lateral** position to v, and every cap vertex shares its station's single u.
+So the entire rear face sampled **one texture column**, varying only across the
+car's width — the tail was painted in vertical stripes and was **structurally
+incapable of showing a horizontal taillight bar**, however the livery was
+painted. No amount of repainting the body could have fixed it, which is why
+several rounds of livery work never touched what the player was looking at.
+
+The tail cap now unwraps into its own 2D rectangle, and `livery.cpp` paints an
+actual rear into it: decklid lip, twin taillights in a dark surround, a chrome
+parting line, and a tucked bumper.
+
+### Finding somewhere to put it took two tries
+
+`u` 0–0.80 is the body wrap. `u > 0.80` is the SW_* swatch column — and those
+swatches are painted as **full-height bands on purpose**, so mip filtering can
+never pull a neighbouring colour into a swatch sample. There is therefore no
+free rectangle up there at all; the island has to be carved out of a band and
+painted *after* it.
+
+The first attempt put the island at u 0.820–0.988 / v 0.380–0.620, which
+contains **SW_MIRROR at (0.835, 0.5) exactly**, and painted it *before* the
+swatch column. The dumped texture showed a black rectangle with a single red
+sliver. Moved to u 0.852–0.995 / v 0.020–0.150 — clear of all seven swatch
+points by at least 0.05 — and painted last.
+
+### The stale-header trap, again
+
+After fixing the island's coordinates the rear still rendered black. The cause:
+`car_rig_data.h` is a **generated artifact that only refreshes when
+`gen_car_rig.py` is run**. Editing the island constants and rebuilding the C++
+left the mesh unwrapping to the old rectangle while the livery painted the new
+one. This is the same class of failure as the `__pycache__` staleness earlier
+in this session, and it now has a guard.
+
+### Three guards, all verified against the bugs they describe
+
+| assertion | catches |
+|---|---|
+| no `SW_*` swatch within 0.05 of the island | the SW_MIRROR collision — fails naming it |
+| every tail-cap vertex unwraps inside it, no other vertex does | a stale `car_rig_data.h` (48 body verts land inside) |
+| `livery.cpp`'s copy of the rectangle equals the generator's | C++/Python constant drift, in either direction |
+
+That last one reads the C++ source and compares the numbers, the same way the
+glass-U checks already compare against `livery.cpp`'s own `carU` replica — two
+hand-synced copies of a rectangle in two languages is exactly the arrangement
+that has bitten this project repeatedly.
+
+The nose cap has the same single-column UV defect. It is deliberately left:
+the chase camera never shows the nose, and this round is aimed at the view the
+player actually has.
+
+`check_car_rig.py` PASS, `car_proportions.py` 16/16, `ctest` 36/36.

@@ -1067,6 +1067,57 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     c.fillRect(0.95, 0.0, 0.05, 0.5, tone(kBaseM));                                                // spoiler top (body color)
     c.fillRect(0.95, 0.5, 0.05, 0.5, std::array<double, 3>{10 / 255.0, 10 / 255.0, 12 / 255.0});  // spoiler underside/risers
 
+    // ---- T8: the rear panel ----
+    //
+    // gen_car_rig's tail cap now unwraps into its own rectangle instead of
+    // sampling a single texture column, so for the first time the back of the
+    // car can be painted as a back rather than as vertical stripes. This is
+    // the surface the player stares at for an entire race and it has never had
+    // anything drawn on it.
+    //
+    // Painted AFTER the SW_* swatch column below, not before it. The swatches
+    // are full-height bands by design (mip safety), so u > 0.80 has no free
+    // rectangle -- the island is carved out of them and must therefore come
+    // last. The first version painted before, and the whole panel was buried:
+    // the dumped texture showed a black island with one red sliver.
+    //
+    // Coordinates mirror gen_car_rig.py's TAIL_UV_* exactly; check_car_rig.py
+    // asserts the two agree AND that no swatch sample point falls inside.
+    {
+        constexpr double TU0 = 0.852, TU1 = 0.995;
+        constexpr double TV0 = 0.020, TV1 = 0.150;
+        const double tw = TU1 - TU0, th = TV1 - TV0;
+        auto tRect = [&](double fx, double fy, double fw, double fh,
+                         const std::array<double, 3>& col, double a = 1.0) {
+            c.fillRect(TU0 + fx * tw, TV0 + fy * th, fw * tw, fh * th, col, a);
+        };
+        // Island coordinates run 0..1 left-to-right across the car's width and
+        // 0 at the top of the panel to 1 at the bottom.
+        const std::array<double, 3> panelDark{22 / 255.0, 22 / 255.0, 26 / 255.0};
+        const std::array<double, 3> lampRed{150 / 255.0, 18 / 255.0, 15 / 255.0};
+        const std::array<double, 3> lampHot{236 / 255.0, 64 / 255.0, 44 / 255.0};
+        const std::array<double, 3> chrome{198 / 255.0, 200 / 255.0, 206 / 255.0};
+
+        // Body colour behind everything, so the corners the dome wraps around
+        // carry the car's own paint rather than a hard rectangle edge.
+        tRect(0.0, 0.0, 1.0, 1.0, tone(kBaseM));
+        // Decklid lip across the top.
+        tRect(0.0, 0.0, 1.0, 0.10, tone(kShadowM));
+        // The taillight band: the single strongest "this is the back of a race
+        // car" cue, and the one thing the old single-column UV could not draw.
+        tRect(0.04, 0.20, 0.92, 0.24, panelDark);
+        for (int i = 0; i < 2; ++i) {
+            const double lx = i == 0 ? 0.075 : 0.545;
+            tRect(lx, 0.235, 0.38, 0.17, lampRed);
+            tRect(lx + 0.02, 0.255, 0.34, 0.055, lampHot, 0.75);
+        }
+        // Bumper below, tucked and darker, with a thin chrome parting line.
+        tRect(0.0, 0.52, 1.0, 0.04, chrome, 0.55);
+        tRect(0.0, 0.56, 1.0, 0.44, tone(kShadowM * 0.92));
+        tRect(0.30, 0.70, 0.40, 0.16, panelDark, 0.8);
+    }
+
+
     std::vector<uint8_t> out = downsampleBox(c.take(), kLiveryTextureSize * kSupersample, kSupersample);
     // T4: LHT_DUMP_LIVERY=<dir> writes each car's finished texture as a PPM.
     // The livery is the one asset in this project that is authored blind --

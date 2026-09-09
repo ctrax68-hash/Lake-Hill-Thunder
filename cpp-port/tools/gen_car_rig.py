@@ -1153,6 +1153,44 @@ for i in range(len(RINGS) - 1):
 def _cap_v(z, wmax):
     return min(0.97, max(0.03, 0.5 + (z / wmax) * 0.47))
 
+# T8: A REAL UV ISLAND FOR THE TAIL PANEL.
+#
+# _cap_v above maps a cap vertex's LATERAL position (z) to v, and every cap
+# vertex shares its station's single u. So the whole rear face samples ONE
+# texture column, varying only across the car's width -- which means the tail
+# is painted in VERTICAL STRIPES and is structurally incapable of showing a
+# horizontal taillight bar, however the livery is painted. That is what the
+# chase camera has been showing all along, and no amount of repainting the
+# body could have fixed it.
+#
+# The tail cap now gets its own 2D unwrap into a reserved rectangle, so
+# livery.cpp can paint an actual rear: lights, panel, bumper.
+#
+# WHERE the island can live is tightly constrained, and the first attempt got
+# it wrong. u 0..0.80 is the body wrap. u > 0.80 is the SW_* swatch column --
+# and those swatches are painted as FULL-HEIGHT bands, deliberately, so mip
+# filtering never pulls a neighbouring colour into a swatch sample. So there is
+# no free rectangle up there; the island has to be carved out of a band and
+# painted after it, in a v gap wide enough that every swatch sample keeps its
+# margin.
+#
+# The swatch points sit at v 0.25, 0.5 and 0.75 -- SW_MIRROR is at (0.835,
+# 0.5), which is exactly where I first put this island. v 0.02-0.15 at
+# u 0.852-0.995 clears all seven: 0.10 of v (205 texels at 2048) below the
+# nearest, and u starting at 0.852 is clear of the mirror and tire-letter
+# columns entirely. check_car_rig.py now asserts no SW_* point falls inside.
+TAIL_UV_U0, TAIL_UV_U1 = 0.852, 0.995
+TAIL_UV_V0, TAIL_UV_V1 = 0.020, 0.150
+
+def _tail_uv(p, wmax, y_lo, y_hi):
+    """Lateral -> u, height -> v, across the reserved tail-panel island."""
+    s = 0.5 + (p[2] / wmax) * 0.5
+    t = (p[1] - y_lo) / (y_hi - y_lo) if y_hi > y_lo else 0.5
+    s = min(1.0, max(0.0, s))
+    t = min(1.0, max(0.0, t))
+    return (TAIL_UV_U0 + s * (TAIL_UV_U1 - TAIL_UV_U0),
+            TAIL_UV_V1 - t * (TAIL_UV_V1 - TAIL_UV_V0))
+
 # K1 (car visual fidelity plan, part 3): the nose apex's forward offset.
 # Every cap vertex used to sit in the station's own YZ plane -- the apex's
 # X was literally `st[0]`, identical to every ring point's own X -- so the
@@ -1207,6 +1245,15 @@ for (idx, outward) in ((0, (1, 0, 0)), (len(RINGS) - 1, (-1, 0, 0))):
     apex_y = (st[2] + st[3]) / 2.0
     apex_x = st[0] + (NOSE_CAP_DEPTH if idx == 0 else TAIL_CAP_DEPTH) * outward[0]
     apex_pos = (apex_x, apex_y, 0.0)
+    # T8: the TAIL cap unwraps into its own island so a rear panel can be
+    # painted on it. The nose keeps the old single-column scheme for now -- it
+    # has the same defect, but the chase camera is the view that matters and it
+    # never shows the nose.
+    _cap_y_lo, _cap_y_hi = st[3], st[4]
+    if idx == 0:
+        _cap_uv = lambda p: (u, _cap_v(p[2], wmax))
+    else:
+        _cap_uv = lambda p: _tail_uv(p, wmax, _cap_y_lo, _cap_y_hi)
     _cap_start = len(positions)
 
     def cap_tri(p1, p2):
@@ -1220,8 +1267,8 @@ for (idx, outward) in ((0, (1, 0, 0)), (len(RINGS) - 1, (-1, 0, 0))):
         n = _norm(_cross(_sub(p1, apex_pos), _sub(p2, apex_pos)))
         if _dot(n, outward) < 0:
             n = (-n[0], -n[1], -n[2])
-        apex_v = (apex_pos, n, (u, _cap_v(0.0, wmax)))
-        return apex_v, (p1, n, (u, _cap_v(p1[2], wmax))), (p2, n, (u, _cap_v(p2[2], wmax)))
+        apex_v = (apex_pos, n, _cap_uv(apex_pos))
+        return apex_v, (p1, n, _cap_uv(p1)), (p2, n, _cap_uv(p2))
 
     # T7: A DOME, NOT A CONE.
     #
@@ -1256,7 +1303,7 @@ for (idx, outward) in ((0, (1, 0, 0)), (len(RINGS) - 1, (-1, 0, 0))):
         n = _norm(_cross(_sub(p1, p0), _sub(q0, p0)))
         if _dot(n, outward) < 0:
             n = (-n[0], -n[1], -n[2])
-        vt = lambda p: (p, n, (u, _cap_v(p[2], wmax)))
+        vt = lambda p: (p, n, _cap_uv(p))
         return vt(p0), vt(p1), vt(q1), vt(q0)
 
     for li in range(len(layers) - 1):

@@ -617,6 +617,53 @@ check(_f_rim == _exp and _f_gap == _exp,
 check(_hw * R._HUB_Z_OFFSET_FRAC < 0.3 * _hw,
       "hub-nut z-embed offset stays small relative to half_width")
 
+# --- T8: the tail panel's UV island ------------------------------------------
+print("tail panel UV island")
+_ISL = (R.TAIL_UV_U0, R.TAIL_UV_V0, R.TAIL_UV_U1, R.TAIL_UV_V1)
+
+# 1. No swatch sample point may fall inside it. The first attempt at this island
+# sat at u 0.820-0.988 / v 0.380-0.620, which contains SW_MIRROR at
+# (0.835, 0.5) exactly -- and, worse, the whole u > 0.80 column is painted as
+# FULL-HEIGHT swatch bands, so the panel was simply buried. Margin, not just
+# non-containment: swatch texels feed mip levels and a neighbour bleeding in
+# turns a tire black into whatever the tail panel put next to it.
+_SWATCHES = {n: getattr(R, n) for n in dir(R) if n.startswith("SW_")}
+_MARGIN = 0.05
+_bad = [(n, uv) for n, uv in _SWATCHES.items()
+        if _ISL[0] - _MARGIN <= uv[0] <= _ISL[2] + _MARGIN
+        and _ISL[1] - _MARGIN <= uv[1] <= _ISL[3] + _MARGIN]
+check(not _bad,
+      "no SW_* swatch sits within %.2f of the tail island%s"
+      % (_MARGIN, "" if not _bad else " -- collides with " + ", ".join(n for n, _ in _bad)))
+
+# 2. The island must actually be used: every tail-cap vertex inside it, and no
+# body vertex inside it. Cheap, and it is the assertion that would have caught
+# the stale car_rig_data.h -- the generated header only refreshes when
+# gen_car_rig.py is RUN, so editing the island and rebuilding C++ alone left
+# the mesh pointing at the old rectangle while the livery painted the new one.
+_tail_uvs = [R.uvs[i] for i in range(*R.TAIL_CAP_RANGE)]
+_inside = lambda uv: _ISL[0] - 1e-6 <= uv[0] <= _ISL[2] + 1e-6 and _ISL[1] - 1e-6 <= uv[1] <= _ISL[3] + 1e-6
+check(all(_inside(uv) for uv in _tail_uvs),
+      "every tail-cap vertex unwraps into the island (%d/%d)"
+      % (sum(1 for uv in _tail_uvs if _inside(uv)), len(_tail_uvs)))
+_body_in = sum(1 for i, uv in enumerate(R.uvs)
+               if not (R.TAIL_CAP_RANGE[0] <= i < R.TAIL_CAP_RANGE[1]) and _inside(uv))
+check(_body_in == 0, "no non-tail vertex samples the island (%d do)" % _body_in)
+
+# 3. livery.cpp paints this rectangle from its own copy of the numbers, in a
+# different language, and a silent drift paints the rear panel onto the tire
+# swatches. Read the C++ and compare, the same way the glass-U checks compare
+# against livery.cpp's own carU replica.
+import re as _re
+_liv = open(os.path.join(_HERE, "..", "src", "render", "livery.cpp")).read()
+_m = _re.search(r"constexpr double TU0 = ([0-9.]+), TU1 = ([0-9.]+);\s*\n\s*constexpr double TV0 = ([0-9.]+), TV1 = ([0-9.]+);", _liv)
+check(_m is not None, "livery.cpp still declares the tail island rectangle")
+if _m:
+    _cpp = tuple(float(g) for g in _m.groups())
+    _py = (R.TAIL_UV_U0, R.TAIL_UV_U1, R.TAIL_UV_V0, R.TAIL_UV_V1)
+    check(max(abs(a - b) for a, b in zip(_cpp, _py)) < 1e-9,
+          "livery.cpp's tail island matches gen_car_rig.py's (cpp %s vs py %s)" % (_cpp, _py))
+
 print("\nverts %d  tris %d" % (len(R.positions), len(R.indices) // 3))
 print("check_car_rig: PASS" if ok else "check_car_rig: FAILURES ABOVE")
 sys.exit(0 if ok else 1)
