@@ -188,6 +188,32 @@ double showcaseOrbitDegFromEnv() {
 #endif
 }
 
+// T6: LHT_SHOWCASE_PROFILE=1 drops the showcase eye to the car's own mid-height
+// and looks level at it, giving a true SIDE PROFILE.
+//
+// V1 made the camera orbitable and that was most of the battle, but the eye
+// still sits 1.4 m up looking down at a car parked on a banked start/finish
+// line, so every frame it produces is a raised three-quarter view of a tilted
+// object. That is fine for "can I see the tail" and useless for "is this
+// silhouette the right shape" -- which is the question the whole T-series is
+// about, and the one the reference photograph answers in pure profile.
+// Comparing a raised 3/4 of a banked car against a level profile shot is not a
+// comparison at all.
+//
+// Debug-only, desktop-only, same idiom as every other LHT_* hook here. No-ops
+// on web, which has no environment to read.
+bool showcaseProfileFromEnv() {
+#ifdef __EMSCRIPTEN__
+    return false;
+#else
+    static const bool on = [] {
+        const char* s = std::getenv("LHT_SHOWCASE_PROFILE");
+        return s && std::atoi(s) != 0;
+    }();
+    return on;
+#endif
+}
+
 // Builds a full RGBA8 box-filter mip chain (level 0 through 1x1) from a
 // square, power-of-two base image, concatenated in the order
 // bgfx::createTexture2D(_hasMips=true, ...) expects. Written by hand rather
@@ -2259,7 +2285,13 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             // rather than replaced, so with no override the framing is
             // bit-identical to what shipped: atan2(4.5, 7.0) = 32.7 degrees
             // off the nose at a radius of 8.32 m.
-            constexpr double kDistFront = 7.0, kLateral = 4.5, kEyeHeight = 1.4, kLookHeight = 0.7;
+            constexpr double kDistFront = 7.0, kLateral = 4.5;
+            // T6: in profile mode the eye drops to the car's mid-height and
+            // looks level, so the silhouette can be measured against a
+            // reference photo rather than guessed at from a raised 3/4.
+            const bool profile = showcaseProfileFromEnv();
+            const double kEyeHeight = profile ? 0.65 : 1.4;
+            const double kLookHeight = profile ? 0.65 : 0.7;
             const double kBaseAzim = std::atan2(kLateral, kDistFront);
             const double kOrbitR = std::sqrt(kDistFront * kDistFront + kLateral * kLateral);
             // LHT_SHOWCASE_ANGLE, in degrees, rotates the eye around the car:

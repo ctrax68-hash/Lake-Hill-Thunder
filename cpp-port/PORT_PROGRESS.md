@@ -11537,3 +11537,39 @@ project a literal coordinate would have let a check keep passing against
 geometry that had moved out from under it.
 
 `check_car_rig.py` PASS, `car_proportions.py` 16/16, `ctest` 36/36.
+
+### T6b: a level side view, and what it immediately exposed
+
+V1 made the showcase camera orbitable, which was most of the battle, but the
+eye still sat 1.4 m up looking down at a car parked on a banked start/finish
+line. Every frame it produced was a raised three-quarter view of a tilted
+object — fine for "can I see the tail", useless for "is this silhouette the
+right shape", which is the question the whole T-series is about and the one the
+reference photograph answers in pure profile. Comparing a raised 3/4 of a
+banked car against a level profile shot is not a comparison at all.
+
+`LHT_SHOWCASE_PROFILE=1` drops the eye to the car's mid-height and looks level.
+
+**It immediately produced a false alarm, and the false alarm was the useful
+part.** In profile the rear wheel appeared to be missing entirely — an empty
+black arch. Checked before acting: all four wheels are present in the mesh at
+the right coordinates (joints 3/4 span x −1.523…−0.823, centred on the −1.173
+rear axle), the arch lips are co-located with them, and the inverse-bind
+matrices derive from the same `wheel_offsets`. What is actually happening is
+H10's flat showcase model matrix on a banked surface: the car's nose lifts and
+its **tail sinks into the track**, burying the rear wheels. A showcase artifact,
+not a car defect, and one more instance of the instrument rather than the
+subject being wrong.
+
+### The finding that matters more
+
+A high-resolution CHASE frame — the view the player looks at for an entire race
+— shows the thing six rounds of work have not touched: **the tail is a flat
+vertical slab**, roughly 0.60 m tall and 1.64 m wide, with square corners and
+no horizontal break. A real Gen-4 rear reads as four distinct bands (spoiler,
+decklid, tail panel, bumper) over a rounded tail.
+
+The T-series has been optimising the SIDE PROFILE against a side-profile
+photograph. The player almost never sees that view. That is a targeting error
+in the loop itself, not in any individual fix, and it is the next thing to
+correct.
