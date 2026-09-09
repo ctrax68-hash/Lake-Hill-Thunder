@@ -838,8 +838,13 @@ void Renderer::setTrack(const Track& track) {
         // having presets -- it would brighten dusk-lights by 2.5x into daylight.
         // So this only ever normalises DOWNWARD: presets that blow out get
         // tamed, presets that are already reasonable or deliberately dark are
-        // left exactly as they were. noon-grass/hazy-noon get ~0.34, sunset a
-        // near-no-op 0.95, dusk-lights exactly 1.0.
+        // left exactly as they were.
+        //
+        // T0: the three values this sentence used to quote were all wrong, and
+        // had been since G25 -- it claimed "noon-grass/hazy-noon get ~0.34,
+        // sunset a near-no-op 0.95". envExposure() clamps at 1.0, so sunset
+        // gets exactly 1.0 and never got 0.95. At the target below the real
+        // values are noon-grass 0.496, hazy-noon 0.514, sunset 1.0, dusk 1.0.
         {
             // Target chosen by measurement, not taste: with the noon preset the
             // track surface reads 142/255 before this change and 79 at a 1.15
@@ -847,7 +852,33 @@ void Renderer::setTrack(const Track& track) {
             // around 64-90, so 1.35 lands at the top of the believable range --
             // deliberately the brighter end of it, because this is played on a
             // phone that may be outdoors.
-            constexpr double kTargetFlatUp = 1.35;
+            //
+            // T0: 1.35 -> 1.70, and the reasoning above is why it could move
+            // safely. The reference photographs the user supplied are bright
+            // sunny broadcast shots and ours read dim beside them. Sweeping the
+            // target over a race frame (world only, HUD cropped out):
+            //
+            //     target   mean  stdev   p95   clipped >250
+            //     1.35    108.8   50.4   181      0.00%
+            //     1.70    122.0   49.9   189      0.00%
+            //     2.05    132.9   50.0   192      0.00%
+            //     2.40    142.0   50.1   196      0.00%
+            //
+            // Two things fall out of that table. NOTHING CLIPS, even at 2.40 --
+            // the ACES curve absorbs it -- so there was real headroom above 1.35
+            // and no highlight risk in spending some of it. And stdev is FLAT
+            // across the whole sweep: exposure here is a pure brightness slider
+            // and cannot add contrast, which is why the "everything looks flat"
+            // complaint is answered in the grade, not here.
+            //
+            // Only the two noon presets move (flat-up 3.43 and 3.31, so 0.394 ->
+            // 0.496 and 0.408 -> 0.514). Sunset and dusk-lights are already
+            // clamped and stay exactly as they were, preserving the
+            // normalise-downward-only rule this block is built on.
+            static const double kTargetFlatUp = [] {
+                if (const char* e = std::getenv("LHT_EXPOSURE_TARGET")) return atof(e);
+                return 1.70;
+            }();
             const double exposure = envExposure(preset, kTargetFlatUp);
 
             // HAZE. Density chosen so distance reads without swallowing the
@@ -2537,7 +2568,30 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             // saturation point as JS's own FOV-push formula above so all
             // three speed effects agree on what "fast" means.
             const float speedT = std::max(0.0f, std::min(1.0f, chaseSpeedFx_ / 100.0f + std::min(1.0f, chaseDraftFx_) * 0.15f));
-            const float gradeParams1[4] = {0.32f, 1.04f, 0.0f, 0.94f};
+            // T0: gamma 0.94 -> 0.86 and saturation 1.10 -> 1.20.
+            //
+            // The exposure sweep above proved exposure cannot fix flatness --
+            // stdev sat at ~50 whether the frame averaged 109 or 142. Contrast
+            // and saturation live here, and this is what moving them does on the
+            // same cropped race frame:
+            //
+            //     exposure  gamma  sat |  mean  stdev  saturation
+            //       1.35    0.94  1.10 | 108.9   50.4      81
+            //       1.70    0.94  1.10 | 122.1   49.9      79
+            //       1.70    0.86  1.20 | 114.9   51.1      91   <- shipped
+            //       1.70    0.80  1.28 | 108.9   51.7     101
+            //
+            // The last row keeps going and the infield grass goes electric with
+            // it, so this stops one step short. No clipping at any row.
+            static const float kGradeGamma = [] {
+                if (const char* e = std::getenv("LHT_GRADE_GAMMA")) return (float)atof(e);
+                return 0.86f;
+            }();
+            static const float kGradeGain = [] {
+                if (const char* e = std::getenv("LHT_GRADE_GAIN")) return (float)atof(e);
+                return 1.04f;
+            }();
+            float gradeParams1[4] = {0.32f, kGradeGain, 0.0f, kGradeGamma};
             // 0.05 cap: the shader's per-tap offset is (screen-space distance
             // from center) * blurAmt * t, and corner pixels already sit
             // ~0.71 UV from center -- an early 0.35 cap produced a wildly
@@ -2545,7 +2599,11 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             // 960 wide) when hand-checked via headless screenshot. 0.05
             // keeps the corner offset under ~0.035 UV (~35px) at max speed,
             // a felt hint of speed rather than visible image distortion.
-            const float gradeParams2[4] = {1.10f, 0.55f - 0.15f * speedT, 0.95f - 0.10f * speedT, 0.05f * speedT};
+            static const float kGradeSat = [] {
+                if (const char* e = std::getenv("LHT_GRADE_SAT")) return (float)atof(e);
+                return 1.20f;
+            }();
+            float gradeParams2[4] = {kGradeSat, 0.55f - 0.15f * speedT, 0.95f - 0.10f * speedT, 0.05f * speedT};
             bgfx::setUniform(uGradeParams1_, gradeParams1);
             bgfx::setUniform(uGradeParams2_, gradeParams2);
             bgfx::setTransform(identity);

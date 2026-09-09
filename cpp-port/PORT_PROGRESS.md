@@ -11216,3 +11216,77 @@ the sheen follows the curvature and the livery colour survives.
 The container was recycled mid-round and took the build directory, the git
 submodules and the system GL packages with it; all three were restored and the
 toolchain rebuilt from scratch before any of the above was measured.
+
+## T0: exposure and grade -- and what "flat" actually was
+
+First round of the plan to match the user's Gen-4 reference photographs. Done
+first deliberately: every later judgement about the car's shape and materials
+is made under this light, and re-tuning geometry under wrong light is how time
+gets wasted.
+
+### Exposure cannot fix flatness, and the sweep proves it
+
+Swept `kTargetFlatUp` over a race frame with the HUD cropped out:
+
+| target | mean | stdev | p95 | clipped >250 |
+|---|---|---|---|---|
+| 1.35 (G25) | 108.8 | 50.4 | 181 | 0.00% |
+| **1.70 (shipped)** | 122.0 | 49.9 | 189 | 0.00% |
+| 2.05 | 132.9 | 50.0 | 192 | 0.00% |
+| 2.40 | 142.0 | 50.1 | 196 | 0.00% |
+
+Two things fall out of that table, and the second is the point of this round.
+
+**Nothing clips, even at 2.40.** The ACES curve absorbs it. G25 set 1.35 to
+tame a genuinely blown-out image, and read the result as "at the top of the
+believable range" -- but there was never a highlight risk above it. 1.70 is
+brighter without costing anything.
+
+**stdev is flat across the entire sweep.** Exposure here is a pure brightness
+slider; it cannot add contrast. So the "everything is unflattering / flat"
+complaint was never an exposure problem, and four more rounds of moving that
+one number would not have touched it.
+
+### The flatness lives in the grade
+
+`gradeParams` were gain 1.04, lift 0.0, gamma 0.94, saturation 1.10 -- barely
+any shaping at all. Moving the two terms that do the work:
+
+| exposure | gamma | sat | mean | stdev | saturation |
+|---|---|---|---|---|---|
+| 1.35 | 0.94 | 1.10 | 108.9 | 50.4 | 81 |
+| 1.70 | 0.94 | 1.10 | 122.1 | 49.9 | 79 |
+| **1.70** | **0.86** | **1.20** | **114.9** | **51.1** | **91** |
+| 1.70 | 0.80 | 1.28 | 108.9 | 51.7 | 101 |
+
+Shipped the third row: **+12% saturation with no clipping anywhere.** The
+fourth row keeps going and takes the infield grass with it into something
+electric, so this stops one step short.
+
+Verified on all four tracks with no env overrides set, confirming the shipped
+defaults and not a sweep value:
+
+| track | mean | stdev | clipped | saturation |
+|---|---|---|---|---|
+| Thunder Oval | 114.9 | 51.1 | 0.00% | 91 |
+| Milltown | 109.0 | 48.2 | 0.00% | 41 |
+| Cedar Valley | 156.8 | 53.9 | 0.00% | 72 |
+| Big Sable | 110.1 | 74.0 | 0.00% | 104 |
+
+Only the two noon presets move at all (flat-up 3.43 and 3.31, so 0.394 ->
+0.496 and 0.408 -> 0.514). Sunset and dusk-lights were already clamped at 1.0
+and are untouched, preserving G25's normalise-downward-only rule.
+
+### A documented-value drift, corrected
+
+G25's own comment claimed "noon-grass/hazy-noon get ~0.34, sunset a near-no-op
+0.95, dusk-lights exactly 1.0". `envExposure()` clamps at 1.0, so **sunset got
+exactly 1.0 and never got 0.95**, and the noon figures were 0.394/0.408 rather
+than 0.34. All three are now stated correctly against the shipped target.
+
+`LHT_EXPOSURE_TARGET` / `LHT_GRADE_GAMMA` / `LHT_GRADE_GAIN` / `LHT_GRADE_SAT`
+are kept as `static const` desktop-only overrides (read once, not per frame) so
+the same sweep can be re-run for T5 without a rebuild per value. They no-op on
+web, which has no environment to read.
+
+`ctest` 36/36.
