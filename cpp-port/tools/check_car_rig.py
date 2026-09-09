@@ -617,6 +617,26 @@ check(_f_rim == _exp and _f_gap == _exp,
 check(_hw * R._HUB_Z_OFFSET_FRAC < 0.3 * _hw,
       "hub-nut z-embed offset stays small relative to half_width")
 
+# --- T9: wheel triangle winding ---------------------------------------------
+# 81-88% of every wheel's triangles were wound backwards relative to the
+# normals add_wheel() hand-sets on them. add_wheel()'s own comment says winding
+# "only needs to describe valid triangles, not a specific facing -- this
+# renderer applies no backface culling anywhere", which is still true today
+# (skinned_mesh.cpp:114 confirms it) -- so this was latent, not visible. It is
+# fixed anyway: the day culling is turned on, 800 triangles would vanish from
+# four wheels and the cause would be extremely hard to find from the symptom.
+print("wheel winding")
+_wind_bad = 0
+for _t in range(0, len(R.indices), 3):
+    _i0, _i1, _i2 = R.indices[_t], R.indices[_t + 1], R.indices[_t + 2]
+    if R.joints0[_i0][0] == 0:
+        continue
+    _p0, _p1, _p2 = R.positions[_i0], R.positions[_i1], R.positions[_i2]
+    if R._dot(R._cross(R._sub(_p1, _p0), R._sub(_p2, _p0)), R.normals[_i0]) < 0.0:
+        _wind_bad += 1
+check(_wind_bad == 0,
+      "every wheel triangle's winding agrees with its own normal (%d backwards)" % _wind_bad)
+
 # --- T8: the tail panel's UV island ------------------------------------------
 print("tail panel UV island")
 _ISL = (R.TAIL_UV_U0, R.TAIL_UV_V0, R.TAIL_UV_U1, R.TAIL_UV_V1)

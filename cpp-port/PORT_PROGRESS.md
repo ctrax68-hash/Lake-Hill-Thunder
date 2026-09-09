@@ -11677,3 +11677,57 @@ the chase camera never shows the nose, and this round is aimed at the view the
 player actually has.
 
 `check_car_rig.py` PASS, `car_proportions.py` 16/16, `ctest` 36/36.
+
+## T9: the wheels were never missing
+
+Feedback after T8 was still "way off", so the profile instrument went back on
+and the arches read as **empty black holes**. This entry is mostly a record of
+how long it took to establish that they are not.
+
+Checked, in order, and each one came back clean:
+
+| suspected | result |
+|---|---|
+| geometry absent from the mesh | all four wheels present, 246 verts each, at the correct x/z |
+| glTF node translations stale | derived from `wheel_offsets`, correct |
+| inverse-bind matrices stale | derived from the same, accessor count 5, correct |
+| triangle winding under backface culling | **81-88% wound backwards** — but `skinned_mesh.cpp:114` says no culling is set anywhere, so it was latent, not the cause |
+| bone palette collapsing joints | dumped at runtime: all four wheel joints identity-rotation, translation (0, −0.080, 0) — the correct fully-extended suspension offset |
+| mesh mirror asymmetry | worst asymmetry in the carved rings is **0.000000** |
+
+**The cause is the instrument, for the fourth time this session.** At azimuth
+237 the wheel renders perfectly — tire, sidewall, spokes, at normal brightness.
+At azimuth 57 the same wheel is invisible because that flank is on the
+**downhill** side of a banked track and the rising surface occludes it; the
+car's lower edge is visibly cut off by a hard straight line in the frame.
+
+Two real fixes came out of it anyway:
+
+**Wheel winding now matches the normals.** 800 of 944 triangles were backwards.
+`add_wheel()`'s own comment reasons that winding "only needs to describe valid
+triangles, not a specific facing -- this renderer applies no backface culling
+anywhere". That was true when written and is still true, but it is a landmine:
+the day culling is enabled, 800 triangles vanish from four wheels and the
+symptom points nowhere near the cause. Guarded now.
+
+**Profile mode seats the car on the banked surface** rather than using H10's
+flat hero-shot matrix, and its eye sits at 1.05 looking at 0.45 rather than a
+geometrically-pure level 0.65 — a level eye on a level car sitting on a banked
+track is cut off at the rocker, which is exactly where the wheels are.
+
+### The lesson, stated plainly
+
+Four times now the thing that looked broken was the camera, not the car. The
+turntable (V1) was built precisely because four rounds shipped unverifiable,
+and it has since generated: a false missing-rear-wheel (H10 flat matrix), a
+false mirrored-text diagnosis (six-pixel glyphs), a false empty-arch reading
+(stale generated header), and this one. **The instrument needs the same
+scepticism as the subject** — before concluding the mesh is wrong, render the
+same thing from the opposite side.
+
+Also, third occurrence: `car_rig_data.h` only regenerates when
+`gen_car_rig.py` is RUN. Restoring the generator from a backup and rebuilding
+the C++ left a floating-wheel test mesh compiled in, and several minutes of
+investigation ran against it.
+
+`check_car_rig.py` PASS, `car_proportions.py` 16/16, `ctest` 36/36.

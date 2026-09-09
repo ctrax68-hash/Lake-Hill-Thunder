@@ -1586,6 +1586,36 @@ for i, (wx, wz) in enumerate(wheel_offsets):
     # 16 costs ~28 extra tris per wheel and reads round.
     add_wheel(wx, WHEEL_RADIUS, wz, WHEEL_RADIUS, WHEEL_RADIUS * 0.4, joint_idx=i + 1, sides=16)
 
+# T9: MAKE EVERY WHEEL TRIANGLE'S WINDING AGREE WITH ITS OWN NORMAL.
+#
+# 81-88% of each wheel's triangles were wound backwards relative to the normals
+# add_wheel() hand-sets on them. G25 turned on backface culling, so those
+# triangles are culled from whichever side you happen to be on -- which is
+# exactly the symptom: the wheels rendered from one flank and the arches were
+# empty black holes from the other. It survived because add_wheel()'s own
+# comment says winding "only needs to describe valid triangles, not a specific
+# facing -- this renderer applies no backface culling anywhere". That was true
+# when it was written and stopped being true at G25, and nothing re-read it.
+#
+# The normals are authoritative here: they are set deliberately per vertex
+# (outward radially on the tread, +-Z on the caps), so the correct operation is
+# to bring the winding to them rather than the other way round. Done as an
+# explicit pass over the wheel joints only, so the body loft -- which derives
+# its winding from emit_* helpers that already get this right -- is untouched.
+def _fix_wheel_winding():
+    fixed = 0
+    for t in range(0, len(indices), 3):
+        i0, i1, i2 = indices[t], indices[t + 1], indices[t + 2]
+        if joints0[i0][0] == 0:
+            continue                       # chassis, not a wheel
+        p0, p1, p2 = positions[i0], positions[i1], positions[i2]
+        if _dot(_cross(_sub(p1, p0), _sub(p2, p0)), normals[i0]) < 0.0:
+            indices[t + 1], indices[t + 2] = i2, i1
+            fixed += 1
+    return fixed
+
+_WHEEL_WINDING_FIXED = _fix_wheel_winding()
+
 def pack_f32(vals):
     return b"".join(struct.pack("<f", v) for tup in vals for v in tup)
 

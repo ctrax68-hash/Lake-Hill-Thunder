@@ -2290,8 +2290,38 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             // looks level, so the silhouette can be measured against a
             // reference photo rather than guessed at from a raised 3/4.
             const bool profile = showcaseProfileFromEnv();
-            const double kEyeHeight = profile ? 0.65 : 1.4;
-            const double kLookHeight = profile ? 0.65 : 0.7;
+            // 1.05 / 0.45, not 0.65 / 0.65. A truly level eye at the car's
+            // mid-height is the geometrically correct profile shot and it is
+            // unusable here: H10 draws the showcase car LEVEL while it sits on
+            // a surface banked 12-23 degrees, so the track plane rises across
+            // the frame and cuts the car off at the rocker -- which is exactly
+            // where the wheels are. A slight downward tilt clears the surface
+            // while staying far closer to a profile than the 1.4 / 0.7 default.
+            const double kEyeHeight = profile ? 1.05 : 1.4;
+            const double kLookHeight = profile ? 0.45 : 0.7;
+            // T9: profile mode seats the car ON the banked surface (see the
+            // car draw loop) and aligns the camera to that same surface, so
+            // the car appears level in frame AND sits entirely above the
+            // track.
+            //
+            // H10 draws the showcase car with a FLAT model matrix -- level in
+            // world space, deliberately, because a hero shot of a car pitched
+            // 12-23 degrees on a banked start/finish line reads as broken.
+            //
+            // That is right for the hero shot and wrong for a measuring
+            // instrument. A level car on a banked surface is HALF BURIED in it:
+            // one flank sinks, and from a low profile eye the rising track
+            // plane cuts the car off at the rocker -- exactly where the wheels
+            // are. It cost three separate investigations. The wheels looked
+            // missing in profile while rendering perfectly at other angles, and
+            // I chased it into the mesh, the glTF nodes, the inverse-bind
+            // matrices and triangle winding before the side-dependence gave it
+            // away: at one azimuth the near flank banks down and vanishes, at
+            // the opposite one it banks up and the wheel is plainly there.
+            //
+            // Profile mode therefore uses the REAL banked model matrix and
+            // aligns the camera to the same surface normal. The car sits on the
+            // track properly and still reads level in frame.
             const double kBaseAzim = std::atan2(kLateral, kDistFront);
             const double kOrbitR = std::sqrt(kDistFront * kDistFront + kLateral * kLateral);
             // LHT_SHOWCASE_ANGLE, in degrees, rotates the eye around the car:
@@ -2450,7 +2480,11 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
             // Keep the showcase car on the pre-H7 flat construction; every
             // other camera mode (Chase/TopDown, i.e. real cars mid-race)
             // keeps the real tilt H7 fixed.
-            const Mat4f model = cameraMode_ == CameraMode::Showcase
+            // T9: profile mode is a measuring instrument and wants the car
+            // SEATED on the banked surface, not H10's level hero pose -- a
+            // level car on a banked track is half buried in it.
+            const bool showcaseFlat = cameraMode_ == CameraMode::Showcase && !showcaseProfileFromEnv();
+            const Mat4f model = showcaseFlat
                                      ? mat4Mul(mat4Translate((float)carPos.x, (float)carPos.y, (float)carPos.z),
                                                mat4RotateY((float)-pose.hdg))
                                      : carBodyModelMat(*track_, pose.s, pose.hdg, carPos);
