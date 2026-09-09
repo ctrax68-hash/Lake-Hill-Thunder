@@ -11467,3 +11467,73 @@ one that decides whether a glyph survives in a 20-car pack.
 `livery_test` needed `font_atlas.cpp` and `texture_import.cpp` linked in; both
 are bgfx-free (stb_image plus pure metric math) so it stays a plain host
 binary. `ctest` 36/36.
+
+## T6: a loss function for "does it look like a Gen-4", and what it found
+
+The ask was a self-improving loop until the cars look right. A loop needs a
+loss function, and "looks right" had been my own judgement — which has been
+wrong repeatedly, including three times in one session and twice on the same
+question. So the first thing built was `tools/car_proportions.py`: it measures
+the generated station table against real Gen-4 Cup proportions and prints the
+deviations ranked worst-first. No rendering, no camera, no image processing
+between the mesh and the number.
+
+Targets carry their provenance, because it decides how hard to chase one.
+`spec` rows are published Cup dimensions and a miss is a bug. `photo` rows are
+read off the user's reference profile with a landmark grid, and only ever as
+RATIOS — the car in that photo is rotated ~30° off pure profile, so absolute
+lengths from it are not trustworthy.
+
+### First run: eight of sixteen out, and all one underlying error
+
+| proportion | was | target |
+|---|---|---|
+| flat roof / wheelbase | 0.472 | 0.292 |
+| cowl behind front axle / wheelbase | 0.210 | 0.367 |
+| rear overhang / front overhang | **1.000** | 1.480 |
+| front overhang / length | 0.225 | 0.182 |
+| nose height / roof height | 0.662 | 0.551 |
+| beltline / roof height | 0.769 | 0.703 |
+| overall width | 1.900 | 1.842 |
+
+**The wheels were centred in the body.** `_WHEEL_AXLE_X` was `±WHEELBASE/2`,
+exactly symmetric — which is a generic car silhouette, not a stock car's. A
+Cup car is a long hood, a small cabin set well back, and a long deck; ours was
+a short hood, a long cabin in the middle, and a short deck. Every one of those
+seven rows is a restatement of that. No amount of surface work — smoother
+sections, crowned roof, better paint — could have hidden it, and four rounds of
+surface work didn't.
+
+All sixteen now measure in tolerance.
+
+### The rakes: R2b was wrong, and this is how I know
+
+R1 shipped windshield 34° / backlite 22°. R2b "corrected" that to 32°/30° on my
+belief that a Gen-4 backlite is steeper than its windshield. **It is not.**
+Measured off the reference with **separate horizontal and vertical scales** —
+the photo is foreshortened 1.17× along x, and one combined scale gives the
+wrong angle — the windshield is **34.1°** and the backlite **20.9°**. The
+backlite being long and shallow is precisely what makes the deck read long.
+R1 was essentially right and my correction made it worse.
+
+### What the re-authoring broke, and what caught it
+
+Moving every landmark at once broke three things, and all three failed loudly
+rather than silently:
+
+- **The 154° arch fold came back at 158°.** I set the front-axle beltline from
+  the photo, at 0.83, while the arch lip peaks at 0.80. Vertical readings near
+  the wheels in that photo do not survive scrutiny — scaling by tire radius and
+  by roof height disagree by 60%, so the tire's lower edge is lost in shadow.
+  That column is now governed by the engineering constraint instead, and the
+  beltline is nearly level from front axle to deck, which is what a Cup car has.
+- **The tailpipe ended up 0.138 m inside the rear tire**, because the axles
+  moved 0.22 m forward and the exhaust was pinned to a literal x.
+- **Both checkers stopped resolving their landmarks**, exactly as designed.
+
+Station landmarks are now addressed **by role name** (`STATION_ROLES` /
+`station_x()`), like the ring points since T1. That is the fourth time in this
+project a literal coordinate would have let a check keep passing against
+geometry that had moved out from under it.
+
+`check_car_rig.py` PASS, `car_proportions.py` 16/16, `ctest` 36/36.

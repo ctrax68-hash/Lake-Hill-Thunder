@@ -734,7 +734,22 @@ SHOULDER = 0.80
 # already clear at every axle-adjacent station. Correcting a taller band is
 # what used to show up as a visible dent (index.html:2440-2446, and this
 # port's own CAR-L/CAR-M/CAR-N history).
-_WHEEL_AXLE_X = [WHEELBASE / 2.0, -WHEELBASE / 2.0]
+# T6: THE WHEELS WERE CENTRED IN THE BODY, and a stock car's are not.
+#
+# Measured on the user's reference profile with a landmark grid: front overhang
+# ~90 px, rear ~143 px against a 264 px wheelbase -- the rear deck is about 1.5x
+# the nose. Ours were WHEELBASE/2 either side of the body centre, i.e. exactly
+# symmetric, which is a generic car silhouette rather than a Cup one. This is
+# the single largest shape error the reference exposes and no amount of surface
+# work could have hidden it.
+#
+# Front + rear overhang is fixed at LENGTH - WHEELBASE = 2.29 m; the only free
+# choice is how to split it. 1 : 1.48 puts the front at 0.923 and the rear at
+# 1.367, so the whole wheelbase shifts 0.222 m forward in the body.
+AXLE_SPLIT = 1.48  # rear overhang / front overhang
+_OVERHANG = 2.0 * HALF_LEN - WHEELBASE
+_FRONT_OVERHANG = _OVERHANG / (1.0 + AXLE_SPLIT)
+_WHEEL_AXLE_X = [HALF_LEN - _FRONT_OVERHANG, HALF_LEN - _FRONT_OVERHANG - WHEELBASE]
 
 # R2: a REAL wheel arch, replacing an inward pinch that could never be one.
 #
@@ -887,23 +902,82 @@ _CAR_ST_JS = [
     # So beltY is now a near-level line at cowl/cabin/deck height (0.98-1.02)
     # with the hood stepping down ahead of it, which is what the real car does,
     # and the arch lip clears the tire by 100 mm with 140 mm of fender above it.
-    (2.51,  0.84,  0.78,  0.09,  0.86),   # bumper/valance -- BLUNT and wide, deep air dam
-    (2.30,  0.90,  0.83,  0.09,  0.90),   # front fascia
-    (2.00,  0.93,  0.88,  0.10,  0.93),   # hood leading edge
-    (1.70,  0.95,  0.92,  0.11,  0.96),   # front fender -- full width
-    (1.40,  0.95,  0.94,  0.13,  0.98),   # front axle -- 0.14 of fender over the arch lip
-    (1.10,  0.94,  0.96,  0.15,  1.00),   # hood mid
-    (0.80,  0.93,  0.98,  0.16,  1.02),   # cowl / windshield base
-    (0.55,  0.92,  0.99,  0.17,  1.16),   # windshield lower
-    (0.35,  0.91,  1.00,  0.18,  1.30),   # A-pillar top -- ROOF STARTS
-    (-0.20, 0.91,  1.00,  0.19,  1.30),   # roof, flat
-    (-0.95, 0.92,  1.01,  0.19,  1.30),   # C-pillar top -- ROOF ENDS
-    (-1.15, 0.94,  1.01,  0.20,  1.16),   # rear glass, mid
-    (-1.40, 0.95,  1.02,  0.20,  1.04),   # rear axle -- deck starts, belt/roof rejoin
-    (-1.85, 0.94,  1.01,  0.20,  1.02),   # deck, flat
-    (-2.25, 0.90,  1.00,  0.24,  1.01),   # deck rear
-    (-2.51, 0.84,  0.98,  0.34,  0.99),   # tail panel -- wide and square, not a point
+    # T6: RE-AUTHORED AGAINST THE REFERENCE PHOTO, not against my idea of one.
+    #
+    # tools/car_proportions.py measures this table against a Gen-4 profile shot
+    # and published Cup dimensions. Before this pass eight proportions were out,
+    # four of them badly, and they were all the same underlying error: the car
+    # was laid out symmetrically about its own centre. Worst first --
+    #
+    #   flat roof / wheelbase        0.472 vs 0.292   the roof was 1.6x too long
+    #   cowl behind front axle       0.210 vs 0.367   the cabin sat far too far forward
+    #   rear / front overhang        1.000 vs 1.480   symmetric; a Cup car is not
+    #   nose height / roof height    0.662 vs 0.551   the nose sat far too high
+    #
+    # A stock car is a long hood, a small cabin set well back, and a long deck.
+    # Ours was a short hood, a long cabin in the middle, and a short deck.
+    #
+    # THE RAKES: R1 shipped 34 / 22 degrees and R2b "corrected" that to 32 / 30
+    # on my belief that a Gen-4 backlite is steeper than its windshield. It is
+    # not. Measured off the reference with separate horizontal and vertical
+    # scales (the car in the photo is rotated off pure profile, so x is
+    # foreshortened by ~1.17x and a single scale gives the wrong angle): the
+    # windshield is 34 degrees and the backlite 21. R1 was essentially right and
+    # R2b made it worse. Back to a steep windshield over a long, shallow
+    # backlite, which is the whole reason the deck reads as long.
+    #
+    # The beltY column over the nose is NOT set from the photo. Vertical
+    # readings near the wheels there do not survive scrutiny -- scaling by the
+    # tire radius and by the roof height disagree by 60%, which means the tire's
+    # lower edge is lost in shadow and blur. What governs this column instead is
+    # the engineering constraint check_car_rig.py already enforces: the arch lip
+    # peaks at ARCH_CY + ARCH_R = 0.80, so the fender above it has to be
+    # materially higher or the flank collapses into a horizontal shelf. Setting
+    # it from a misread photo reintroduced exactly the 154-degree fold R2 fixed,
+    # at 158 degrees. The beltline is therefore nearly level from the front axle
+    # to the deck, which is what a Cup car has anyway.
+    (2.51,  0.83,  0.63,  0.08,  0.72),   # bumper/valance -- LOW, deep air dam
+    (2.30,  0.89,  0.71,  0.08,  0.76),   # front fascia
+    (2.00,  0.91,  0.80,  0.09,  0.82),   # hood leading edge
+    (1.78,  0.921, 0.88,  0.10,  0.85),   # front fender -- full width
+    (1.60,  0.921, 0.92,  0.11,  0.87),   # FRONT AXLE -- 0.14 of fender over the arch lip
+    (1.19,  0.921, 0.905, 0.13,  0.89),   # hood mid -- long, nearly flat
+    (0.585, 0.915, 0.900, 0.15,  0.91),   # COWL / windshield base
+    (0.30,  0.910, 0.908, 0.16,  1.10),   # windshield mid
+    (0.03,  0.905, 0.914, 0.17,  1.295),  # A-pillar top -- ROOF STARTS
+    (-0.38, 0.905, 0.918, 0.18,  1.295),  # roof, flat
+    (-0.78, 0.910, 0.921, 0.18,  1.295),  # C-pillar top -- ROOF ENDS
+    (-1.16, 0.918, 0.926, 0.19,  1.14),   # REAR AXLE -- rear glass, mid
+    (-1.67, 0.921, 0.932, 0.19,  0.951),  # deck starts
+    (-2.03, 0.905, 0.932, 0.21,  0.945),  # deck, flat
+    (-2.32, 0.875, 0.928, 0.25,  0.940),  # deck rear
+    (-2.51, 0.82,  0.912, 0.33,  0.930),  # tail panel -- wide and square
 ]
+
+# T6: landmark stations BY NAME. Every consumer that wants "the cowl" or "the
+# roof trailing edge" looked it up by literal x_js, and this re-authoring moved
+# every one of those numbers. That is the fourth time in this project a literal
+# index or coordinate would have let a check keep passing against geometry that
+# had moved out from under it, so the names are now the interface.
+STATION_ROLES = {
+    "nose": 2.51,
+    "hood_lead": 2.00,
+    "front_axle": 1.60,
+    "cowl": 0.585,
+    "roof_lead": 0.03,
+    "roof_mid": -0.38,
+    "roof_trail": -0.78,
+    "rear_axle": -1.16,
+    "deck_start": -1.67,
+    "deck_flat": -2.03,
+    "tail": -2.51,
+}
+
+def station_x(role):
+    """Scaled x of a named landmark station. Raises if the role is gone."""
+    if role not in STATION_ROLES:
+        raise SystemExit("gen_car_rig: no station role %r" % role)
+    return STATION_ROLES[role] * (HALF_LEN / 2.51)
 _KEY_STATIONS = [_station(*row) for row in _CAR_ST_JS]
 
 def _lerp_station(x):
@@ -1297,7 +1371,13 @@ for _mk in (4, 9):
 # clears that boundary with a small margin instead of tuning z to dodge it,
 # since JS's own x1 wasn't derived against this rig's WHEELBASE/WHEEL_RADIUS
 # in the first place.
-_EXH_X0, _EXH_X1 = -0.55 * (HALF_LEN / 2.51), -1.02
+# T6: the pipe's rear end is anchored to the REAR AXLE, not to a literal
+# -1.02. The axles moved 0.22 m forward when the overhangs became asymmetric
+# and the fixed coordinate put the tailpipe 0.138 m inside the rear tire --
+# caught by check_car_rig's own exhaust/tire clearance assertion, which is
+# exactly the kind of thing that has shipped unnoticed here before.
+_EXH_X0 = -0.55 * (HALF_LEN / 2.51)
+_EXH_X1 = station_x("rear_axle") + WHEEL_RADIUS + 0.06
 _EXH_Y0, _EXH_R, _EXH_SEGS = 0.26, 0.055, 6
 
 def add_exhaust_pipe(z0):
@@ -1374,11 +1454,14 @@ emit_swatch_quad(_p(_spl_x_front, _spl_y - _spl_th, -_spl_zhalf), _p(_spl_x_fron
 # wheel's own box, spanning +-radius around its joint origin, touches down
 # at world Y=0, matching the ground-height reference stepCar()'s c.x/c.y/
 # surface height already provide).
+# T6: read from _WHEEL_AXLE_X rather than recomputing WHEELBASE/2 -- the axles
+# are no longer centred in the body and a second copy of that arithmetic would
+# have put the wheels somewhere the arches are not.
 wheel_offsets = [
-    (WHEELBASE / 2.0, TRACK_HALF),   # FL
-    (WHEELBASE / 2.0, -TRACK_HALF),  # FR
-    (-WHEELBASE / 2.0, TRACK_HALF),  # RL
-    (-WHEELBASE / 2.0, -TRACK_HALF), # RR
+    (_WHEEL_AXLE_X[0], TRACK_HALF),   # FL
+    (_WHEEL_AXLE_X[0], -TRACK_HALF),  # FR
+    (_WHEEL_AXLE_X[1], TRACK_HALF),   # RL
+    (_WHEEL_AXLE_X[1], -TRACK_HALF),  # RR
 ]
 for i, (wx, wz) in enumerate(wheel_offsets):
     # G1c (NASCAR-Thunder gap-analysis plan, wheel/tire mesh upgrade): a

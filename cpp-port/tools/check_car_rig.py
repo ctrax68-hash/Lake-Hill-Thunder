@@ -270,13 +270,20 @@ def _turn(a, b):
 # landed -- four glass-U guards started failing against geometry that was
 # fine, because index 6 was no longer the cowl. Look the row up by the x_js
 # value the table itself is written in, and fail loudly if it is not there.
-def _key_station_x(x_js):
-    x = x_js * (R.HALF_LEN / 2.51)
+def _key_station_x(role):
+    """Scaled x of a named landmark station.
+
+    T6: BY ROLE, not by x_js literal. The previous version took a coordinate,
+    and re-authoring the silhouette against the reference photo moved every one
+    of them at once -- it failed loudly, which was the point, but a name never
+    needed updating in the first place. gen_car_rig.py owns the mapping.
+    """
+    x = R.station_x(role)
     for st in R.CHASSIS_STATIONS:
         if abs(st[0] - x) < 1e-9:
             return st[0]
-    raise SystemExit("check_car_rig: no station at x_js=%.3f -- the silhouette "
-                     "table moved and this file was not updated with it" % x_js)
+    raise SystemExit("check_car_rig: station role %r resolves to x=%.4f, but no "
+                     "station sits there" % (role, x))
 
 # Spans touched by a wheel arch. The arch opening's leading and trailing edges
 # are where the lip circle meets the fender at a VERTICAL tangent (dx ==
@@ -385,14 +392,14 @@ def _carU_raw(x):
     return 0.02 + (2.51 - x) / 5.02 * 0.76
 
 _K_SEAM_W = 0.0035  # livery.cpp's own kSeamW, copied here for the same reason
-_uWS0, _uWS1 = _carU_raw(0.80), _carU_raw(0.35)
-_uSG0 = _carU_raw(0.35) + _K_SEAM_W
-_uRG0, _uRG1 = _carU_raw(-0.95), _carU_raw(-1.40) - _K_SEAM_W
+_uWS0, _uWS1 = _carU_raw(0.585), _carU_raw(0.03)
+_uSG0 = _carU_raw(0.03) + _K_SEAM_W
+_uRG0, _uRG1 = _carU_raw(-0.78), _carU_raw(-1.67) - _K_SEAM_W
 
-_st6_u = R.car_u(_key_station_x(0.80))    # cowl/windshield base
-_st8_u = R.car_u(_key_station_x(0.35))    # A-pillar top / roof leading edge
-_st10_u = R.car_u(_key_station_x(-0.95))  # C-pillar top / roof trailing edge
-_st12_u = R.car_u(_key_station_x(-1.40))  # rear axle / deck start
+_st6_u = R.car_u(_key_station_x("cowl"))    # cowl/windshield base
+_st8_u = R.car_u(_key_station_x("roof_lead"))    # A-pillar top / roof leading edge
+_st10_u = R.car_u(_key_station_x("roof_trail"))  # C-pillar top / roof trailing edge
+_st12_u = R.car_u(_key_station_x("deck_start"))  # deck start
 
 check(abs(_uWS0 - _st6_u) < 1e-9, "windshield uWS0 exactly matches the cowl station (regression guard)")
 check(abs(_uWS1 - _st8_u) < 1e-9, "windshield uWS1 exactly matches the A-pillar station (regression guard)")

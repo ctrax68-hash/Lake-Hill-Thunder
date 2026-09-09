@@ -532,7 +532,11 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // stations.
     // R2b: A-pillar 0.28 -> 0.35. The roof plateau grew and the backlite got
     // steeper when the vertical profile was corrected; both roof stations moved.
-    const double uWS0 = carU(0.80), uWS1 = carU(0.35);
+    // T6: cowl 0.80 -> 0.585 and A-pillar 0.35 -> 0.03. The whole greenhouse
+    // moved back when the silhouette was re-authored against the reference
+    // photo -- the cabin had been sitting far too far forward (cowl 0.21 of a
+    // wheelbase behind the front axle against the reference's 0.367).
+    const double uWS0 = carU(0.585), uWS1 = carU(0.03);
     // K2 (car visual fidelity plan, part 3): uSG0 used to be carU(0.30),
     // which landed 42% of the way inside the windshield's own real U-range
     // [uWS0,uWS1] -- the side window started well past "windshield mid"
@@ -548,7 +552,7 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // moved forward from -1.00 to -0.72 with the notchback roof).
     // R2b: A-pillar 0.28 -> 0.35, and uSG1 -0.67 -> -0.90 so the side glass
     // still ends just ahead of the C-pillar, which moved back to -0.95.
-    const double uSG0 = carU(0.35) + kSeamW, uSG1 = carU(-0.90);
+    const double uSG0 = carU(0.03) + kSeamW, uSG1 = carU(-0.74);
     // K2: uRG1 used to be carU(-1.75) (station 12, "deck start"), but the
     // real glass-adjacent roofline rise ends two stations earlier, at
     // carU(-1.40) (station 11, "rear axle... belt/roof rejoin" -- beltY
@@ -561,7 +565,10 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // (-0.72) and the rear axle where belt and roof rejoin (-1.40, unchanged).
     // R2b: C-pillar -0.72 -> -0.95 (a Gen-4 backlite is steeper than its
     // windshield; R1 had it shallower, which read as a fastback slope).
-    const double uRG0 = carU(-0.95), uRG1 = carU(-1.40) - kSeamW;
+    // T6: the backlite is long and SHALLOW on a real Gen-4 (21 deg, measured
+    // off the reference), so the rear glass now runs from the roof trailing
+    // edge all the way back to where the deck starts.
+    const double uRG0 = carU(-0.78), uRG1 = carU(-1.67) - kSeamW;
     constexpr double GV0 = 0.335, GVH = 0.330;
     // K2: the beltline V-span (GV0/GVH) is inset only ~0.016 from the real
     // beltline [car_v(4),car_v(9)]=[0.319,0.681] (thin but non-zero --
