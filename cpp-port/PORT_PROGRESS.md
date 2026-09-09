@@ -11290,3 +11290,61 @@ the same sweep can be re-run for T5 without a rebuild per value. They no-op on
 web, which has no environment to read.
 
 `ctest` 36/36.
+
+## T1: the roof was a single flat quad
+
+R3a fixed the sides of the section and stopped there. Measured on the shipped
+mesh: the ring's two topmost points were the roof edges with **nothing between
+them**, so the quad joining them spanned **1.110 m — 61% of the car's full
+width — carrying one normal.** The floor was the same.
+
+That is the largest surface the Chase camera sees on the car ahead, it carries
+the roof number, and it could not take a highlight at any polygon count. **No
+amount of shading fixes a surface with one normal**, which is worth stating
+plainly: R3b's reflection work landed on a roof that was physically incapable
+of showing it.
+
+Every existing check missed it because every existing check asked about the
+ring's *profile* — mirror symmetry, monotonic V, band alignment — and **not one
+asked how far apart two adjacent points were.**
+
+### The fix
+
+Three crown points, at hf slightly above 1.0. `ring_pts()` extrapolates the
+beltY→roofY ramp past 1.0 with no special case, so the crown is proportional to
+each station's own belt-to-roof height: **24 mm across the cabin, ~6 mm over
+the nose.** That is correct, and it means the hood gets a crown out of the same
+three points, which a real one has. Widest top quad **1.110 m → 0.291 m**.
+
+The floor is deliberately left flat: it is the underbody, no camera in this
+game can see it, there is no rollover, and the mirror never frames it. Points
+there are triangles spent on something nobody will ever look at.
+
+### Two structural changes that came with it
+
+**Roles are now looked up by name, not index.** `K_ROOF_EDGE` was
+`len(_RING_HALF_F) - 1`, so appending crown points would have silently handed
+that role to a crown point — and the livery's roof-number V anchor with it.
+This is the third time this session a literal index would have let a guard
+"pass" while describing geometry that no longer existed, so the ring table now
+carries role names and `_role()` raises if one goes missing.
+
+**The V map grew a third segment.** The roof edge must stay pinned at v=0.588
+because `livery.cpp` paints the number panel against it, and the crown points
+sit past it. The last segment is the one place texel density is not preserved:
+at the density of the segment below it the crown would need to reach v=0.493,
+past the centreline, so it is compressed into [0.588, 0.515] — about 15% across
+a panel carrying one large simple graphic, which does not show it.
+
+### Guards, both verified to fail on the flat roof
+
+| assertion | measured against the pre-T1 roof |
+|---|---|
+| widest quad across the roof ≤ 0.40 of half-width | **1.220** |
+| roof crowns above its own edge | **crown hf 1.000 vs edge 1.000** |
+
+Plus two that pin what the refactor could have broken: the roof-edge role still
+carries V anchor 0.588, and the half-ring stops strictly above v=0.5 so its
+mirror is not a duplicate (which would break the no-fold-back guard).
+
+2938 → **3298 triangles**. `check_car_rig.py` passed unedited. `ctest` 36/36.

@@ -595,34 +595,69 @@ FLOOR_Y = 0.45
 # turning quickly reads as a highlight, which is what the photos show; a
 # duplicated pair reads as a fold.
 #
-# (hf, wf): heightFrac up the section, widthFrac of the station's half-width.
-_RING_HALF_F = [
-    (0.000, 0.610),   #  0 underbody / floor edge
-    (0.020, 0.800),   #  1 rocker bottom face
-    (0.045, 0.895),   #  2 rocker lip  A   ] the one surviving crease pair
-    (0.062, 0.930),   #  3 rocker lip  B   ]   K_LIP: the arch anchors here
-    (0.120, 0.963),   #  4 lower door
-    (0.210, 0.988),   #  5
-    (0.330, 0.999),   #  6
-    (0.460, 1.000),   #  7 widest point, low in the door -- as on the real car
-    (0.590, 0.995),   #  8
-    (0.700, 0.984),   #  9
-    (0.800, 0.962),   # 10 BELTLINE -- SOFT. no duplicate, no crease.
-    (0.858, 0.918),   # 11 side glass, tumblehome begins
-    (0.905, 0.858),   # 12
-    (0.945, 0.788),   # 13
-    (0.978, 0.702),   # 14 drip rail, a radius rather than a fold
-    (1.000, 0.610),   # 15 roof plateau edge
+# T1: AND THE ROOF WAS A SINGLE FLAT QUAD.
+#
+# R3a fixed the SIDES and stopped there. The ring's topmost points were the two
+# roof edges and nothing lay between them, so the quad joining them spanned
+# **1.110 m -- 61% of the car's full width -- with one normal.** The roof is
+# among the largest surfaces visible from the Chase camera the player actually
+# uses, it carries the roof number, and it could not take a highlight at all.
+# No amount of shading fixes a surface that has one normal.
+#
+# Three crown points now arch it. They sit at hf slightly ABOVE 1.0, which the
+# loft reads as "above roofY" -- ring_pts() extrapolates the beltY->roofY ramp
+# past 1.0 without special-casing. The crown is therefore proportional to each
+# station's own belt-to-roof height: ~24 mm across the cabin, ~6 mm over the
+# nose. That is right, and it means the HOOD gets a crown out of the same three
+# points, which a real one has.
+#
+# The floor is deliberately left flat. It is the underbody: no camera in this
+# game can see it, there is no rollover, and the mirror never frames it. Points
+# there would be triangles spent on something nobody will ever look at.
+#
+# (hf, wf, role): heightFrac up the section, widthFrac of the station's
+# half-width, and an optional role name. ROLES ARE LOOKED UP BY NAME, never by
+# literal index -- twice this session an index left behind after a table edit
+# kept a guard "passing" while it described geometry that no longer existed,
+# and adding these crown points would have silently stolen K_ROOF_EDGE from the
+# roof edge exactly that way (it was `len(_RING_HALF_F) - 1`).
+_RING_HALF_F_ROLES = [
+    (0.000, 0.610, "floor"),      # underbody / floor edge
+    (0.020, 0.800, None),         # rocker bottom face
+    (0.045, 0.895, None),         # rocker lip  A   ] the one surviving crease pair
+    (0.062, 0.930, "lip"),        # rocker lip  B   ]   the arch anchors here
+    (0.120, 0.963, None),         # lower door
+    (0.210, 0.988, None),
+    (0.330, 0.999, None),
+    (0.460, 1.000, None),         # widest point, low in the door -- as on the real car
+    (0.590, 0.995, None),
+    (0.700, 0.984, None),
+    (0.800, 0.962, "belt"),       # BELTLINE -- SOFT. no duplicate, no crease.
+    (0.858, 0.918, None),         # side glass, tumblehome begins
+    (0.905, 0.858, None),
+    (0.945, 0.788, None),
+    (0.978, 0.702, None),         # drip rail, a radius rather than a fold
+    (1.000, 0.610, "roof_edge"),  # roof panel begins -- the livery anchors here
+    (1.006, 0.460, None),         # T1 roof crown
+    (1.012, 0.300, None),         # T1 roof crown
+    (1.016, 0.160, None),         # T1 roof crown -- 0.29 m flat strip left on centre
 ]
+_RING_HALF_F = [(hf, wf) for (hf, wf, _r) in _RING_HALF_F_ROLES]
+
+def _role(name):
+    for i, (_h, _w, r) in enumerate(_RING_HALF_F_ROLES):
+        if r == name:
+            return i
+    raise SystemExit("gen_car_rig: no ring point carries the role %r" % name)
 
 # Role indices, EXPORTED so check_car_rig.py and any future consumer read them
 # instead of hardcoding k. Both times this session that a literal index was
 # left behind -- the glass-U station lookups and the wheel's 0.68 rim radius --
 # the guard kept "passing" while describing geometry that no longer existed.
-K_ROCKER = 0
-K_LIP = 3
-K_BELT = 10
-K_ROOF_EDGE = len(_RING_HALF_F) - 1
+K_ROCKER = _role("floor")
+K_LIP = _role("lip")
+K_BELT = _role("belt")
+K_ROOF_EDGE = _role("roof_edge")
 
 # V is now derived from ARC LENGTH around the section, not hand-authored per
 # point. Hand-authored V was workable at 11 points and is not at 16: the livery
@@ -635,6 +670,11 @@ K_ROOF_EDGE = len(_RING_HALF_F) - 1
 # outside the roof number panel's own [0.420, 0.580].
 _V_ROCKER, _V_ROOF = 0.985, 0.588
 _V_BELT = 0.677
+# T1: where the innermost crown point lands. The half-ring must stop strictly
+# ABOVE 0.5 -- at exactly 0.5 its mirror would be a second point with the same
+# v, and "v strictly decreasing" (the guard that proves the unwrap cannot fold
+# back) would fail on a duplicate.
+_V_CROWN = 0.515
 
 def _ring_v_table():
     # Arc length measured on a representative section: hf and wf are in
@@ -648,15 +688,29 @@ def _ring_v_table():
     # Two-piece linear reparameterisation so t[K_BELT] lands exactly on the
     # painted seam while both ends stay put. Monotonic by construction, which
     # is what the "v strictly decreasing" guard requires.
-    tb = t[K_BELT]
+    # T1: THREE pieces now, not two. The roof edge has to stay pinned at
+    # _V_ROOF because livery.cpp paints the roof number panel against it, and
+    # the crown points sit PAST it -- so a two-piece map would have slid the
+    # roof edge inward and quietly shrunk the plateau the number sits on.
+    #
+    # The last segment is the one place texel density is not preserved. The
+    # roof is genuinely wide relative to the V the livery reserves for it: at
+    # the density the segment below it uses, the crown would need to reach
+    # v=0.493, i.e. past the centreline. Compressing it into [_V_ROOF,
+    # _V_CROWN] costs about 15% density across the roof panel, which carries
+    # one large simple graphic and does not show it.
+    tb, tr = t[K_BELT], t[K_ROOF_EDGE]
     out = []
     for ti in t:
         if ti <= tb:
             f = ti / tb
             out.append(_V_ROCKER + (_V_BELT - _V_ROCKER) * f)
-        else:
-            f = (ti - tb) / (1.0 - tb)
+        elif ti <= tr:
+            f = (ti - tb) / (tr - tb)
             out.append(_V_BELT + (_V_ROOF - _V_BELT) * f)
+        else:
+            f = (ti - tr) / (1.0 - tr)
+            out.append(_V_ROOF + (_V_CROWN - _V_ROOF) * f)
     return out
 
 _RING_HALF_V = _ring_v_table()

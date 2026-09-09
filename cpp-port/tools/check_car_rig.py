@@ -71,6 +71,33 @@ check(all(abs(R.RINGV[k] + R.RINGV[R.NK - 1 - k] - 1.0) < 1e-12 for k in range(R
 check(all(R.car_v(k) > R.car_v(k + 1) for k in range(R.NK - 1)),
       "v strictly decreasing by ring index (unwrap cannot fold back)")
 
+# T1: THE ROOF MUST NOT BE ONE FLAT QUAD.
+#
+# Until T1 the ring's two topmost points were the roof edges with nothing
+# between them, so the quad joining them spanned 1.110 m -- 61% of the car's
+# full width -- carrying a single normal. That is the largest surface the
+# Chase camera sees on the car ahead and it could not take a highlight. It was
+# invisible to every check here because every check asked about the ring's
+# PROFILE and none asked how far apart two adjacent points were.
+_widest_top = max(abs(R.RINGF[k][1] - R.RINGF[k + 1][1])
+                  for k in range(R.NK - 1) if R.RINGF[k][0] >= 0.95 and R.RINGF[k + 1][0] >= 0.95)
+check(_widest_top <= 0.40,
+      "widest single quad across the roof spans %.3f of half-width (<= 0.40; it was 1.22 when the roof was one flat strip)"
+      % _widest_top)
+_crown = max(hf for (hf, _w) in R.RINGF) - R.RINGF[R.K_ROOF_EDGE][0]
+check(_crown > 0.0,
+      "roof crowns above its own edge (crown reaches hf %.3f vs edge %.3f)"
+      % (max(hf for (hf, _w) in R.RINGF), R.RINGF[R.K_ROOF_EDGE][0]))
+# The crown sits PAST the roof edge in the point order, so the roof edge must
+# still be the thing the livery's V anchor is pinned to -- if a future edit
+# lets the role slide onto a crown point, the number panel silently loses its
+# plateau. That is exactly the failure the role-name lookup exists to stop.
+check(abs(R.RINGV[R.K_ROOF_EDGE] - 0.588) < 1e-9,
+      "roof-edge role still carries the painted V anchor 0.588 (got %.4f)" % R.RINGV[R.K_ROOF_EDGE])
+check(R.RINGV[R.NK // 2 - 1] > 0.5,
+      "half-ring stops strictly above v=0.5 so its mirror is not a duplicate (got %.4f)"
+      % R.RINGV[R.NK // 2 - 1])
+
 # --- wheel clearance -------------------------------------------------------
 # Wheel: barrel of radius 0.35 centred at (axleX, 0.35, +-TRACK_HALF), axis Z,
 # half-width 0.35*0.4 = 0.14.
