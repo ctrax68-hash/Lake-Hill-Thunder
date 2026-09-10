@@ -46,11 +46,23 @@
 namespace {
 
 // Debug-only screenshot capture (see renderer.h's requestScreenshot()
-// comment): bgfx hands back raw BGRA8 pixels, which this dumps verbatim
-// alongside a tiny sidecar .meta text file (width height pitch yflip) so an
-// external script (not part of the shipped app) can turn it into a real
-// image format for a human/agent to actually look at. Every other CallbackI
-// hook is a required pure virtual with no Phase-2-relevant behavior yet.
+// comment): bgfx hands back the raw backbuffer, which this dumps verbatim
+// alongside a tiny sidecar .meta text file so an external script (not part of
+// the shipped app) can turn it into a real image format for a human/agent to
+// actually look at. Every other CallbackI hook is a required pure virtual with
+// no Phase-2-relevant behavior yet.
+//
+// The sidecar is FIVE fields: `width height pitch format yflip`, where format
+// is the bgfx::TextureFormat::Enum bgfx reports for this capture.
+//
+// This comment used to assert the pixels were BGRA8 and list four fields. Both
+// were wrong -- the format is whatever bgfx says, in practice 71 (RGBA8) -- and
+// the claim was believed rather than checked. Every screenshot in one session
+// was converted with R and B exchanged, which made all four tracks' blue skies
+// render orange-brown and cost a round chasing a sky bug that did not exist.
+// Use tools/screenshot_to_png.py, which reads the format field instead of
+// assuming one; it also has a --verify mode that checks the channel order
+// against the menu title's known yellow.
 class ScreenshotCallback : public bgfx::CallbackI {
 public:
     ~ScreenshotCallback() override = default;

@@ -12016,3 +12016,79 @@ and rocker both read 140, identical to open bodywork), and with AO deliberately
 extended past the lip the bleed clause fails.
 
 `check_car_rig.py` PASS, `car_proportions.py` 17/17, `ctest` 36/36.
+
+## T14 — correction: every screenshot this session had R and B swapped
+
+Not a feature. A correction to the record, and the instrument fix that stops it
+recurring.
+
+### What happened
+
+`renderer.cpp`'s ScreenshotCallback comment said "bgfx hands back raw BGRA8
+pixels". It does not. The sidecar `.meta` records the real
+`bgfx::TextureFormat`, and it is **71 = RGBA8**. Every capture this session was
+converted by hand-rolled one-off Python that trusted the comment, so red and
+blue were exchanged in every image I looked at.
+
+I found it while starting T5, by noticing that all four tracks author a BLUE
+zenith and all four appeared to render orange-brown:
+
+| track | authored zenith | "rendered" | that value, unswapped |
+|---|---|---|---|
+| THUNDER OVAL | (51, 115, 217) | (203, 154, 77) | blue |
+| MILLTOWN | (61, 107, 204) | (199, 150, 100) | blue |
+| CEDAR VALLEY | (89, 140, 204) | (198, 169, 124) | blue |
+| BIG SABLE | (46, 102, 204) | (200, 144, 69) | blue |
+
+Four independent skies all wrong the same way is not four bugs, it is one bad
+instrument. Settled definitively against a known-colour probe: the menu title is
+drawn `attr(kYellow, kBlack)`, and reading the capture as RGBA gives
+(247, 212, 0) — yellow — while reading it as BGRA gives cyan.
+
+**There was never a sky bug.** The sky texture builds exactly as authored:
+zenith (89, 140, 204), horizon haze (246, 253, 252).
+
+### What this does and does not invalidate
+
+Unaffected, because none of it depends on channel order:
+
+- **T10's mirroring.** Geometry, and the texture comparisons were read from the
+  PPM dumps directly, not through the broken conversion.
+- **T11's wheel positions.** Measured off the generator, never off a render.
+- **T12's and T13's magnitudes.** Every before/after pair went through the same
+  conversion, so the deltas are real: the tire did get much darker, the body
+  colour more saturated, the arches occluded.
+
+Wrong, and corrected here:
+
+- **T12 described the tire as rendering "(42, 72, 109), a blue-grey".** The
+  actual value is **(109, 72, 42)** — a warm brown-grey, which is what a black
+  tire under a low sunset sun should look like. The defect it documents is
+  real and unchanged: the tire was far too bright and reflecting far too much
+  environment. Only the colour word was wrong.
+- Likewise the body green's "blue lifted from 2 to 138" was the RED channel.
+
+The argument in both cases was about magnitude, not hue, so the fixes stand.
+
+### The instrument fix
+
+`tools/screenshot_to_png.py`. It reads the format field rather than assuming
+one, strides rows by the real pitch (which need not equal width*4), honours
+yflip, and refuses outright on a format it does not know instead of guessing a
+channel order. `--verify` checks the decision against the title's known yellow
+and says so in words.
+
+The renderer comment that caused this now states the real field list and what
+went wrong.
+
+### The pattern, now five for five
+
+Every previous instrument failure in this file was a camera. This one was a
+byte order, which is why it did not feel like the same mistake — but it is:
+**something believed rather than checked, sitting between me and the subject.**
+The fix each time has been the same. Stop re-deriving the measurement at the
+call site and give it one implementation that states its assumptions and can be
+tested. `check_car_rig.py` for the mesh, `car_proportions.py` for the shape,
+`livery_test` for the texture, and now this for anything rendered.
+
+`check_car_rig.py` PASS, `car_proportions.py` 17/17, `ctest` 36/36.
