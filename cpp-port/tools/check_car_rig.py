@@ -562,7 +562,11 @@ print("wheel hub center-lock nut")
 # "passed" while describing geometry that no longer existed.
 _R_BEAD = R.WHEEL_RADIUS * R.WHEEL_R_BEAD
 _HR = _R_BEAD * R._HUB_R_FRAC
-_hw = R.WHEEL_RADIUS * 0.4  # half_width, matching the add_wheel() call site's own WHEEL_RADIUS*0.4
+# T11: was a third hand-copy of `WHEEL_RADIUS * 0.4`. The generator now names
+# that quantity, so read it -- a checker carrying its own copy of the number it
+# is checking cannot detect the one thing it exists to detect. This guard did
+# fire when the width moved, which is the only reason it isn't still wrong.
+_hw = R.WHEEL_HALF_WIDTH
 _hub_ring_ok = True
 _hub_joint_ok = True
 _hub_outer_only_ok = True
@@ -683,6 +687,25 @@ if _m:
     _py = (R.TAIL_UV_U0, R.TAIL_UV_U1, R.TAIL_UV_V0, R.TAIL_UV_V1)
     check(max(abs(a - b) for a, b in zip(_cpp, _py)) < 1e-9,
           "livery.cpp's tail island matches gen_car_rig.py's (cpp %s vs py %s)" % (_cpp, _py))
+
+# 4. T11: renderer.cpp carries its OWN copy of the wheel radius, as
+# `constexpr double kWheelRadius`, with nothing but a trailing comment saying
+# it "must match tools/gen_car_rig.py's WHEEL_RADIUS". It feeds
+# computeWheelTransforms(), so a drift does not fail to build and does not
+# look wrong in a still frame -- the wheels simply sit at the wrong ride
+# height and spin at the wrong rate against the ground they are on. This
+# round moved WHEEL_RADIUS and would have desynced it.
+#
+# Same technique as the tail-island check above: read the C++ and compare.
+print()
+print("cross-file constants")
+_rend = open(os.path.join(_HERE, "..", "src", "render", "renderer.cpp")).read()
+_mw = _re.search(r"constexpr double kWheelRadius = ([0-9.]+);", _rend)
+check(_mw is not None, "renderer.cpp still declares kWheelRadius")
+if _mw:
+    check(abs(float(_mw.group(1)) - R.WHEEL_RADIUS) < 1e-9,
+          "renderer.cpp's kWheelRadius matches gen_car_rig.py's WHEEL_RADIUS (cpp %s vs py %s)"
+          % (_mw.group(1), R.WHEEL_RADIUS))
 
 print("\nverts %d  tris %d" % (len(R.positions), len(R.indices) // 3))
 print("check_car_rig: PASS" if ok else "check_car_rig: FAILURES ABOVE")

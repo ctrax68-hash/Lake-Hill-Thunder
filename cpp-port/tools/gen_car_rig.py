@@ -22,7 +22,22 @@ import struct, json, base64, math
 CAR_LEN = 5.08
 CAR_WID = 2.0
 WHEELBASE = 2.79
-WHEEL_RADIUS = 0.35
+# T11: 0.35 -> 0.36. A Cup tire is ~28.5 in in diameter, i.e. 0.724 m;
+# car_proportions.py had this reading 0.700 against a 0.720 target for
+# several rounds -- inside tolerance, so never the worst row, and therefore
+# never fixed. It compounds with the two constants below, which is what made
+# it matter (see WHEEL_HALF_WIDTH).
+WHEEL_RADIUS = 0.36
+
+# T11: the tire's half-width, which used to be spelled `WHEEL_RADIUS * 0.4`
+# at the add_wheel() call and `0.14` inside the wheelhouse assert -- the same
+# quantity written two different ways in two places, which is the exact
+# stale-literal shape that has bitten this file four times. Named once, used
+# by both.
+#
+# 0.155 makes the tire 0.31 m across, a real Cup section width.
+WHEEL_HALF_WIDTH = 0.155
+
 # H1: 0.76, not the old CAR_WID*0.42 = 0.84. A real Gen-4 runs ~60in track
 # with ~11in tires, so the tire centreline sits at 0.762 and its inner face
 # lands at 0.762-0.14 = 0.62 -- which is exactly index.html's WHEEL_INNER_Z,
@@ -32,7 +47,21 @@ WHEEL_RADIUS = 0.35
 # JS-tuned relief band no longer described where the tire actually was.
 # The H1 decode check caught the body passing through the tire barrel at the
 # fender because of it.
-TRACK_HALF = 0.76
+#
+# T11: 0.76 -> 0.76850, the spec 60.5 in track exactly. THE POINT IS NOT THE
+# 8 mm. Three separate rows sat slightly low in the SAME direction -- track
+# -1.1%, tire diameter -2.8%, and a tire half-width of 0.140 against a real
+# 0.155 -- and each was individually inside tolerance, so car_proportions.py
+# never flagged any of them. They compound where it shows: the tire's outer
+# face landed at 0.760 + 0.140 = 0.900 while the widest bodywork is 0.921, so
+# the fender covered the tire by 21 mm and from any side-on angle the car had
+# no visible tires at all, just dark slots. That is a large part of what still
+# read as "wrong" after the proportions all went green.
+#
+# At spec the outer face is 0.7685 + 0.155 = 0.9235 against 0.921 of body --
+# the tire sits a hair PROUD of the fender, which is what a real stock car
+# does and what makes the tire read from every angle.
+TRACK_HALF = 0.76850
 HALF_LEN = CAR_LEN / 2.0
 
 positions = []
@@ -767,7 +796,9 @@ _WHEEL_AXLE_X = [HALF_LEN - _FRONT_OVERHANG, HALF_LEN - _FRONT_OVERHANG - WHEELB
 # The arch is now a circular opening about the axle: the four lowest ring
 # points are lifted onto a lip curve and pulled inboard to form a wheelhouse,
 # and everything above the lip is re-anchored so the section cannot fold.
-ARCH_R = 0.45          # opening radius about the axle centre
+ARCH_R = 0.46          # opening radius about the axle centre (T11: 0.45 ->
+                       # 0.46, holding the same suspension clearance over the
+                       # 0.36 tire the assert below pins it to)
 ARCH_CY = WHEEL_RADIUS # opening centre sits at axle height, 0.35
 ARCH_INNER_Z = 0.58    # wheelhouse wall; the tire's inner face is at 0.62
 # R2c: 0.58 -> 0.52. A 1.16 m mouth around a 0.70 m tire is not an arch, it
@@ -783,7 +814,7 @@ ARCH_X_MAX = 0.52      # half-length of the opening along the body
 # joint by up to kMaxTravel under load, and nothing previously knew that.
 SUSP_MAX_TRAVEL = 0.08
 assert ARCH_R >= WHEEL_RADIUS + SUSP_MAX_TRAVEL, "arch would clip a compressed wheel"
-assert ARCH_INNER_Z <= TRACK_HALF - 0.14 - 0.02, "wheelhouse wall would touch the tire"
+assert ARCH_INNER_Z <= TRACK_HALF - WHEEL_HALF_WIDTH - 0.02, "wheelhouse wall would touch the tire"
 
 def _arch_lip_y(x, axle_x, y_base):
     """Height of the arch lip at station x, for one axle."""
@@ -1584,7 +1615,7 @@ for i, (wx, wz) in enumerate(wheel_offsets):
     # H1: sides 10 -> 16. At 10 the tire silhouette was visibly a decagon at
     # chase-cam distance, which is the same faceting problem the body had;
     # 16 costs ~28 extra tris per wheel and reads round.
-    add_wheel(wx, WHEEL_RADIUS, wz, WHEEL_RADIUS, WHEEL_RADIUS * 0.4, joint_idx=i + 1, sides=16)
+    add_wheel(wx, WHEEL_RADIUS, wz, WHEEL_RADIUS, WHEEL_HALF_WIDTH, joint_idx=i + 1, sides=16)
 
 # T9: MAKE EVERY WHEEL TRIANGLE'S WINDING AGREE WITH ITS OWN NORMAL.
 #

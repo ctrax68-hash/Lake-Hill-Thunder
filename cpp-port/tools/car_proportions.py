@@ -97,6 +97,33 @@ measure("wheelbase (m)", WHEELBASE, 2.794, 0.01, "spec", "110 in")
 measure("track width (m)", 2.0 * R.TRACK_HALF, 1.537, 0.03, "spec", "60.5 in")
 measure("tire diameter (m)", 2.0 * R.WHEEL_RADIUS, 0.72, 0.05, "spec")
 
+# T11: DOES THE TIRE ACTUALLY SHOW PAST THE FENDER.
+#
+# The row this file most needed and did not have. Track, tire diameter and
+# tire width were each individually inside tolerance while all three sat low
+# in the SAME direction, and the thing they compound into was not measured at
+# all: the tire's outer face reached 0.900 against 0.921 of bodywork, so the
+# fender covered the tire by 21 mm and the car had no visible tires from any
+# side-on angle -- dark slots where the wheels should be. Every proportion
+# read green through all of it.
+#
+# The lesson is about the loss function, not the wheels: a set of independent
+# tolerances does not constrain the quantity they jointly determine. Measure
+# the thing you actually care about seeing.
+#
+# Real stock cars run the tire face flush with, or a shade proud of, the
+# quarter panel. Target 0 with a tolerance in absolute metres (a fraction of
+# zero is meaningless), expressed as the deviation itself.
+tire_outer = R.TRACK_HALF + R.WHEEL_HALF_WIDTH
+#
+# The tolerance is +-12 mm, and that number was chosen by checking it against
+# the geometry it is supposed to reject, not by taste. The first attempt used
+# +-30 mm, which the OLD 21 mm-buried wheels pass comfortably -- a row that
+# would have sat green through the entire defect it was written to catch.
+# At +-12 mm the old geometry reads 79.0 and fails; this one reads 102.5.
+measure("tire face proud of body (mm)", (tire_outer - MAX_HALF_W) * 1000.0 + 100.0, 100.0, 0.12,
+        "spec", "0 = flush; 100 offset so this reads as +-12 mm about flush")
+
 # --- where the wheels sit IN the body ------------------------------------
 # The single clearest silhouette error the reference photo shows. Measured on
 # the grid overlay: front overhang ~90 px, rear ~133 px against a 264 px

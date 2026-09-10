@@ -11801,3 +11801,53 @@ THUNDER OVAL is not a profile. CEDAR VALLEY gives a usable one. That clamp has
 now confused a reading twice.
 
 `check_car_rig.py` PASS, `car_proportions.py` 16/16, `ctest` 36/36.
+
+## T11 — the car had no visible tires, and every proportion read green
+
+Continuing on *"still a little blocky ... but still wrong"*. The section was not
+the problem this time.
+
+### What was wrong
+
+The tire's outer face reached **0.900** while the widest bodywork is **0.921**,
+so the fender covered the tire by 21 mm. From any side-on angle the car had no
+visible tires — just dark slots under the arches — which is a strong "not a
+real car" cue and survives every amount of shading work.
+
+### Why the loss function did not catch it
+
+Three rows were each low, all in the same direction, and all inside tolerance:
+
+| row | was | target |
+|---|---|---|
+| track width | 1.520 | 1.537 (−1.1%) |
+| tire diameter | 0.700 | 0.720 (−2.8%) |
+| tire half-width | 0.140 | ~0.155, and not measured at all |
+
+None was ever the worst row, so none was ever fixed. **A set of independent
+tolerances does not constrain the quantity they jointly determine.** The thing
+that mattered — whether the tire is visible past the fender — was not a row.
+It is one now, and its tolerance was set by checking it against the geometry it
+must reject: the first attempt used ±30 mm, which the 21 mm-buried wheels pass
+comfortably. At ±12 mm the old geometry reads 79.0 and fails; the new reads
+102.5.
+
+All three constants now sit at spec, and the tire face lands 2.5 mm proud of
+the quarter panel, which is what a real stock car does.
+
+### Two stale-literal traps closed on the way
+
+`WHEEL_RADIUS * 0.4` was the tire half-width written as an expression at the
+`add_wheel()` call, as `0.14` inside the wheelhouse assert, and a THIRD time
+inside `check_car_rig.py` — which is worth stating plainly: a checker carrying
+its own copy of the number it checks cannot detect the one thing it exists to
+detect. Now `WHEEL_HALF_WIDTH`, read by all three.
+
+`renderer.cpp` carries its own `kWheelRadius`, hand-synced to the generator by
+nothing but a trailing comment. It feeds `computeWheelTransforms()`, so a drift
+builds clean and looks fine in a still frame while the wheels sit at the wrong
+ride height. This round moved the radius and desynced it — and the new
+cross-file guard caught it on its first run, on the real drift rather than a
+synthetic one.
+
+`check_car_rig.py` PASS, `car_proportions.py` 17/17, `ctest` 36/36.

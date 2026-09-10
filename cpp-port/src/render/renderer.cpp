@@ -2444,7 +2444,11 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         // as it burns off, instead of the offset being normalized away.
         const double restLoadFront = CAR.mass * G * CAR.weightDistF * 0.5;
         const double restLoadRear = CAR.mass * G * (1.0 - CAR.weightDistF) * 0.5;
-        constexpr double kWheelRadius = 0.35; // must match tools/gen_car_rig.py's WHEEL_RADIUS
+        // Must match tools/gen_car_rig.py's WHEEL_RADIUS. That is no longer
+        // just a comment: check_car_rig.py reads this line and compares the
+        // two, because T11 moved the radius and this copy did not follow --
+        // a drift that builds clean and looks fine in a still frame.
+        constexpr double kWheelRadius = 0.36;
         constexpr double kLoadToTravel = 0.0001;
         constexpr double kMaxTravel = 0.08;
 
