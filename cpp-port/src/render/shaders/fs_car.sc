@@ -81,7 +81,12 @@ void main()
 	float hemiT = clamp(n.y * 0.5 + 0.5, 0.0, 1.0);
 	vec3 ambient = mix(u_hemiGround.rgb, u_hemiSky.rgb, hemiT);
 	float ndotl = max(dot(n, lightDir), 0.0);
-	vec3 texel = texture2D(s_texColor, v_texcoord0).rgb;
+	// T12: the livery's alpha channel is a GLOSS (reflectivity) mask, written
+	// per material by livery.cpp -- see its kGloss* constants. It used to be a
+	// hardcoded 255 that nothing read.
+	vec4 texel4 = texture2D(s_texColor, v_texcoord0);
+	vec3 texel = texel4.rgb;
+	float gloss = texel4.a;
 	vec3 diffuse = texel * lhtExpose(ambient + u_sunColor.rgb * ndotl);
 
 	// I4 (car visual fidelity plan): retuned from 60/0.35. H1 already made
@@ -152,51 +157,45 @@ void main()
 	float amberMatch = 1.0 - smoothstep(0.0, 0.01, amberD2);
 	vec3 emissive = texel * (tailMatch * u_emissive.x + amberMatch * u_emissive.y);
 
-	// I3 (car visual fidelity plan): the same H6 color-match technique,
-	// extended to give glass and the metallic wheel rim their own material
-	// response, cheaper than a real material-ID system since every color
-	// to distinguish is already a known, geometry-isolated flat-swatch RGB
-	// constant (see livery.cpp's glassDark/glassHi and gen_car_rig.py's
-	// SW_RIM). No new uniforms -- texel/n/viewDir/halfDir are already
-	// computed above.
+	// T12: MATERIAL RESPONSE COMES FROM THE GLOSS MASK, NOT FROM PIXEL COLOUR.
 	//
-	// Glass needs a MUCH tighter threshold than tailRef/amberRef's 0.01:
-	// glassDark (16,20,30)/255 sits only 0.0036-0.0057 squared-distance
-	// from the wheel's own near-black tread/sidewall swatches (all four are
-	// "near black", so any sufficiently loose threshold catches all of
-	// them) -- confirmed by direct calculation before picking this value,
-	// not assumed safe. 0.0015 catches glassDark/glassHi (solid-fill rects,
-	// so an on-rect sample reads essentially exact) while staying below
-	// that collision distance.
-	vec3 glassDarkRef = vec3(16.0 / 255.0, 20.0 / 255.0, 30.0 / 255.0);
-	vec3 glassHiRef = vec3(26.0 / 255.0, 33.0 / 255.0, 46.0 / 255.0);
-	float glassD2 = min(dot(texel - glassDarkRef, texel - glassDarkRef),
-	                     dot(texel - glassHiRef, texel - glassHiRef));
-	float glassMatch = 1.0 - smoothstep(0.0, 0.0015, glassD2);
-	// Glass reads darker and more mirror-like, not brighter: damp the
-	// diffuse/ambient response and let the reflection sweep dominate more
-	// of the mix than the body paint's fixed 0.30 weight.
-	diffuse *= (1.0 - glassMatch * 0.55);
-	// R3b: a BASE reflectivity alongside the Fresnel term. Weighting the
-	// reflection purely by pow(1-N.V, 5) means it exists only at grazing
-	// angles -- the broad side of a car facing the camera, which is most of
-	// what you ever see, carried none of it. Real clearcoat reflects a few
-	// percent head-on and rises to near-total at glancing angles; 0.10 is
-	// that floor, and the Fresnel term keeps doing the rest.
-	float reflectMix = 0.16 + fresnel * 0.35 + glassMatch * 0.35;
+	// I3 identified glass and the metallic rim by RGB colour-distance against
+	// livery.cpp's own swatch constants. That worked at point-blank range and
+	// decayed exactly where it mattered: a mip-filtered texel drifts off the
+	// reference colour, so in the pack -- which is where nearly every car is
+	// actually seen -- glass quietly stopped being glass. It also forced two
+	// unrelated things to share an RGB constant (the grille's centre slat was
+	// chrome only because it borrowed SW_RIM's exact colour), and it needed a
+	// hand-verified collision radius because glass and tire rubber are both
+	// "near black" and the thresholds had to be kept from catching each other.
+	//
+	// A scalar in alpha has none of those problems: it mip-filters into a
+	// sensible in-between value, it cannot collide with anything, and a
+	// material is stated where it is painted rather than inferred downstream.
+	//
+	// The measurement that forced this: with ONE reflectivity for every texel,
+	// a black tire rendered (42, 72, 109) -- blue-grey -- and the body's
+	// (11, 131, 2) green rendered (31, 229, 138), blue lifted from 2 to 138.
+	// Every material on the car was returning the same fraction of sky.
+	//
+	// Glass reads darker and more mirror-like, not brighter, so damp the
+	// diffuse response in proportion to how reflective the material is. Paint
+	// at 0.55 loses a little; the tires at 0.04 lose essentially none.
+	diffuse *= (1.0 - gloss * 0.45);
 
-	// Metallic rim: SW_RIM's bright, well-separated color (198,200,206)/255
-	// has no collision risk with the near-black cluster above, so the
-	// existing 0.01 threshold is fine. A second, much tighter/higher-power
-	// specular lobe than the body's own -- a hard chrome-like glint,
-	// distinct from the paint's rounder highlight -- without touching the
-	// shared base `spec` term every other texel still uses.
-	vec3 rimRef = vec3(198.0 / 255.0, 200.0 / 255.0, 206.0 / 255.0);
-	float rimD2 = dot(texel - rimRef, texel - rimRef);
-	float rimMatch = 1.0 - smoothstep(0.0, 0.01, rimD2);
-	float chromeSpec = pow(ndoth, 300.0) * rimMatch;
+	// R3b's base reflectivity survives, but scaled by the material instead of
+	// applied flat: clearcoat reflects a few percent head-on and rises toward
+	// total at glancing angles, and rubber does neither.
+	float reflectMix = gloss * (0.20 + fresnel * 0.60);
 
-	vec3 rgb = mix(diffuse, envColor, reflectMix) + u_sunColor.rgb * (spec + chromeSpec) + emissive;
+	// The chrome lobe is no longer a separate colour-matched branch -- it is
+	// what a high-gloss material does with the tight specular term. Weighting
+	// the shared spec by gloss also fixes something the old shader got wrong
+	// in the other direction: matte decals and tires were taking the SAME
+	// clearcoat highlight as the paint they sit on.
+	spec *= gloss;
+
+	vec3 rgb = mix(diffuse, envColor, reflectMix) + u_sunColor.rgb * spec + emissive;
 	// Haze last, after specular: it sits between eye and surface, so it must
 	// dim the highlights too rather than being added underneath them.
 	rgb = lhtHaze(rgb, v_worldPos, u_camPos.xyz);

@@ -471,6 +471,64 @@ int main() {
                    fMirror - fSame >= 0.05);
     }
 
+    // T12: the gloss mask in the alpha channel.
+    //
+    // Before this, alpha was a hardcoded 255 on every texel and fs_car.sc
+    // applied one reflectivity to the whole car -- which measured, on a
+    // rendered frame, as a BLACK TIRE coming out (42, 72, 109). The mask is
+    // what tells rubber from clearcoat from glass, so it needs a guard that
+    // fails the moment it goes back to being uniform.
+    //
+    // Asserted against livery.h's own kGloss* constants, not against copies:
+    // a test carrying its own numbers cannot detect them drifting.
+    {
+        LiveryScheme scheme{0, 0, 0, CarPalette::White};
+        const auto pixels = buildLiveryPixels(red, 28, 1, &scheme);
+        auto alphaAt = [&](double u, double v) {
+            const int x = (int)(u * kLiveryTextureSize), y = (int)(v * kLiveryTextureSize);
+            return (int)pixels[((size_t)y * kLiveryTextureSize + (size_t)x) * 4 + 3];
+        };
+        auto expect = [](double g) { return (int)(g * 255.0 + 0.5); };
+
+        // Swatch column coordinates match livery.cpp's own fills (and
+        // gen_car_rig.py's SW_* constants, which check_car_rig.py pins).
+        const int aTread = alphaAt(0.90, 0.25);   // tire rubber
+        const int aSide = alphaAt(0.90, 0.75);    // sidewall rubber
+        const int aRim = alphaAt(0.815, 0.75);    // metallic rim
+        const int aGlass = alphaAt(0.325, 0.44);  // windshield
+        const int aPaint = alphaAt(0.100, 0.25);  // plain body paint
+
+        std::printf("livery_test: T12 gloss mask -- tread %d sidewall %d rim %d glass %d paint %d\n",
+                    aTread, aSide, aRim, aGlass, aPaint);
+
+        expectTrue("T12: tire tread carries the rubber gloss", aTread == expect(kGlossRubber));
+        expectTrue("T12: tire sidewall carries the rubber gloss", aSide == expect(kGlossRubber));
+        expectTrue("T12: wheel rim carries the chrome gloss", aRim == expect(kGlossChrome));
+        expectTrue("T12: glass carries the glass gloss", aGlass == expect(kGlossGlass));
+        expectTrue("T12: plain body paint carries the paint gloss", aPaint == expect(kGlossPaint));
+
+        // The ordering is the property that actually matters, and it is what
+        // a regression to a constant alpha breaks first: if the mask ever goes
+        // uniform again these collapse to equal, whatever the value is.
+        expectTrue("T12: rubber is less reflective than paint", aTread < aPaint);
+        expectTrue("T12: paint is less reflective than chrome", aPaint < aRim);
+        expectTrue("T12: chrome is less reflective than glass", aRim < aGlass);
+
+        // And the whole-texture form of the same statement: a uniform mask has
+        // one distinct alpha value. This is the clause that fails loudest if
+        // someone reinstates `pixels_[idx + 3] = 255`.
+        bool seen[256] = {false};
+        int distinct = 0;
+        for (size_t i = 3; i < pixels.size(); i += 4) {
+            if (!seen[pixels[i]]) {
+                seen[pixels[i]] = true;
+                ++distinct;
+            }
+        }
+        std::printf("livery_test: T12 gloss mask has %d distinct values\n", distinct);
+        expectTrue("T12: the gloss mask is not a constant", distinct >= 5);
+    }
+
     if (g_failures == 0) {
         std::printf("livery_test: shading bands, stripe styles, and number decals all match expectations.\n");
         return 0;

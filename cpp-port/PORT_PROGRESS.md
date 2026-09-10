@@ -11851,3 +11851,79 @@ cross-file guard caught it on its first run, on the real drift rather than a
 synthetic one.
 
 `check_car_rig.py` PASS, `car_proportions.py` 17/17, `ctest` 36/36.
+
+## T12 — every material on the car reflected the same amount of sky
+
+Still chasing *"still wrong"*. This one was not geometry and not the livery
+art; it was the shader treating a tire and a windscreen as the same substance.
+
+### The measurement
+
+Patch medians off a rendered frame, against the texture the pixels come from:
+
+| surface | texture | rendered | |
+|---|---|---|---|
+| tire rubber | near-black | **(42, 72, 109)** | a blue-grey tire |
+| body green | (11, 131, 2) | (31, 229, 138) | blue lifted 2 → 138 |
+| greenhouse | dark navy, lum 0.12 | lum ~0.42 | a pale tan blob |
+
+`fs_car.sc` applied `reflectMix = 0.16 + fresnel * 0.35` to every texel. Paint,
+vinyl, rubber and glass all returned 16% of a bright sky before Fresnel. That
+uniform wash is what reads as chalky plastic, and it is not fixable by painting
+a better livery or building a rounder body — it sits on top of both.
+
+### The fix
+
+The livery's alpha channel was carrying a hardcoded 255 that nothing read. It
+is now a gloss (reflectivity) mask, written per material where each material is
+painted: rubber 0.04, matte trim 0.10, decal vinyl 0.20, paint 0.55, chrome
+0.85, glass 0.95. Gloss composites through `blend()` exactly like colour, so an
+antialiased glyph edge blends its material too — otherwise every letter would
+be ringed by one texel of the wrong reflectivity and shimmer as the car moves.
+
+Result, same patches, same camera:
+
+| surface | before | after |
+|---|---|---|
+| tire | (42, 72, 109) | (23, 39, 66) |
+| body green | (31, 229, 138) | (10, 213, 85) |
+| greenhouse | (105, 96, 97) | (76, 68, 70) |
+| white paint | (182, 208, 226) | (166, 198, 220) |
+
+The paint barely moves, which is the point: it *is* paint. Everything that
+isn't stops pretending to be.
+
+### Why a scalar in alpha, and not the colour tests it replaces
+
+I3 identified glass and chrome by RGB distance to livery.cpp's swatch
+constants. Three things were wrong with that, and all three are gone:
+
+- **It decayed exactly where it mattered.** A mip-filtered texel drifts off its
+  reference colour, so glass stopped being glass at distance — in the pack,
+  which is where nearly every car is actually seen. A scalar mip-filters into a
+  sensible in-between value instead.
+- **It needed a hand-verified collision radius**, because glass and tire rubber
+  are both "near black" and the thresholds had to be kept from catching one
+  another. A scalar cannot collide.
+- **It forced unrelated things to share an RGB constant.** The grille's centre
+  slat was chrome *only* because it borrowed SW_RIM's exact colour — a coupling
+  any future recolour would have silently broken. It now says it is chrome.
+
+The mask also fixed something the old shader got wrong in the other direction:
+matte decals and tires were taking the same clearcoat specular highlight as the
+paint they sit on. `spec` is weighted by gloss now too.
+
+### Guard
+
+Nine assertions in `livery_test`, against livery.h's own `kGloss*` constants
+rather than copies of them. Five pin specific materials, three pin the ordering
+rubber < paint < chrome < glass, and one counts distinct alpha values across
+the whole texture — the clause that fires loudest if anyone reinstates
+`pixels_[idx + 3] = 255`. Verified to fail on that exact revert: all nine
+failed, and the mask's 59 distinct values collapsed to 3.
+
+Remaining, and deliberately not touched here: the residual blue cast on dark
+materials is the AMBIENT hemisphere term, not the reflection — a grey tire lit
+by a blue sky. That belongs to T5 (sky and grade), the last item of the plan.
+
+`check_car_rig.py` PASS, `car_proportions.py` 17/17, `ctest` 36/36.

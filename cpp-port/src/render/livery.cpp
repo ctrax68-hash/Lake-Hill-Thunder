@@ -22,9 +22,55 @@ std::array<double, 3> mixC(const std::array<double, 3>& a, const std::array<doub
     return {a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t};
 }
 
+// T12: GLOSS, written into the livery's alpha channel.
+//
+// fs_car.sc applied the same reflectivity to every texel on the car -- a 0.16
+// base plus Fresnel, paint and rubber and vinyl alike. Measured on a rendered
+// frame, a BLACK TIRE came out (42, 72, 109): a blue-grey, because it was
+// reflecting 16% of a bright sky. The body's green (11, 131, 2) rendered
+// (31, 229, 138), its blue channel lifted from 2 to 138 by the same term.
+// That uniform sky wash over every material is what reads as chalky plastic,
+// and no amount of livery or geometry work can cancel it.
+//
+// The alpha channel was carrying a hardcoded 255 on every pixel and nothing
+// read it, so the mask is free -- no second texture, no extra fetch, no
+// vertex data. It is deliberately a SCALAR rather than a set of colour
+// branches: a scalar survives mip filtering, which is exactly where
+// fs_car.sc's RGB colour-distance material tests decayed -- at distance the
+// filtered texel drifts off the reference colour and glass/chrome silently
+// stop being glass/chrome, in the pack, at the distances where most cars are
+// actually seen.
+//
+// Values are reflectivity, not shininess: what fraction of the environment
+// this material returns. They live in livery.h so livery_test can assert
+// against the real numbers rather than a second copy of them.
+
 class Canvas {
 public:
     explicit Canvas(int size) : size_(size), pixels_((size_t)size * size * 4, 0) {}
+
+    // The gloss written by every subsequent blend(). Set it around a block
+    // that paints one material and set it back; the default is body paint,
+    // which is the overwhelming majority of the texture.
+    void setGloss(double g) { gloss_ = std::clamp(g, 0.0, 1.0); }
+    double gloss() const { return gloss_; }
+
+    // Sets gloss for its lifetime and restores whatever was there before.
+    // Used rather than paired set calls because the painting code below has
+    // early-outs and loops in it, and a missed restore silently makes a whole
+    // panel the wrong material -- the kind of defect that only shows up as
+    // "something looks a bit off" from one angle.
+    class ScopedGloss {
+    public:
+        ScopedGloss(Canvas& c, double g) : c_(c), prev_(c.gloss()) { c.setGloss(g); }
+        ~ScopedGloss() { c_.setGloss(prev_); }
+        ScopedGloss(const ScopedGloss&) = delete;
+        ScopedGloss& operator=(const ScopedGloss&) = delete;
+
+    private:
+        Canvas& c_;
+        double prev_;
+    };
 
     void fillRectPx(int x, int y, int w, int h, const std::array<double, 3>& color, double alpha = 1.0) {
         const int x0 = std::max(0, x), y0 = std::max(0, y);
@@ -207,11 +253,20 @@ private:
         pixels_[idx] = (uint8_t)std::lround(r * 255.0);
         pixels_[idx + 1] = (uint8_t)std::lround(g * 255.0);
         pixels_[idx + 2] = (uint8_t)std::lround(b * 255.0);
-        pixels_[idx + 3] = 255;
+        // T12: gloss composites exactly like colour does. A decal blitted at
+        // partial coverage (drawText's antialiased glyph edges, a 0.90-alpha
+        // sponsor plate) must blend its material into what is underneath, or
+        // every glyph would be ringed by a one-texel band of the wrong
+        // reflectivity -- visible as a shimmer along lettering as the car
+        // moves, which is worse than no mask at all.
+        const double ea = pixels_[idx + 3] / 255.0;
+        const double a = std::clamp(ea * (1 - alpha) + gloss_ * alpha, 0.0, 1.0);
+        pixels_[idx + 3] = (uint8_t)std::lround(a * 255.0);
     }
 
     int size_;
     std::vector<uint8_t> pixels_;
+    double gloss_ = kGlossPaint;
 };
 
 // carU() (index.html:2249): nose (x=2.51) -> 0.02, tail (x=-2.51) -> 0.78.
@@ -655,14 +710,22 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     c.fillRect(uRG1 + 0.008, GV0, kSeamW, GVH, seamShadow, 0.30);
 
     // ---- glass (index.html:2692-2727) ----
-    const std::array<double, 3> glassDark{16 / 255.0, 20 / 255.0, 30 / 255.0};
-    c.fillRect(uWS0, GV0, uWS1 - uWS0, GVH, glassDark);
-    c.fillRect(uRG0, GV0, uRG1 - uRG0, GVH, glassDark);
-    c.fillRect(uSG0, 0.335, uSG1 - uSG0, 0.075, glassDark);
-    c.fillRect(uSG0, 0.590, uSG1 - uSG0, 0.075, glassDark);
-    const std::array<double, 3> glassHi{26 / 255.0, 33 / 255.0, 46 / 255.0};
-    c.fillRect(uWS0, 0.47, uWS1 - uWS0, 0.06, glassHi);
-    c.fillRect(uRG0, 0.48, uRG1 - uRG0, 0.04, glassHi);
+    // T12: everything in this block is glass, so the whole block is scoped to
+    // kGlossGlass. This is the mask's single biggest contribution: the
+    // greenhouse was measured rendering as a pale tan blob, its dark navy
+    // paint (lum 0.12) coming out around 0.42, because it took the same sky
+    // wash as the bodywork and had nothing to say it was a mirror.
+    {
+        Canvas::ScopedGloss glassGloss(c, kGlossGlass);
+        const std::array<double, 3> glassDark{16 / 255.0, 20 / 255.0, 30 / 255.0};
+        c.fillRect(uWS0, GV0, uWS1 - uWS0, GVH, glassDark);
+        c.fillRect(uRG0, GV0, uRG1 - uRG0, GVH, glassDark);
+        c.fillRect(uSG0, 0.335, uSG1 - uSG0, 0.075, glassDark);
+        c.fillRect(uSG0, 0.590, uSG1 - uSG0, 0.075, glassDark);
+        const std::array<double, 3> glassHi{26 / 255.0, 33 / 255.0, 46 / 255.0};
+        c.fillRect(uWS0, 0.47, uWS1 - uWS0, 0.06, glassHi);
+        c.fillRect(uRG0, 0.48, uRG1 - uRG0, 0.04, glassHi);
+    }
     // G16 (NT2003 presentation plan): the windshield sun strip. Previously a
     // fixed near-white band; every car in the reference footage carries a
     // colored one instead, so it now takes the car's own secondary accent
@@ -735,6 +798,10 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // lit surface rather than picking up glass's damped/reflective
     // treatment or any emissive/chrome response never intended for them.
     {
+        // T12: painted tubing inside the car, not glass -- it must NOT take
+        // the greenhouse's mirror response, or the cage reads as a bright
+        // streak on the window rather than structure behind it.
+        Canvas::ScopedGloss cageGloss(c, kGlossMatte);
         const std::array<double, 3> cageBar{70 / 255.0, 72 / 255.0, 78 / 255.0};
         constexpr double kCageW = 6.0 / kLiveryTextureSize;
         const double t = kTrim / kLiveryTextureSize;
@@ -844,6 +911,10 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         // the other; the verification angles I used then happened to show the
         // same flank twice.
         auto badge = [&](double x, double vy, double h, const char* t, bool lightPlate, double a) {
+            // T12: a sponsor decal is printed vinyl applied over the paint. It
+            // is noticeably flatter than the clearcoat around it, and saying so
+            // is what stops the car reading as one uniformly shiny shell.
+            Canvas::ScopedGloss decalGloss(c, kGlossDecal);
             const double w = c.measureText(h, t);
             const double padX = h * 0.45, padY = h * 0.40;
             const std::array<double, 3>& plate = lightPlate ? inkLight : inkDark;
@@ -984,22 +1055,33 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
 
     // Nose: grille block flanked by headlight lenses.
     c.fillRect(kNoseU0, 0.15, kNoseUW, 0.70, tone(0.94));
-    c.fillRect(kNoseU0, 0.430, kNoseUW, 0.140, dark);                // grille
+    {
+        Canvas::ScopedGloss grilleGloss(c, kGlossMatte);  // T12: an opening, not paint
+        c.fillRect(kNoseU0, 0.430, kNoseUW, 0.140, dark);            // grille
+    }
     // I5 (car visual fidelity plan): grille slats, replacing what was a
     // single flat dark rectangle. The nose cap's UV is degenerate in U
     // (every corner shares u=0.02, see the V-band note above), so V is the
     // only axis that varies across the car's width -- a thin V band here
     // paints as a narrow vertical slat down the nose, and three of them
     // give the opening internal structure at the distance the grille is
-    // actually seen from. The centre slat reuses SW_RIM's exact RGB, so
-    // fs_car.sc's I3 rim color-match fires on it and it gets the tight
-    // chrome specular lobe for free -- no new shader constant and no new
-    // threshold to re-check for collisions. The outer two are a duller gray
-    // ~0.36 squared-distance from that reference, far outside I3's 0.01
-    // match radius, so only the centre bar glints.
-    for (double bv : {0.4575, 0.5315})
-        c.fillRect(kNoseU0, bv, kNoseUW, 0.011, std::array<double, 3>{112 / 255.0, 114 / 255.0, 120 / 255.0});
-    c.fillRect(kNoseU0, 0.4945, kNoseUW, 0.011, std::array<double, 3>{198 / 255.0, 200 / 255.0, 206 / 255.0});
+    // actually seen from.
+    //
+    // T12: the centre slat used to be chrome by COINCIDENCE -- it reused
+    // SW_RIM's exact RGB so fs_car.sc's colour-distance rim test would fire
+    // on it. That trick is gone with the colour branches, and it is no loss:
+    // "this texel is chrome" is now stated directly in the gloss mask instead
+    // of being smuggled through a shared RGB constant that any future recolour
+    // would have silently broken.
+    {
+        Canvas::ScopedGloss slatGloss(c, kGlossMatte);
+        for (double bv : {0.4575, 0.5315})
+            c.fillRect(kNoseU0, bv, kNoseUW, 0.011, std::array<double, 3>{112 / 255.0, 114 / 255.0, 120 / 255.0});
+    }
+    {
+        Canvas::ScopedGloss chromeGloss(c, kGlossChrome);
+        c.fillRect(kNoseU0, 0.4945, kNoseUW, 0.011, std::array<double, 3>{198 / 255.0, 200 / 255.0, 206 / 255.0});
+    }
     c.fillRect(kNoseU0, 0.412, kNoseUW, 0.012, accent);              // grille surround
     c.fillRect(kNoseU0, 0.576, kNoseUW, 0.012, accent);
     if (maskStyle == 0) {
@@ -1076,8 +1158,16 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // near-black -- distinct from SW_TREAD's own near-black so the two
     // stay independently checkable, but visually reads the same "tire
     // rubber" as the reference images.
-    c.fillRect(0.85, 0.0, 0.10, 0.5, std::array<double, 3>{12 / 255.0, 12 / 255.0, 13 / 255.0});  // tire rubber
-    c.fillRect(0.85, 0.5, 0.10, 0.5, std::array<double, 3>{14 / 255.0, 14 / 255.0, 16 / 255.0});  // sidewall (outer annulus, rubber)
+    // T12: rubber. This pair is the clearest evidence the uniform-reflectivity
+    // shader was wrong -- a black tire measured (42, 72, 109) on a rendered
+    // frame, a blue-grey, because it returned 16% of the sky like everything
+    // else did. Tires are the darkest thing on a race car and they were
+    // reading as painted metal.
+    {
+        Canvas::ScopedGloss rubber(c, kGlossRubber);
+        c.fillRect(0.85, 0.0, 0.10, 0.5, std::array<double, 3>{12 / 255.0, 12 / 255.0, 13 / 255.0});  // tire rubber
+        c.fillRect(0.85, 0.5, 0.10, 0.5, std::array<double, 3>{14 / 255.0, 14 / 255.0, 16 / 255.0});  // sidewall (outer annulus, rubber)
+    }
 
     // I1: the two new concentric wheel-cap bands, in the true open UV
     // margin (0.792, 0.85) -- livery.cpp's own nose/tail lamp decals
@@ -1085,15 +1175,26 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // U1=0.78, so u=0.80 was NOT actually free. u=0.83-0.85 stays reserved
     // for I2's mirror swatch. Coordinates must match gen_car_rig.py's
     // SW_TIRE_LETTER/SW_RIM constants.
-    c.fillRect(0.80, 0.0, 0.03, 0.5, std::array<double, 3>{130 / 255.0, 130 / 255.0, 132 / 255.0});  // tire lettering band
-    c.fillRect(0.80, 0.5, 0.03, 0.5, std::array<double, 3>{198 / 255.0, 200 / 255.0, 206 / 255.0});  // metallic rim/hub
+    {
+        // Lettering is moulded rubber, not paint; the rim is the one genuinely
+        // metallic thing on the car.
+        Canvas::ScopedGloss letterGloss(c, kGlossRubber);
+        c.fillRect(0.80, 0.0, 0.03, 0.5, std::array<double, 3>{130 / 255.0, 130 / 255.0, 132 / 255.0});  // tire lettering band
+    }
+    {
+        Canvas::ScopedGloss rimGloss(c, kGlossChrome);
+        c.fillRect(0.80, 0.5, 0.03, 0.5, std::array<double, 3>{198 / 255.0, 200 / 255.0, 206 / 255.0});  // metallic rim/hub
+    }
 
     // I2 (car visual fidelity plan): the new door-mirror housing's swatch --
     // dark plastic/trim, a fixed color rather than sampling the door's own
     // livery UV so the mirror can't accidentally inherit whatever number/
     // stripe graphic happens to land at that exact body coordinate on a
     // given car's scheme. Coordinates must match gen_car_rig.py's SW_MIRROR.
-    c.fillRect(0.825, 0.0, 0.02, 1.0, std::array<double, 3>{26 / 255.0, 26 / 255.0, 29 / 255.0});  // mirror housing
+    {
+        Canvas::ScopedGloss trimGloss(c, kGlossMatte);  // dark plastic trim
+        c.fillRect(0.825, 0.0, 0.02, 1.0, std::array<double, 3>{26 / 255.0, 26 / 255.0, 29 / 255.0});  // mirror housing
+    }
 
     // G8 (Gen-4 car overhaul): two more swatches for gen_car_rig.py's new
     // spoiler geometry, in the same reserved-margin column, a separate

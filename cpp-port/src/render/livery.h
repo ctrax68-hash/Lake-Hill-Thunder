@@ -88,6 +88,33 @@
 // see this phase's PORT_PROGRESS.md entry for the full accounting.
 inline constexpr int kLiveryTextureSize = 2048;
 
+// T12: GLOSS (reflectivity) written into the livery's ALPHA channel, which
+// until now carried a hardcoded 255 that nothing read. fs_car.sc samples it
+// to give each material its own environment response.
+//
+// WHY THIS IS A SCALAR IN ALPHA rather than the RGB colour-distance material
+// tests it replaces: a scalar mip-filters into a sensible in-between value,
+// where a colour test drifts off its reference as the texture filters and
+// silently stops firing -- in the pack, which is where nearly every car is
+// actually seen. It also cannot collide, unlike glass and tire rubber, which
+// are both "near black" and needed a hand-verified threshold radius to keep
+// them from matching each other.
+//
+// The measurement that forced it: with one reflectivity for every texel, a
+// BLACK TIRE rendered (42, 72, 109) -- a blue-grey -- and the body's
+// (11, 131, 2) green rendered (31, 229, 138), its blue lifted from 2 to 138.
+//
+// Declared here, not in livery.cpp, so livery_test can assert against the
+// real values instead of keeping its own copy of the numbers it checks --
+// the exact duplication that has repeatedly let guards pass while describing
+// geometry that no longer existed.
+inline constexpr double kGlossPaint = 0.55;   // clearcoat over body paint
+inline constexpr double kGlossGlass = 0.95;   // windows: nearly a mirror
+inline constexpr double kGlossChrome = 0.85;  // rim metal, trim
+inline constexpr double kGlossDecal = 0.20;   // printed vinyl is matte next to paint
+inline constexpr double kGlossRubber = 0.04;  // tires reflect essentially nothing
+inline constexpr double kGlossMatte = 0.10;   // grille mesh, cage bars, rubber trim
+
 // body: car.col (or CarPalette::White for a pace car -- not built here,
 // see this file's own note below). accent: auto-derived from body's
 // luminance (index.html:2867-2868), just like JS. num/idx/scheme: the
