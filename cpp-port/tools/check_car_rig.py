@@ -707,6 +707,64 @@ if _mw:
           "renderer.cpp's kWheelRadius matches gen_car_rig.py's WHEEL_RADIUS (cpp %s vs py %s)"
           % (_mw.group(1), R.WHEEL_RADIUS))
 
+# 5. T13: livery.cpp bakes ambient occlusion into the wheel arches and the
+# rocker, and it can only do that by naming where they are in UV space. Those
+# five numbers are DERIVED from this generator -- the U spans are the footprint
+# of the stations _arch_lip_y() actually carves, and the lip V is RINGV[K_LIP].
+# Nothing about that survives a re-authored station table, and the failure is
+# silent: the AO simply lands on the wrong part of the car and everything still
+# builds and still renders. Recompute and compare.
+print()
+print("baked AO footprint")
+_lip_hf = R.RINGF[R.K_LIP][0]
+
+
+def _arch_u_span(axle_x):
+    us = []
+    for (x, half_w, belt_y, y_low, roof_y) in R.CHASSIS_STATIONS:
+        y_base_lip = y_low + (_lip_hf / R.SHOULDER) * (belt_y - y_low)
+        if R._arch_lip_y(x, axle_x, y_base_lip) > y_base_lip + 1e-9:
+            us.append(R.car_u(x))
+    return (min(us), max(us)) if us else None
+
+
+_front = _arch_u_span(R._WHEEL_AXLE_X[0])
+_rear = _arch_u_span(R._WHEEL_AXLE_X[1])
+check(_front is not None and _rear is not None, "both axles carve an arch into the section")
+if _front and _rear:
+    _want = {
+        "kArchFrontU0": _front[0], "kArchFrontU1": _front[1],
+        "kArchRearU0": _rear[0], "kArchRearU1": _rear[1],
+        "kArchLipV": R.RINGV[R.K_LIP],
+    }
+    for _name, _py in _want.items():
+        _mm = _re.search(r"\b%s = ([0-9.]+)" % _name, _liv)
+        check(_mm is not None, "livery.cpp declares %s" % _name)
+        if _mm:
+            # 1e-4: these are written to 4 decimal places on purpose -- a
+            # texel at 2048 is 4.9e-4 wide, so agreeing to 1e-4 means the AO
+            # band starts on the same texel the generator's arch does.
+            check(abs(float(_mm.group(1)) - _py) < 1e-4,
+                  "livery.cpp's %s matches the generated arch (cpp %s vs py %.4f)"
+                  % (_name, _mm.group(1), _py))
+
+    # And the centres those spans imply must land on the ACTUAL AXLES. This is
+    # the assertion that would have caught the original defect: livery.cpp
+    # painted its arch shadow at carU(+-1.395), inherited from the JS source,
+    # and kept painting there after the axles moved to a real Cup car's short
+    # front / long rear overhang. The shadow ended up ~0.16 m along the car
+    # from the hole it represents, partly on the fender beside it.
+    for _label, _axle, _span in (("front", R._WHEEL_AXLE_X[0], _front),
+                                 ("rear", R._WHEEL_AXLE_X[1], _rear)):
+        _mid = 0.5 * (_span[0] + _span[1])
+        _axle_u = R.car_u(_axle)
+        # 0.012 is a real tolerance, not a rubber stamp: the arch span is
+        # sampled at discrete stations so its midpoint need not land exactly on
+        # the axle, but the defect this catches was 0.031 and 0.036 out.
+        check(abs(_mid - _axle_u) < 0.012,
+              "%s arch span is centred on its axle (span mid %.4f vs axle u %.4f)"
+              % (_label, _mid, _axle_u))
+
 print("\nverts %d  tris %d" % (len(R.positions), len(R.indices) // 3))
 print("check_car_rig: PASS" if ok else "check_car_rig: FAILURES ABOVE")
 sys.exit(0 if ok else 1)

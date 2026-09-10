@@ -241,6 +241,41 @@ public:
         }
     }
 
+    // T13: AMBIENT OCCLUSION. Darkens a band running from `fvEdge` (fully
+    // occluded) to `fvInner` (open), smoothstepped between, across [fu0, fu1).
+    // Works in either V direction, so the same call shape serves the +z flank
+    // (edge at v 0.985, inner below it) and the -z flank (edge at 0.015,
+    // inner above) without a second code path.
+    //
+    // It scales the GLOSS channel by the same factor as the colour, and that
+    // is the whole reason this is worth doing rather than just painting a dark
+    // stripe. Gloss drives fs_car.sc's reflectMix, so attenuating it is
+    // literally "this surface can see less of the environment" -- which is
+    // what occlusion IS. Darkening albedo alone would leave the recess still
+    // reflecting a full share of bright sky, and the sky is most of what makes
+    // the wheelhouse read as a lit blister instead of a hole.
+    void occludeBand(double fu0, double fu1, double fvEdge, double fvInner, double strength) {
+        const int x0 = std::max(0, (int)std::lround(fu0 * size_));
+        const int x1 = std::min(size_, (int)std::lround(fu1 * size_));
+        const double vLo = std::min(fvEdge, fvInner), vHi = std::max(fvEdge, fvInner);
+        const int y0 = std::max(0, (int)std::lround(vLo * size_));
+        const int y1 = std::min(size_, (int)std::lround(vHi * size_));
+        const double span = fvInner - fvEdge;
+        if (std::fabs(span) < 1e-9) return;
+        for (int py = y0; py < y1; ++py) {
+            const double v = (py + 0.5) / size_;
+            double t = std::clamp((v - fvEdge) / span, 0.0, 1.0);  // 0 at the edge, 1 at open
+            const double w = 1.0 - t * t * (3.0 - 2.0 * t);        // smoothstep, inverted
+            const double f = 1.0 - strength * w;
+            for (int px = x0; px < x1; ++px) {
+                const size_t idx = ((size_t)py * size_ + (size_t)px) * 4;
+                for (int k = 0; k < 4; ++k) {
+                    pixels_[idx + k] = (uint8_t)std::lround(pixels_[idx + k] * f);
+                }
+            }
+        }
+    }
+
     std::vector<uint8_t> take() { return std::move(pixels_); }
 
 private:
@@ -270,9 +305,36 @@ private:
 };
 
 // carU() (index.html:2249): nose (x=2.51) -> 0.02, tail (x=-2.51) -> 0.78.
+//
+// NOTE ON DOMAIN, because it has now caught two people. This takes RAW JS-scale
+// x. gen_car_rig.py's car_u() takes ITS station x, which is the same coordinate
+// already multiplied by HALF_LEN/2.51. The two functions agree at corresponding
+// points by construction -- that scaling is the entire reason it exists -- but
+// they are NOT interchangeable given the same number, and feeding one x to both
+// produces a plausible-looking disagreement of up to 0.0044 that is pure domain
+// error. check_car_rig.py's own glass-U section carries the same warning after
+// its first draft made exactly this mistake.
 double carU(double x) {
     return 0.02 + (2.51 - x) / 5.02 * 0.76;
 }
+
+// T13: WHERE THE WHEEL ARCHES ACTUALLY ARE, in this texture's UV.
+//
+// Derived from gen_car_rig.py rather than estimated: the U spans are the
+// footprint of the stations its _arch_lip_y() genuinely carves an opening
+// into, and kArchLipV is RINGV[K_LIP] -- the fender's bottom lip, the edge
+// where the recess stops. check_car_rig.py recomputes all five from the
+// generator and fails if this file drifts from them, the same guard the tail
+// island already has.
+//
+// They exist because the two decorations that had been standing in for the
+// arches -- the JS shadow rings and the H2 lip highlight -- were both placed
+// by hand against an older axle position and never moved when the wheels did.
+constexpr double kArchFrontU0 = 0.0878, kArchFrontU1 = 0.2285;
+constexpr double kArchRearU0 = 0.5052, kArchRearU1 = 0.6528;
+constexpr double kArchFrontCU = (kArchFrontU0 + kArchFrontU1) * 0.5;
+constexpr double kArchRearCU = (kArchRearU0 + kArchRearU1) * 0.5;
+constexpr double kArchLipV = 0.8848;  // RINGV[K_LIP]
 
 // G1b (NASCAR-Thunder gap-analysis plan, car UV/livery fix): every fill*
 // call above is fraction-based (fx/fy/fw/fh in [0,1]), so rendering into a
@@ -569,7 +631,22 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     c.fillRect(0, 0.948, 1.0, 0.052, kNearBlack);
 
     // wheel arches: graduated shadow rings (index.html:2670-2679).
-    for (double ux : {carU(1.395), carU(-1.395)}) {
+    //
+    // T13: THESE WERE PAINTED 0.031 OF THE TEXTURE AWAY FROM THE ARCHES.
+    //
+    // The centres came straight from the JS original as carU(+-1.395), and
+    // they were right when they were written. Then the axles moved -- the
+    // round that found the wheels sitting at +-WHEELBASE/2, centred in the
+    // body like a generic car instead of a Cup car's short nose and long deck
+    // -- and nothing brought these with them. The real openings are at
+    // u 0.158 and 0.576; the shadow was being painted at 0.189 and 0.611,
+    // about 0.16 m along the car, so the dark cavity sat PARTLY ON THE FENDER
+    // beside each opening. Nothing failed, because no guard related what this
+    // file paints to where gen_car_rig.py actually cuts the hole.
+    //
+    // The radius was fine: 0.071 against a real arch half-span of 0.0704.
+    // It was only ever in the wrong place.
+    for (double ux : {kArchFrontCU, kArchRearCU}) {
         for (double vy : {0.055, 0.945}) {
             c.fillCircle(ux, vy, 0.071, tone(0.9));
             c.fillCircle(ux, vy, 0.064, tone(0.55));
@@ -592,11 +669,24 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // file already uses elsewhere (rocker 0.055/0.945, beltline
     // 0.335/0.665) which the H1 decode check confirmed line up. A thin
     // bright line, the way a fender lip catches light along its edge.
+    // T13: same correction as the shadow rings above, plus two more. The V was
+    // hand-placed at 0.812/0.182 from an estimate of "ring index k=2/3", and
+    // the real lip -- RINGV[K_LIP], which is what K_LIP MEANS -- is at 0.8848,
+    // so the highlight was drawn 0.073 below the edge it represents, out on
+    // the open fender. And the rect was 0.056 wide against an arch opening
+    // 0.1407 wide, so it covered 40% of the lip it was meant to trace.
+    //
+    // The old comment admitted the derivation was by eye ("not re-derived from
+    // gen_car_rig.py here (this file has no import path to it)"). There is
+    // still no import path; what changed is that check_car_rig.py now reads
+    // these constants back out of this file and checks them against the
+    // generator, which is the same answer used for the tail island.
     const std::array<double, 3> archLip{
         std::min(1.0, body[0] * 1.35 + 0.05), std::min(1.0, body[1] * 1.35 + 0.05), std::min(1.0, body[2] * 1.35 + 0.05)};
-    for (double ux : {carU(1.395), carU(-1.395)}) {
-        c.fillRect(ux - 0.028, 0.812, 0.056, 0.006, archLip, 0.55);
-        c.fillRect(ux - 0.028, 0.182, 0.056, 0.006, archLip, 0.55);
+    for (const auto& arch : {std::pair{kArchFrontU0, kArchFrontU1}, std::pair{kArchRearU0, kArchRearU1}}) {
+        const double w = arch.second - arch.first;
+        c.fillRect(arch.first, kArchLipV - 0.003, w, 0.006, archLip, 0.55);
+        c.fillRect(arch.first, 1.0 - kArchLipV - 0.003, w, 0.006, archLip, 0.55);
     }
 
     // rubber/dirt smudge behind rear wheel arches only (index.html:2680-2685).
@@ -1139,6 +1229,53 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // per emit_quad()'s is_top rule. Sized and centred so a 2-digit number
     // stays clear of the tail cluster's u range above.
     drawNumber(c, num, 0.706, 0.50, 0.062, white, dark);
+
+    // ---- T13: baked ambient occlusion ----
+    //
+    // There is no ambient occlusion anywhere in this renderer, and the wheel
+    // arches are where that shows worst: the wheelhouse is a CONCAVE recess
+    // lit exactly as brightly as the convex fender wrapped around it, so each
+    // arch renders as a glowing blister with a dark slot in it rather than as
+    // a hole with a wheel in it. Same story, less severely, along the rocker,
+    // which is the shaded underside of the car and reads as fully lit paint.
+    //
+    // Painted here: after every stripe, decal and wordmark, because occlusion
+    // is a property of the SHAPE and applies to whatever happens to be painted
+    // on it -- a sponsor decal inside a wheel arch is in shadow too. And
+    // before the SW_* swatch column, which must never be touched: those are
+    // flat material references sampled by the wheel and spoiler geometry, and
+    // darkening them would darken every tire on the car.
+    //
+    // COORDINATES ARE DERIVED, NOT GUESSED. The arch U spans are the actual
+    // footprint of the stations gen_car_rig.py carves an arch into, computed
+    // from its own station table and _arch_lip_y(); the V edges are RINGV at
+    // the rocker and at K_LIP, i.e. the fender's bottom lip, which is where
+    // the recess stops and the visible fender begins. check_car_rig.py reads
+    // these five constants back out of this file and compares them against the
+    // generator, the same way it already pins the tail island and kWheelRadius
+    // -- so a re-authored station table cannot leave the AO painted over the
+    // wrong part of the car while everything still builds.
+    {
+        // Shares kArch* with the shadow rings and lip highlight above -- one
+        // definition of where the arch is, not three hand-placed guesses.
+
+        // The body wrap spans u [0.02, 0.78]; everything beyond is swatches.
+        constexpr double BODY_U0 = 0.02, BODY_U1 = 0.78;
+        constexpr double ROCKER_V = 0.985;  // RINGV[0], the floor/rocker edge
+
+        // Rocker: the whole length, a shallow band. Deliberately weaker than
+        // the arches -- the rocker is shaded, not enclosed.
+        c.occludeBand(BODY_U0, BODY_U1, ROCKER_V, 0.945, 0.34);
+        c.occludeBand(BODY_U0, BODY_U1, 1.0 - ROCKER_V, 0.055, 0.34);
+
+        // Arches: stronger, and reaching all the way up to the lip. Compounds
+        // with the rocker band where they overlap, which is correct -- the
+        // bottom of a wheelhouse is the most enclosed point on the car.
+        for (const auto& arch : {std::pair{kArchFrontU0, kArchFrontU1}, std::pair{kArchRearU0, kArchRearU1}}) {
+            c.occludeBand(arch.first, arch.second, ROCKER_V, kArchLipV, 0.55);
+            c.occludeBand(arch.first, arch.second, 1.0 - ROCKER_V, 1.0 - kArchLipV, 0.55);
+        }
+    }
 
     // G1c (NASCAR-Thunder gap-analysis plan, wheel/tire mesh upgrade): two
     // small fixed-color swatches in the U margin the body paint never

@@ -529,6 +529,56 @@ int main() {
         expectTrue("T12: the gloss mask is not a constant", distinct >= 5);
     }
 
+    // T13: baked ambient occlusion in the arches and along the rocker.
+    //
+    // The AO scales the gloss channel as well as the colour, which is the part
+    // worth guarding: gloss drives fs_car.sc's reflectMix, so an occluded
+    // surface seeing less of the environment is what stops a wheelhouse
+    // reading as a lit blister. A version that only darkened albedo would look
+    // almost right in a still and still reflect a full share of bright sky.
+    {
+        LiveryScheme scheme{0, 0, 0, CarPalette::White};
+        const auto pixels = buildLiveryPixels(red, 28, 1, &scheme);
+        auto alphaAt = [&](double u, double v) {
+            const int x = (int)(u * kLiveryTextureSize), y = (int)(v * kLiveryTextureSize);
+            return (int)pixels[((size_t)y * kLiveryTextureSize + (size_t)x) * 4 + 3];
+        };
+        auto lumAt = [&](double u, double v) {
+            const int x = (int)(u * kLiveryTextureSize), y = (int)(v * kLiveryTextureSize);
+            return luminance(pixelAt(pixels, x, y));
+        };
+
+        // Deep in the front wheelhouse vs the open door at the same height.
+        // 0.155 is the front arch centre, 0.40 is clear of both arches.
+        const int aArch = alphaAt(0.155, 0.980);
+        const int aOpen = alphaAt(0.400, 0.500);
+
+        // The rocker at a U clear of both arches: this is the band that is
+        // ONLY darkened by AO.
+        const int aRocker = alphaAt(0.400, 0.980);
+
+        // Past the lip the fender is convex and open: AO must NOT reach it, or
+        // the whole flank goes muddy. 0.860 is below kArchLipV (0.8848).
+        const int aFender = alphaAt(0.155, 0.860);
+
+        std::printf("livery_test: T13 AO -- wheelhouse %d, rocker %d, open body %d, fender-past-lip %d (gloss)\n",
+                    aArch, aRocker, aOpen, aFender);
+
+        // EVERY CLAUSE HERE READS THE GLOSS CHANNEL, and that is deliberate.
+        // The first draft asserted that the wheelhouse was dark in COLOUR, and
+        // it passed with the AO pass entirely commented out -- livery.cpp has
+        // painted a JS-inherited shadow ring into the arches since long before
+        // this, and the 3-tone shading already darkens the rocker, so colour
+        // there proves nothing about occlusion. Gloss is touched by nothing
+        // else, so it is the only channel that actually isolates this feature.
+        expectTrue("T13: the wheelhouse is occluded (gloss damped well below open bodywork)",
+                   aArch < aOpen * 3 / 4);
+        expectTrue("T13: the rocker is occluded along its whole length, not just at the arches",
+                   aRocker < aOpen * 9 / 10);
+        expectTrue("T13: AO stops at the fender lip and does not bleed onto the open flank",
+                   aFender > aOpen * 9 / 10);
+    }
+
     if (g_failures == 0) {
         std::printf("livery_test: shading bands, stripe styles, and number decals all match expectations.\n");
         return 0;

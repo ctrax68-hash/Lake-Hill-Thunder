@@ -11927,3 +11927,92 @@ materials is the AMBIENT hemisphere term, not the reflection — a grey tire lit
 by a blue sky. That belongs to T5 (sky and grade), the last item of the plan.
 
 `check_car_rig.py` PASS, `car_proportions.py` 17/17, `ctest` 36/36.
+
+## T13 — the wheel-arch shadow was painted 0.16 m from the wheel arch
+
+Set out to add ambient occlusion, on the grounds that there is none anywhere and
+the arches are where that shows. Two of the three things I believed at the start
+of this round were wrong, and the round is worth more for what that turned up.
+
+### Wrong belief 1: "no ambient occlusion anywhere"
+
+Not true of the arches. `livery.cpp` has painted JS-inherited *graduated shadow
+rings* into them since the port began. It IS true of the rocker and of the
+deeper wheelhouse, so there was still work here — but the arches were never
+unshaded.
+
+### Wrong belief 2: "livery.cpp's carU disagrees with the mesh"
+
+I measured the two U functions against each other, found up to 0.0044 of
+disagreement, and briefly had a systematic-skew bug. There is no bug. `carU()`
+takes RAW JS-scale x; `gen_car_rig.py`'s `car_u()` takes station x, the same
+coordinate already scaled by `HALF_LEN/2.51`. They agree at corresponding
+points by construction — that scaling is the entire reason it exists — and
+feeding the same number to both is pure domain error.
+
+`check_car_rig.py`'s glass-U section carries a comment warning about exactly
+this, written after its own first draft made the same mistake. I read past it
+and repeated it. Both functions now say so at their definitions.
+
+### What was actually wrong
+
+The shadow rings are centred at `carU(±1.395)`, straight from the JS source,
+and they were correct when written. Then the axles moved — the round that found
+the wheels sitting at `±WHEELBASE/2`, centred in the body like a generic car
+rather than a Cup car's short nose and long deck — and nothing brought the
+painted arch with them.
+
+| | painted at | actually at | error |
+|---|---|---|---|
+| front arch centre | u 0.1888 | u 0.1581 | 0.031 (~0.16 m of car) |
+| rear arch centre | u 0.6112 | u 0.5755 | 0.036 (~0.18 m of car) |
+| arch lip line | v 0.812 | v 0.8848 | 0.073 |
+| lip line width | 0.056 | 0.1407 | covered 40% of the lip |
+
+So the dark cavity was painted partly onto the fender *beside* each opening,
+and the lip highlight — the crisp sheet-metal edge — was drawn out on the open
+flank below the edge it represents. The ring RADIUS was right all along: 0.071
+against a real arch half-span of 0.0704. It was only ever in the wrong place.
+
+Nothing failed, because no guard related what livery.cpp paints to where
+gen_car_rig.py cuts the hole. The H2 comment was honest that its V was placed
+by eye ("not re-derived from gen_car_rig.py here (this file has no import path
+to it)"). There is still no import path; what changed is that check_car_rig.py
+now reads these five constants back out of the C++ and recomputes them from the
+generator's own station table and `_arch_lip_y()` — the tail-island answer,
+applied to the arches. It also asserts each arch span is centred on its axle,
+which is the clause that would have caught the original defect.
+
+### The AO itself
+
+One primitive, `Canvas::occludeBand()`, run over the rocker for the full length
+and over each arch up to the lip. It scales the GLOSS channel as well as the
+colour, and that is the point: gloss drives `fs_car.sc`'s `reflectMix`, so
+attenuating it says "this surface sees less of the environment", which is what
+occlusion is. Darkening albedo alone would leave a recess reflecting a full
+share of bright sky, and the sky is most of what made the wheelhouse read as a
+lit blister.
+
+Measured in the texture, front arch vs open door at the same V:
+
+| v | before | after |
+|---|---|---|
+| 0.980 | 16.8 | 5.0 |
+| 0.960 | 15.6 | 7.7 |
+| 0.940 | 19.1 | 13.1 |
+| 0.890 (past the lip) | 32.3 | 32.3 |
+
+### The guard, and its worthless first draft
+
+The first version asserted the wheelhouse was dark in COLOUR. **It passed with
+the entire AO pass commented out** — the JS shadow rings already darken the
+arches and the 3-tone shading already darkens the rocker, so colour there
+proves nothing about occlusion. That is the fourth guard this project has
+written that measured something other than what it claimed.
+
+Every clause now reads the GLOSS channel, which nothing else touches. Verified
+in both directions: with AO removed the two positive clauses fail (wheelhouse
+and rocker both read 140, identical to open bodywork), and with AO deliberately
+extended past the lip the bleed clause fails.
+
+`check_car_rig.py` PASS, `car_proportions.py` 17/17, `ctest` 36/36.
