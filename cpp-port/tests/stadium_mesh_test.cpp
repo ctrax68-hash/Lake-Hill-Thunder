@@ -291,6 +291,48 @@ int main() {
         }
     }
 
+    // T15: NOTHING PAINTED ON THE GROUND MAY FACE DOWNWARDS.
+    //
+    // fs_lit.sc lights every surface as
+    //     mix(hemiGround, hemiSky, clamp(n.y*0.5+0.5)) + sunColor * max(dot(n, sunDir), 0)
+    // so a horizontal quad whose normal points DOWN gets pure hemiGround and
+    // exactly zero sun. At the sunset preset hemiGround is 0x362e28, a dark
+    // brown, and that is not a subtle error: the start/finish line's WHITE
+    // checkers (authored 0.92, 0.92, 0.92) were rendering dark brown, so the
+    // finish line read as brown-and-black instead of white-and-black.
+    //
+    // It is invisible in code review -- addTri() derives each normal from its
+    // own winding, and the winding that produces a downward normal looks
+    // exactly as reasonable as the one that does not. It is invisible in a
+    // still too, unless you happen to know what colour a finish line is.
+    //
+    // Swept over the whole stadium mesh rather than asserted on the stripe
+    // alone, because any ground decal added later has the same 50/50 chance
+    // of being wound the wrong way.
+    {
+        for (const auto& t : TRACKS) {
+            const Track track(t);
+            std::vector<MeshVertex> mesh = buildStartFinishMesh(track);
+            Mulberry32 patchRng(1234);
+            const std::vector<MeshVertex> patches = buildSurfacePatchesMesh(track, t.stadium.patches, patchRng);
+            mesh.insert(mesh.end(), patches.begin(), patches.end());
+
+            int downFacing = 0, nearHorizontal = 0;
+            for (const MeshVertex& v : mesh) {
+                if (std::fabs(v.ny) < 0.90) continue;  // not a ground-plane quad
+                ++nearHorizontal;
+                if (v.ny < 0.0) ++downFacing;
+            }
+            std::printf("  [T15] %-22s ground verts: %d near-horizontal, %d facing down (of %zu total)\n",
+                        t.name.c_str(), nearHorizontal, downFacing, mesh.size());
+            char label[192];
+            std::snprintf(label, sizeof(label),
+                          "%s: every ground decal faces UP (%d of %d near-horizontal vertices face down)",
+                          t.name.c_str(), downFacing, nearHorizontal);
+            expectTrue(label, nearHorizontal > 0 && downFacing == 0);
+        }
+    }
+
     if (g_failures == 0) {
         std::printf("stadium_mesh_test: stand/pit-road/wall geometry all match expectations.\n");
         return 0;

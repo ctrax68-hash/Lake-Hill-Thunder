@@ -58,6 +58,38 @@ void addQuad(std::vector<MeshVertex>& out, const Vec3& a, const Vec3& b, const V
     addTri(out, a, c, d, color);
 }
 
+// T15: a quad painted ON the track surface, guaranteed to face UPWARDS.
+//
+// fs_lit.sc lights a surface as
+//     mix(hemiGround, hemiSky, clamp(n.y*0.5+0.5)) + sunColor * max(dot(n, sunDir), 0)
+// so a horizontal quad whose normal points DOWN receives pure hemiGround and
+// exactly zero sun. That is not a subtle few percent: at the sunset preset
+// hemiGround is 0x362e28, a dark brown, and the start/finish line's WHITE
+// checkers -- authored (0.92, 0.92, 0.92) -- were rendering (68, 54, 43). The
+// finish line was brown-and-black instead of white-and-black on every track.
+//
+// Every ground decal in this file was wound this way, so it was not a typo in
+// one place; it is what `(sa,lat0) -> (sb,lat0) -> (sb,lat1) -> (sa,lat1)`
+// produces given this track's s/lat orientation, which is easy to get wrong
+// and impossible to see in review -- addTri() derives the normal from the
+// winding, and the wrong winding reads exactly as sensibly as the right one.
+//
+// So this does not ask the caller to order vertices correctly. It fixes the
+// normal after the fact, which cannot be got wrong, and is why it exists as a
+// named helper rather than as a corrected argument order at each call site.
+void addGroundQuad(std::vector<MeshVertex>& out, const Vec3& a, const Vec3& b, const Vec3& c, const Vec3& d,
+                   const std::array<double, 3>& color) {
+    const size_t first = out.size();
+    addQuad(out, a, b, c, d, color);
+    for (size_t i = first; i < out.size(); ++i) {
+        if (out[i].ny < 0.0) {
+            out[i].nx = -out[i].nx;
+            out[i].ny = -out[i].ny;
+            out[i].nz = -out[i].nz;
+        }
+    }
+}
+
 // quadUV() (index.html:1692-1696): same two-triangle split, but each
 // vertex carries a UV instead of a baked color (Phase 5e's textured-lit
 // pipeline samples the atlas texture for color instead).
@@ -886,8 +918,8 @@ std::vector<MeshVertex> buildSurfacePatchesMesh(const Track& track, int patches,
         const int steps = std::max(2, (int)std::lround(len / 3.0));
         for (int k = 0; k < steps; ++k) {
             const double sa = s0 + len * k / steps, sb = s0 + len * (k + 1) / steps;
-            addQuad(out, crossPt(track, sa, lat0, kRaise), crossPt(track, sb, lat0, kRaise),
-                    crossPt(track, sb, lat1, kRaise), crossPt(track, sa, lat1, kRaise), col);
+            addGroundQuad(out, crossPt(track, sa, lat0, kRaise), crossPt(track, sb, lat0, kRaise),
+                          crossPt(track, sb, lat1, kRaise), crossPt(track, sa, lat1, kRaise), col);
         }
     }
     return out;
@@ -903,8 +935,9 @@ std::vector<MeshVertex> buildStartFinishMesh(const Track& track) {
     for (int i = 0; i < kCols; ++i) {
         const double lat0 = -halfW + i * cellW, lat1 = lat0 + cellW;
         const auto& color = (i % 2 == 0) ? kCheckerWhite : kCheckerBlack;
-        addQuad(out, crossPt(track, -kStripeLen / 2, lat0, kRaise), crossPt(track, kStripeLen / 2, lat0, kRaise),
-                crossPt(track, kStripeLen / 2, lat1, kRaise), crossPt(track, -kStripeLen / 2, lat1, kRaise), color);
+        addGroundQuad(out, crossPt(track, -kStripeLen / 2, lat0, kRaise),
+                      crossPt(track, kStripeLen / 2, lat0, kRaise), crossPt(track, kStripeLen / 2, lat1, kRaise),
+                      crossPt(track, -kStripeLen / 2, lat1, kRaise), color);
     }
     return out;
 }

@@ -12092,3 +12092,63 @@ tested. `check_car_rig.py` for the mesh, `car_proportions.py` for the shape,
 `livery_test` for the texture, and now this for anything rendered.
 
 `check_car_rig.py` PASS, `car_proportions.py` 17/17, `ctest` 36/36.
+
+## T15 — the finish line was brown, on every track, since the port began
+
+### The defect
+
+`fs_lit.sc` lights a surface as
+
+    mix(hemiGround, hemiSky, clamp(n.y*0.5+0.5)) + sunColor * max(dot(n, sunDir), 0)
+
+so a horizontal quad whose normal points DOWN gets pure `hemiGround` and
+exactly zero sun. At the sunset preset `hemiGround` is `0x362e28`, a dark
+brown. **Every ground decal in `stadium_mesh.cpp` was wound that way** — 60 of
+60 near-horizontal vertices on three tracks, 276 of 276 on Cedar Valley.
+
+The start/finish line's WHITE checkers, authored (0.92, 0.92, 0.92), rendered
+**(68, 54, 43)**. The finish line was brown-and-black instead of
+white-and-black, on all four tracks, in every frame this project has ever
+produced. After the fix they render (184, 190, 199), with the black cells
+unmoved at (4, 5, 8) and the asphalt untouched.
+
+It survived because it is invisible from every direction. `addTri()` derives
+each normal from its own winding, and the winding that yields a downward normal
+reads exactly as sensibly as the one that does not; there is no warning, no
+assert, and the result is merely *dark* rather than obviously broken. It is
+also not a typo in one place — it is what
+`(sa,lat0) -> (sb,lat0) -> (sb,lat1) -> (sa,lat1)` produces given this track's
+s/lat orientation, so every author of a ground decal got it wrong identically.
+
+### The fix
+
+`addGroundQuad()`, which flips the normal upward after the fact rather than
+asking the caller to order four vertices correctly. That distinction is the
+point: I derived the winding by hand at the start of this round, got the sign
+right, then talked myself out of it when a guard disagreed. A helper that
+cannot be got wrong is worth more than a corrected argument order at each call
+site, and any ground decal added later inherits it.
+
+### Two instrument failures, in one round, on the way
+
+**Verifying the guard was not enough — I had to verify it RAN.** The first
+version compiled with an error, `cmake --build` exited non-zero, and my
+`grep -E " error "` filter (leading space) did not match `error:`. So I ran a
+STALE binary, saw "all match expectations", and concluded the normals were
+fine — the exact opposite of the truth. It was only when I added a `printf` and
+saw *no output at all* that the stale binary gave itself away.
+
+A guard that passes is not evidence. A guard that passes **and printed the
+measurement it claims to have taken** is. Every guard in this project that
+prints its numbers caught its own failure quickly; this one hid for as long as
+it stayed silent.
+
+**And the label printed garbage** — `TrackData::name` is a `std::string`, passed
+to `%s`. Undefined behaviour that happened to render as mojibake rather than
+crash, which at least made it obvious.
+
+Between these and T14's byte order, this session alone has now produced three
+instrument failures and the project six. The through-line is unchanged: the
+apparatus needs the same scepticism as the subject.
+
+`check_car_rig.py` PASS, `car_proportions.py` 17/17, `ctest` 36/36.
