@@ -11731,3 +11731,73 @@ the C++ left a floating-wheel test mesh compiled in, and several minutes of
 investigation ran against it.
 
 `check_car_rig.py` PASS, `car_proportions.py` 16/16, `ctest` 36/36.
+
+## T10 — the numbers really were backwards
+
+The reported bug: *"Numbers are backwards."* It was real, it was on one flank
+only, and this round both fixed it and — more importantly — built the guard
+that should have caught it the first time.
+
+### Why one flank reverses
+
+`car_u(x)` is the same function of x all the way around the section, so u
+advances toward the TAIL on both flanks. The two flanks are viewed from
+opposite sides, so exactly one of them shows u advancing right-to-left on
+screen and reads backwards. Text has to be painted mirrored on that half.
+
+That half is the **high-v** one, established from the generator's own vertex
+data rather than from a comment claiming it:
+
+```
+v > 0.5 : z from +0.131 to +0.921
+v < 0.5 : z from -0.921 to -0.131
+```
+
+`v > 0.5 <=> z > 0`, exactly, with no overlap. Combined with u running 0.020 at
+the nose to 0.780 at the tail, the +z flank is the one that reverses.
+
+### Verified three ways, not argued once
+
+| instrument | result |
+|---|---|
+| generator vertex data | `v > 0.5 <=> z > 0`, no overlap |
+| render, showcase azimuth 90 (+z flank) | matches its texture **FLIPPED** — reads forwards |
+| render, showcase azimuth 270 (−z flank) | matches its texture **AS PAINTED** — reads forwards |
+
+The two renders are the point. Comparing a render against the *texture it was
+built from* is decidable; deciding whether a wrapped, foreshortened glyph
+"looks backwards" is not, and that judgement had already been made wrong twice
+this session off six-pixel glyphs in turntable tiles. Both comparisons were
+done at 2560x1440 and cropped to the door number.
+
+### The actual defect
+
+`drawText()` gained a `mirrorU` argument when the wordmarks landed. **`drawNumber()`
+never did.** So every wordmark on the car was handed correctly and every door
+number on the +z flank was reversed — which is precisely, and only, what was
+reported.
+
+### The guard, and proof it works
+
+New in `livery_test.cpp`: the two door numbers must be horizontal mirrors of
+each other. Asserting the mirror alone is not enough — a symmetric glyph (an 8,
+a 0) mirrors onto itself, so the guard also requires the halves to agree
+markedly *better* mirrored than superimposed. Car 91 carries the roster's least
+symmetric digits, which is what makes that gap wide.
+
+Verified to FAIL on the code it describes, per the standing rule:
+
+| state | mirrored | identity |
+|---|---|---|
+| fixed (shipping) | 0.989 | 0.550 |
+| mirror removed | 0.550 | **0.997** |
+
+That 0.997 is the shipped bug stated as a number: both door numbers painted
+identically, so one of them had to read backwards.
+
+Camera note, for the next round: the showcase orbit's eye-height clamp lifts
+the camera overhead on the infield side of a banked track, so azimuth 270 on
+THUNDER OVAL is not a profile. CEDAR VALLEY gives a usable one. That clamp has
+now confused a reading twice.
+
+`check_car_rig.py` PASS, `car_proportions.py` 16/16, `ctest` 36/36.

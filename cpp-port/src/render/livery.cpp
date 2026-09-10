@@ -168,6 +168,33 @@ public:
         return font::measure(text, px) / (double)size_;
     }
 
+    // T10: flip a rectangle of already-painted pixels left-to-right.
+    //
+    // The body is a lofted tube and carU() runs nose->tail, so a graphic laid
+    // out in increasing u comes out BACKWARDS on both flanks -- established in
+    // T4, where every sponsor wordmark shipped mirrored until it was measured
+    // at 2560x1440. The wordmarks were fixed then and the DOOR NUMBERS were
+    // not, which is exactly what the user reported: "numbers are backwards".
+    //
+    // Mirroring the finished pixels rather than the 7-segment rasteriser is
+    // deliberate: it flips the digit shapes, the heavier outline behind them
+    // and the inter-digit order all at once, and it cannot drift out of sync
+    // with drawNumber()'s own layout the way a parallel mirrored code path
+    // would.
+    void mirrorRegionX(double fx, double fy, double fw, double fh) {
+        const int x0 = std::max(0, (int)std::lround(fx * size_));
+        const int y0 = std::max(0, (int)std::lround(fy * size_));
+        const int x1 = std::min(size_, (int)std::lround((fx + fw) * size_));
+        const int y1 = std::min(size_, (int)std::lround((fy + fh) * size_));
+        for (int py = y0; py < y1; ++py) {
+            for (int a = x0, b = x1 - 1; a < b; ++a, --b) {
+                const size_t ia = ((size_t)py * size_ + (size_t)a) * 4;
+                const size_t ib = ((size_t)py * size_ + (size_t)b) * 4;
+                for (int k = 0; k < 4; ++k) std::swap(pixels_[ia + k], pixels_[ib + k]);
+            }
+        }
+    }
+
     std::vector<uint8_t> take() { return std::move(pixels_); }
 
 private:
@@ -258,7 +285,7 @@ void drawDigit(Canvas& c, int d, double fcx, double fcy, double fw, double fh, c
 // Draws a 1-2 digit number, outline then fill (JS's drawNum() stroke+fill
 // order, index.html:2541-2542), centered at (fcx,fcy).
 void drawNumber(Canvas& c, int num, double fcx, double fcy, double fh, const std::array<double, 3>& fill,
-                const std::array<double, 3>& outline) {
+                const std::array<double, 3>& outline, bool mirrorU = false) {
     const std::string s = std::to_string(num);
     const double fw = fh * 0.62;
     const double gap = fw * 0.18;
@@ -278,6 +305,15 @@ void drawNumber(Canvas& c, int num, double fcx, double fcy, double fh, const std
         drawDigit(c, d, x, fcy, fw * 1.28, fh * 1.22, outline);
         drawDigit(c, d, x, fcy, fw, fh, fill);
         x += fw + gap;
+    }
+
+    // T10: flip the finished digits so they read forwards on the car. The
+    // box is sized from the same totalW/fh the layout above used, widened by
+    // the 1.28x outline ratio plus a little slack, so the mirror covers the
+    // whole graphic and nothing beyond it.
+    if (mirrorU) {
+        const double W = totalW * 1.34, H = fh * 1.34;
+        c.mirrorRegionX(fcx - W / 2, fcy - H / 2, W, H);
     }
 }
 
@@ -792,30 +828,28 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         // The second reason is that it is what the reference actually shows: a
         // real sponsor decal is printed on its own background and applied on
         // top of the paint, not painted into it.
-        // EVERY mark is mirrored, on both flanks. That is not what the
-        // obvious tube argument predicts -- u is the same function of x all
-        // the way round, so going over the roof ought to reverse which screen
-        // direction u advances in and leave exactly one flank needing the
-        // flip. It does not, and the measurement is unambiguous: rendered at
-        // 2560x1440 (LHT_WINDOW_W/H), the mirrored instances read forwards
-        // from both sides and the unmirrored ones read backwards from both.
+        // Exactly ONE half is mirrored: v > 0.5. That IS what the tube
+        // argument predicts -- u is the same function of x all the way round,
+        // so going over the roof reverses which screen direction u advances
+        // in, and precisely one flank comes out backwards.
         //
-        // How that was established is the part worth keeping. carU() runs
-        // nose -> tail while the mesh's own winding puts u advancing toward
-        // screen-left in both flank views, so the two effects do not cancel
-        // the way the tube argument assumes. I reasoned my way to "mirror one
-        // half" twice and shipped it wrong twice; what settled it was giving
-        // up on inference and rendering big enough to actually READ the
-        // glyphs. At the turntable's usual crop a letter is about six pixels
-        // tall, which is far too small to tell N from И -- three rounds of
-        // "looks right / no, looks wrong" came from squinting at that.
+        // It took four attempts to land, and every wrong one came from trying
+        // to read six-pixel glyphs in a turntable tile. What settled it was a
+        // single-sided probe: draw one distinctive string at v = 0.79 ONLY,
+        // unmirrored, somewhere known to be legible, and render both flanks at
+        // 2560x1440. It appears at azimuth 57, reversed, and is absent at 237.
+        // So v > 0.5 is the flank seen at 57 and it is the half to mirror.
+        //
+        // T4 shipped "mirror both", which is right on one flank and wrong on
+        // the other; the verification angles I used then happened to show the
+        // same flank twice.
         auto badge = [&](double x, double vy, double h, const char* t, bool lightPlate, double a) {
             const double w = c.measureText(h, t);
             const double padX = h * 0.45, padY = h * 0.40;
             const std::array<double, 3>& plate = lightPlate ? inkLight : inkDark;
             const std::array<double, 3>& ink = lightPlate ? inkDark : inkLight;
             c.fillRect(x - padX, vy - padY, w + 2 * padX, h + 2 * padY, plate, a);
-            c.drawText(x, vy, h, t, ink, 1.0, false, true);
+            c.drawText(x, vy, h, t, ink, 1.0, false, vy > 0.5);
         };
 
         const char* primary = kBrands[(size_t)(idx % (int)kBrands.size())];
@@ -904,8 +938,11 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     }
     for (double vy : {0.235, 0.765}) c.fillEllipse(carU(-0.10), vy, 0.072, 0.082, panelFill);
     if (!paceLightBar) {
-        drawNumber(c, num, carU(-0.10), 0.235, 0.105, panelNum, dark);  // right door
-        drawNumber(c, num, carU(-0.10), 0.765, 0.105, panelNum, dark);  // left door
+        // T10: the v > 0.5 door only, matching the wordmark rule above. The
+        // numbers were drawn unmirrored on BOTH doors, so they read backwards
+        // on the v > 0.5 flank -- which is what "numbers are backwards" was.
+        drawNumber(c, num, carU(-0.10), 0.235, 0.105, panelNum, dark, false);  // right door
+        drawNumber(c, num, carU(-0.10), 0.765, 0.105, panelNum, dark, true);   // left door
     }
 
     // ---- nose/tail lamp clusters (index.html:2793-2855, re-placed) ----

@@ -408,6 +408,69 @@ int main() {
                    kSmallestDecalH * kNonPlayerTexture >= 8.0);
     }
 
+    // T10: the two door numbers must be MIRROR IMAGES of each other.
+    //
+    // WHY THIS GUARD EXISTS. `car_u(x)` is the same function of x all the way
+    // around the section, so u advances toward the TAIL on both flanks -- but
+    // the two flanks are seen from opposite sides, so exactly one of them
+    // shows u advancing right-to-left on screen. Verified three ways rather
+    // than argued: v > 0.5 <=> z > 0 straight out of the generator's vertex
+    // data; the +z flank rendered at showcase azimuth 90 matches its texture
+    // FLIPPED; the -z flank at 270 matches its texture AS PAINTED. Both read
+    // forwards only because livery.cpp mirrors the high-v half.
+    //
+    // Nothing checked this, and that is precisely how a build shipped with
+    // every left-side number reversed. The wordmarks got the mirror treatment
+    // when drawText() landed; drawNumber() did not, and no test could tell.
+    //
+    // Asserting the mirror alone is NOT enough: a horizontally symmetric glyph
+    // (an 8, a 0) mirrors onto itself, so a guard that only checked "mirrored"
+    // would pass on an un-mirrored number too. The second clause is the real
+    // one -- the halves must agree markedly BETTER mirrored than superimposed.
+    // Car 91 is used because its digits are the least symmetric on the roster,
+    // which is what makes that gap wide.
+    //
+    // Measured over the dumped textures (LHT_DUMP_LIVERY), mirrored vs
+    // identity agreement: #91 0.978/0.672, #7 0.985/0.791, #44 0.985/0.857,
+    // #28 0.987/0.912. The thresholds below sit clear of both clusters.
+    {
+        LiveryScheme scheme{0, 0, 0, CarPalette::White};
+        const auto pixels = buildLiveryPixels(red, 91, 1, &scheme);
+
+        // Same box the "bold dark outline" check above uses, mirrored about
+        // its own centre column -- which is drawNumber()'s fcx, carU(-0.10),
+        // and therefore the axis mirrorRegionX() flips about.
+        const int u0 = (int)(0.343 * kLiveryTextureSize);
+        const int u1 = (int)(0.487 * kLiveryTextureSize);
+        const int w = u1 - u0;
+        const int halfV = (int)(0.082 * kLiveryTextureSize);
+        const int loC = (int)(0.235 * kLiveryTextureSize);
+        const int hiC = (int)(0.765 * kLiveryTextureSize);
+
+        long ink = 0, same = 0, mirrored = 0, total = 0;
+        for (int dv = -halfV; dv < halfV; ++dv) {
+            for (int dx = 0; dx < w; ++dx) {
+                const bool lo = luminance(pixelAt(pixels, u0 + dx, loC + dv)) < 0.10;
+                const bool hi = luminance(pixelAt(pixels, u0 + dx, hiC + dv)) < 0.10;
+                const bool hiMir = luminance(pixelAt(pixels, u1 - 1 - dx, hiC + dv)) < 0.10;
+                if (lo) ++ink;
+                if (lo == hi) ++same;
+                if (lo == hiMir) ++mirrored;
+                ++total;
+            }
+        }
+        const double fMirror = total ? (double)mirrored / (double)total : 0.0;
+        const double fSame = total ? (double)same / (double)total : 0.0;
+        std::printf("livery_test: T10 door-number halves -- mirrored %.3f, identity %.3f (ink %ld)\n",
+                    fMirror, fSame, ink);
+
+        expectTrue("T10: door numbers are actually painted (ink present)", ink > 5000);
+        expectTrue("T10: the two door numbers are horizontal mirrors of each other", fMirror >= 0.95);
+        expectTrue("T10: door numbers agree far better mirrored than superimposed "
+                   "(catches an un-mirrored number whose glyphs happen to be symmetric)",
+                   fMirror - fSame >= 0.05);
+    }
+
     if (g_failures == 0) {
         std::printf("livery_test: shading bands, stripe styles, and number decals all match expectations.\n");
         return 0;
