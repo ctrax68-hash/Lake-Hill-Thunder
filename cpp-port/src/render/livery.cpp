@@ -965,6 +965,70 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         c.fillRect((uRG0 + uRG1) * 0.5 - kCageW * 0.5, GV0 + t, kCageW, GVH - 2 * t, cageBar, 0.55);
     }
 
+    // ---- T18: the driver's window net, and the roof flaps ----
+    //
+    // Two pieces of hardware every Gen-4 carries that nothing here had, both
+    // instantly recognisable and both free of geometry.
+    //
+    // THE NET IS ON ONE SIDE ONLY, and that is the point of it. It hangs over
+    // the driver's window, and in this series the cars run counter-clockwise
+    // with the driver on the left -- +z, which car_v() maps to HIGH v (that
+    // mapping is asserted straight out of the generator's vertex data in
+    // check_car_rig.py, and it is what T10's mirror rule turns on).
+    //
+    // So this is the first mark on the car that is deliberately NOT mirrored
+    // left-to-right. Until now both flanks were identical but for the mirrored
+    // text, which is part of why the field reads as repeated copies of one
+    // object: a real pack shows you a netted window on one side and open glass
+    // on the other, and you see both sides constantly while racing.
+    {
+        Canvas::ScopedGloss netGloss(c, kGlossMatte);  // webbing, not glass
+        // Dark grey webbing, not black. Painted black it measured 6/255 from
+        // the glass behind it -- invisible as albedo, and relying entirely on
+        // the gloss difference to show. Real net webbing is a dusty grey that
+        // catches light while the glass beside it reflects sky, so it reads as
+        // a DARK matte panel against a bright mirror. Giving it its own albedo
+        // means it survives whether or not the light happens to put a
+        // reflection on that window.
+        const std::array<double, 3> netBar{54 / 255.0, 54 / 255.0, 58 / 255.0};
+        // The driver's side glass band, from the glass block above.
+        constexpr double kNetV0 = 0.590, kNetVH = 0.075;
+        const double nu0 = uSG0, nu1 = uSG1;
+        const double barW = 5.0 / kLiveryTextureSize;
+        // Horizontal webbing straps -- the dominant read on a real net -- plus
+        // a sparser vertical set, and a frame around the whole opening.
+        for (int i = 1; i < 5; ++i)
+            c.fillRect(nu0, kNetV0 + kNetVH * i / 5.0 - barW * 0.5, nu1 - nu0, barW, netBar, 0.92);
+        for (int i = 1; i < 4; ++i)
+            c.fillRect(nu0 + (nu1 - nu0) * i / 4.0 - barW * 0.5, kNetV0, barW, kNetVH, netBar, 0.80);
+        const double frameW = 7.0 / kLiveryTextureSize;
+        c.fillRect(nu0, kNetV0, nu1 - nu0, frameW, netBar);
+        c.fillRect(nu0, kNetV0 + kNetVH - frameW, nu1 - nu0, frameW, netBar);
+        c.fillRect(nu0, kNetV0, frameW, kNetVH, netBar);
+        c.fillRect(nu1 - frameW, kNetV0, frameW, kNetVH, netBar);
+    }
+
+    // Roof flaps: two panels let into the roof skin ahead of the backlite,
+    // which pop up when a car turns backwards. They sit on the roof plateau
+    // (v 0.42-0.58, the band gen_car_rig.py's crown is authored to land on),
+    // so they read from the chase camera and from above -- and the roof is
+    // otherwise a blank panel carrying only the number.
+    {
+        Canvas::ScopedGloss flapGloss(c, kGlossMatte);
+        const std::array<double, 3> flapEdge{30 / 255.0, 30 / 255.0, 34 / 255.0};
+        const double edge = 4.0 / kLiveryTextureSize;
+        // Just aft of the roof's leading edge, inboard of the drip rails.
+        for (const auto& f : {std::pair{0.470, 0.436}, std::pair{0.470, 0.534}}) {
+            const double fu = f.first, fv = f.second;
+            constexpr double fw = 0.052, fh = 0.030;
+            c.fillRect(fu, fv, fw, fh, tone(kShadowM), 0.45);   // the recess
+            c.fillRect(fu, fv, fw, edge, flapEdge);             // and its outline
+            c.fillRect(fu, fv + fh - edge, fw, edge, flapEdge);
+            c.fillRect(fu, fv, edge, fh, flapEdge);
+            c.fillRect(fu + fw - edge, fv, edge, fh, flapEdge);
+        }
+    }
+
     // ---- G16 (NT2003 presentation plan): contingency decal chips ----
     // livery.h's note #6 previously listed these as "skipped for scope
     // control (low visual value relative to implementation cost)". That call

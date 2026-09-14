@@ -665,6 +665,44 @@ int main() {
                    deck.second > deck.first * 3 / 2);
     }
 
+    // T18: the driver's window net -- the first mark on the car that must NOT
+    // be mirrored.
+    //
+    // This is the exact inverse of T10's guard, and both are needed. Nearly
+    // everything on the livery has to be mirrored between the flanks so it
+    // reads forwards from either side; the net must NOT be, because a real car
+    // has webbing over the driver's window and open glass on the other side.
+    // A future change that "fixes" the asymmetry by mirroring everything would
+    // pass T10 and silently put a net on both windows.
+    //
+    // Driver's side is +z, which car_v() maps to HIGH v -- the same mapping
+    // check_car_rig.py asserts out of the generator's vertex data.
+    {
+        LiveryScheme scheme{0, 0, 0, CarPalette::White};
+        const auto pixels = buildLiveryPixels(red, 28, 1, &scheme);
+
+        // Count webbing bars crossed by a vertical scan through each side-glass
+        // band: a strap is a run brighter than the glass it sits on.
+        auto barsCrossed = [&](double v0, double v1) {
+            const int x = (int)(0.450 * kLiveryTextureSize);  // mid side glass
+            int bars = 0;
+            bool onBar = false;
+            for (int y = (int)(v0 * kLiveryTextureSize); y < (int)(v1 * kLiveryTextureSize); ++y) {
+                const bool bright = luminance(pixelAt(pixels, x, y)) > 0.10;
+                if (bright && !onBar) ++bars;
+                onBar = bright;
+            }
+            return bars;
+        };
+        const int driverBars = barsCrossed(0.595, 0.660);
+        const int passengerBars = barsCrossed(0.340, 0.405);
+        std::printf("livery_test: T18 window net -- driver side %d bars, passenger side %d\n",
+                    driverBars, passengerBars);
+
+        expectTrue("T18: the driver's window carries net webbing", driverBars >= 3);
+        expectTrue("T18: the passenger window is open glass, not netted", passengerBars == 0);
+    }
+
     if (g_failures == 0) {
         std::printf("livery_test: shading bands, stripe styles, and number decals all match expectations.\n");
         return 0;

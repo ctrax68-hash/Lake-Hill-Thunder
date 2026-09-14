@@ -12272,3 +12272,55 @@ to the plate: cap height/2 plus drawText's own padding.
 Verified failing on both wordmarks reverted to AlongU.
 
 `check_car_rig.py` PASS, `car_proportions.py` 17/17, `ctest` 36/36.
+
+## T18 — a window net, and the first mark that must NOT be mirrored
+
+Continuing on the cars. Before reaching for hardware I measured whether the
+"body is too soft" impression was real, and it is not: at the mid-door station
+the section already turns only 2.9-5.0 degrees per ring point across the door
+face (a flat slab) with a 22.7-degree break at the beltline. The section is not
+what is missing. Missing HARDWARE is.
+
+### The net
+
+Every Gen-4 carries a window net over the driver's window, and nothing here had
+one. It costs no geometry -- it is painted onto the side-glass band.
+
+**It is on one side only, and that is the interesting part.** The driver sits on
+the left, +z, which `car_v()` maps to HIGH v -- the same mapping
+`check_car_rig.py` asserts straight out of the generator's vertex data, and the
+one T10's mirror rule turns on. So this is the first mark on the car that is
+deliberately asymmetric. Until now the two flanks were identical but for
+mirrored text, which is part of why a field reads as repeated copies of one
+object; a real pack shows netted glass on one side and open glass on the other,
+and you see both constantly while racing.
+
+Roof flaps went on at the same time, for the same reason: the roof is a large
+surface the chase camera stares at, and it carried nothing but the number.
+
+### Painting it black was wrong, and measuring caught it
+
+First cut used near-black webbing on near-black glass: **6/255 of separation**,
+invisible as albedo, relying entirely on the gloss difference to show. Now a
+dusty grey with its own albedo, so it reads as a dark matte panel against a
+bright mirror whether or not the light happens to put a reflection on that
+window.
+
+The texture crop I looked at first also *appeared* to show the net covering only
+part of the glass. It did not -- sampling the actual rows showed straps at
+v 0.605/0.620/0.635/0.650 spanning the full glass width. That is the third time
+this session a resized crop has misled where a numeric profile settled it in one
+call.
+
+### The guard is the exact inverse of T10's, and both are needed
+
+T10 asserts the door numbers ARE mirrored between the flanks. This asserts the
+net is NOT. A future change that "tidied up" the asymmetry by mirroring
+everything would pass T10 and silently put a net on both windows -- so the
+inverse assertion has to exist explicitly.
+
+Driver side 8 bars, passenger side 0. Verified by simulating exactly that
+regression, painting the net on both bands: the passenger clause fails at 4
+bars.
+
+`check_car_rig.py` PASS, `car_proportions.py` 17/17, `ctest` 36/36.
