@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <utility>
 
 namespace {
 
@@ -600,6 +601,68 @@ int main() {
                    aRocker < aOpen * 9 / 10);
         expectTrue("T13: AO stops at the fender lip and does not bleed onto the open flank",
                    aFender > aOpen * 9 / 10);
+    }
+
+    // T17: the hood and deck wordmarks run ACROSS the car, not along it.
+    //
+    // They used to be ordinary along-u badges, and the render showed the hood
+    // reading backwards. That is not a missing mirror flag: a string running
+    // nose-to-tail along a HORIZONTAL surface reads left-to-right from one
+    // side of the car and right-to-left from the other, so it is always
+    // backwards from one of them and no flag can fix it. Running it across the
+    // car makes it read from the front, which is where you stand to look at a
+    // hood.
+    //
+    // The deck is the exact 180-degree counterpart, and it cannot be checked
+    // in a render -- from every showcase angle the deck lid is edge-on behind
+    // the spoiler. So it is checked here, where the geometry is decidable: a
+    // rotated run is TALLER in v than it is WIDE in u, which is precisely the
+    // property that was false before and is the thing the fix changes.
+    {
+        LiveryScheme scheme{0, 0, 0, CarPalette::White};
+        const auto pixels = buildLiveryPixels(red, 28, 1, &scheme);
+
+        // Bounding box of the light lettering inside a window around a mark.
+        auto inkAspect = [&](double cu, double cv, double halfU, double halfV, const char* what) {
+            int u0 = kLiveryTextureSize, u1 = -1, v0 = kLiveryTextureSize, v1 = -1;
+            const int x0 = (int)((cu - halfU) * kLiveryTextureSize);
+            const int x1 = (int)((cu + halfU) * kLiveryTextureSize);
+            const int y0 = (int)((cv - halfV) * kLiveryTextureSize);
+            const int y1 = (int)((cv + halfV) * kLiveryTextureSize);
+            for (int y = y0; y < y1; ++y) {
+                for (int x = x0; x < x1; ++x) {
+                    // Light ink on its own dark plate -- the same signature the
+                    // T4 wordmark guard uses, for the same reason: counting
+                    // dark pixels would measure the plate, not the letters.
+                    if (luminance(pixelAt(pixels, x, y)) > 0.70) {
+                        u0 = std::min(u0, x); u1 = std::max(u1, x);
+                        v0 = std::min(v0, y); v1 = std::max(v1, y);
+                    }
+                }
+            }
+            const int w = u1 - u0, h = v1 - v0;
+            std::printf("livery_test: T17 %s wordmark ink %d wide (u) x %d tall (v)\n", what, w, h);
+            return std::pair<int, int>{w, h};
+        };
+
+        // Windows sized to the PLATE, not generously around it. The first
+        // version used halfU 0.050 for the hood and swept in the scheme's own
+        // white blocks, which sit right beside the mark on this style -- the
+        // measured box came out 204x302 instead of the plate's own ~44 wide,
+        // and the aspect ratio it was testing was mostly those blocks. Plate
+        // half-width is cap height/2 + drawText's 0.40*h padding.
+        const auto hood = inkAspect(0.170, 0.500, 0.0215, 0.095, "hood");
+        const auto deck = inkAspect(0.620, 0.500, 0.0165, 0.075, "deck");
+
+        expectTrue("T17: hood wordmark is painted at all", hood.first > 0 && hood.second > 0);
+        expectTrue("T17: deck wordmark is painted at all", deck.first > 0 && deck.second > 0);
+        // A run of several letters at one cap height is far longer than it is
+        // tall, so once rotated the v extent must dominate by a wide margin.
+        // Before the fix these read roughly 5:1 the other way.
+        expectTrue("T17: the hood wordmark runs across the car, not along it",
+                   hood.second > hood.first * 3 / 2);
+        expectTrue("T17: the deck wordmark runs across the car, not along it",
+                   deck.second > deck.first * 3 / 2);
     }
 
     if (g_failures == 0) {

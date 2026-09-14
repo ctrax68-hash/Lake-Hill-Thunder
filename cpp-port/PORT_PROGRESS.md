@@ -12220,3 +12220,55 @@ and the fix was to make the test describe the new truth rather than to restore
 the old coordinates.
 
 `check_car_rig.py` PASS, `car_proportions.py` 17/17, `ctest` 36/36.
+
+## T17 — the hood wordmark was backwards, and no mirror flag could have fixed it
+
+Continuing on the cars. The 3/4 front render showed the hood reading
+**"ИЯƎVJAH"**.
+
+### Why this is not the T10 bug again
+
+T10 was a missing mirror on one FLANK, and mirroring fixed it. This is a
+different shape of problem and it took getting wrong once to see it.
+
+The hood is a HORIZONTAL surface. A string running nose-to-tail along it reads
+left-to-right from one side of the car and right-to-left from the other, so it
+is necessarily backwards from one of them. **There is no correct value for a
+mirror flag here — only a choice of which side to be wrong on.**
+
+Real cars run hood and deck lettering ACROSS the car, so it reads from the
+front and the rear respectively, which is where you stand to look at them.
+`drawText()` gained two rotated directions that do exactly that:
+
+- `FrontFacing` (hood): glyphs advance toward decreasing v, cap tops toward the
+  tail.
+- `RearFacing` (deck): the exact 180-degree counterpart.
+
+### The half I got wrong, and how the render caught it
+
+I derived the run direction correctly and the CAP direction backwards, reasoning
+that letter tops should point toward the viewer. They point away: standing in
+front of a car, the near edge of the hood is the BOTTOM of your view, so the
+tops point toward the windshield. The first render came out rotated but
+mirrored.
+
+Worth recording that the flat texture is NOT the arbiter for these. Correct
+hood text looks mirrored in the dumped texture -- exactly as the high-v door
+numbers do, and for the same reason. The car is the only thing that can say.
+
+### The deck could not be checked in a render at all
+
+From every showcase angle the deck lid is edge-on behind the spoiler, and the
+mark is 0.018 of the texture. Rather than assert it from the derivation alone
+-- having just been wrong about half of that derivation -- it is checked where
+the property IS decidable: a rotated run is far taller in v than it is wide in
+u. Hood 39x236, deck 29x162; before the fix, 63x39 and 47x27.
+
+The guard's own first cut measured 204x302 for the hood, because a window sized
+generously around the mark swept in the scheme's white blocks sitting right
+beside it. It was measuring the blocks, not the wordmark. Windows are now sized
+to the plate: cap height/2 plus drawText's own padding.
+
+Verified failing on both wordmarks reverted to AlongU.
+
+`check_car_rig.py` PASS, `car_proportions.py` 17/17, `ctest` 36/36.

@@ -149,9 +149,41 @@ public:
     // advances in, and a string that reads forward on one flank necessarily
     // reads backward on the other. The 3D render is the only thing that can
     // say which -- see the T4 note where the marks are placed.
+    // T17: which way a string runs across the texture.
+    //
+    // AlongU is the original: glyphs advance with u, i.e. nose -> tail. That is
+    // right for a FLANK, where u is the horizontal axis as you look at the car.
+    // It is wrong for the hood and the deck, which are horizontal surfaces: a
+    // string running nose-to-tail along the top of the car reads left-to-right
+    // from one side and right-to-left from the other, so it is necessarily
+    // backwards from one of them. No mirror flag can fix that -- there is no
+    // correct answer, only a choice of which side to be wrong on.
+    //
+    // Real cars solve it by running hood and deck lettering ACROSS the car, so
+    // it reads from the front and the back respectively, which are the
+    // canonical places to stand. These two directions do that.
+    //
+    //   FrontFacing -- the hood. Reads correctly standing ahead of the car.
+    //                  Glyphs advance toward DECREASING v; cap tops point
+    //                  toward the TAIL (increasing u).
+    //   RearFacing  -- the deck. Reads correctly standing behind the car.
+    //                  Glyphs advance toward INCREASING v; cap tops point
+    //                  toward the NOSE (decreasing u).
+    //
+    // The cap-top direction is the half I got wrong first time and the render
+    // caught: standing in front of a car, a hood wordmark's letter tops point
+    // AWAY from you, toward the windshield -- the near edge of the hood is the
+    // BOTTOM of your view, not the top. The deck is the mirror of that.
+    //
+    // Both derived the same way T10's flank rule was: a viewer ahead of the
+    // car looks along -X, so their left-to-right runs from +z to -z, i.e. high
+    // v to low v, and "up" for them is the nose. A viewer behind looks along
+    // +X and gets both the opposite.
+    enum class TextDir { AlongU, FrontFacing, RearFacing };
+
     void drawText(double fx, double fy, double fh, const std::string& text,
                   const std::array<double, 3>& color, double alpha = 1.0, bool centered = false,
-                  bool mirrorU = false) {
+                  bool mirrorU = false, TextDir dir = TextDir::AlongU) {
         const font::AtlasImage& atlas = liveryFontAtlas();
         if (!atlas.ok || text.empty()) return;
 
@@ -182,13 +214,45 @@ public:
             // being flipped in place.
             const double gx0 = mirrorU ? runW - b.x : a.x;
             const double gx1 = mirrorU ? runW - a.x : b.x;
-            const int x0 = (int)std::floor(ox + gx0), x1 = (int)std::ceil(ox + gx1);
-            const int y0 = (int)std::floor(oy + a.y), y1 = (int)std::ceil(oy + b.y);
+            // Glyph-space extents: rx runs along the string, ry down the glyph.
+            const double ry0 = a.y, ry1 = b.y;
+            // Destination box, per direction. The rotated cases transpose the
+            // two axes -- the run occupies v and the glyph height occupies u.
+            int x0, x1, y0, y1;
+            if (dir == TextDir::AlongU) {
+                x0 = (int)std::floor(ox + gx0);
+                x1 = (int)std::ceil(ox + gx1);
+                y0 = (int)std::floor(oy + ry0);
+                y1 = (int)std::ceil(oy + ry1);
+            } else if (dir == TextDir::FrontFacing) {
+                x0 = (int)std::floor(ox - ry1);
+                x1 = (int)std::ceil(ox - ry0);
+                y0 = (int)std::floor(oy - gx1);
+                y1 = (int)std::ceil(oy - gx0);
+            } else { // RearFacing
+                x0 = (int)std::floor(ox + ry0);
+                x1 = (int)std::ceil(ox + ry1);
+                y0 = (int)std::floor(oy + gx0);
+                y1 = (int)std::ceil(oy + gx1);
+            }
             if (x1 <= x0 || y1 <= y0) continue;
             for (int py = std::max(0, y0); py < std::min(size_, y1); ++py) {
                 for (int pxx = std::max(0, x0); pxx < std::min(size_, x1); ++pxx) {
-                    double tx = (pxx + 0.5 - (ox + gx0)) / (gx1 - gx0);
-                    const double ty = (py + 0.5 - (oy + a.y)) / (double)(b.y - a.y);
+                    // Recover glyph-space (rx, ry) from the texture pixel, then
+                    // normalise. Inverse of the placement above, per direction.
+                    double rx, ry;
+                    if (dir == TextDir::AlongU) {
+                        rx = pxx + 0.5 - ox;
+                        ry = py + 0.5 - oy;
+                    } else if (dir == TextDir::FrontFacing) {
+                        rx = oy - (py + 0.5);
+                        ry = ox - (pxx + 0.5);
+                    } else { // RearFacing
+                        rx = py + 0.5 - oy;
+                        ry = pxx + 0.5 - ox;
+                    }
+                    double tx = (rx - gx0) / (gx1 - gx0);
+                    const double ty = (ry - ry0) / (ry1 - ry0);
                     if (tx < 0.0 || tx >= 1.0 || ty < 0.0 || ty >= 1.0) continue;
                     if (mirrorU) tx = 1.0 - tx;
                     const double u = a.u + (b.u - a.u) * tx, v = a.v + (b.v - a.v) * ty;
@@ -1043,13 +1107,42 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         for (double vy : {0.145, 0.815}) badge(0.290, vy, 0.014, second, true, 0.90);
         for (double vy : {0.262, 0.702}) badge(0.185, vy, 0.013, third, false, 0.85);
 
-        // Hood wordmark, centred on the hood's own U span. Reads nose-on in
-        // every mirror. Plated like the rest: the scheme's own white blocks sit
-        // right here on several styles and a bare mark half-vanishes into them.
-        badge(0.170 - c.measureText(0.024, primary) * 0.5, 0.480, 0.024, primary, false, 0.88);
-        // Deck wordmark at 0.62, not 0.70: the dump caught it landing directly
-        // underneath the tail number.
-        badge(0.620 - c.measureText(0.018, second) * 0.5, 0.480, 0.018, second, false, 0.88);
+        // T17: the hood and deck wordmarks run ACROSS the car, not along it.
+        //
+        // They used to be ordinary along-u badges, and the render showed the
+        // hood reading "\u0418\u042f\u018eVJAH" -- backwards. That was not a missing
+        // mirror flag. A string running nose-to-tail along a HORIZONTAL surface
+        // reads left-to-right from one side of the car and right-to-left from
+        // the other, so it is always backwards from one of them and no flag can
+        // fix it. Real cars run hood and deck lettering across the car so it
+        // reads from the front and the rear, which is where you stand to look
+        // at them, and that is what TextDir::FrontFacing/RearFacing do.
+        //
+        // The plate has to transpose with the text: a rotated run is as TALL as
+        // the string is long and as WIDE as the cap height, so the padding
+        // swaps axes too. Hand-rolled here rather than teaching badge() a
+        // direction, because badge()'s whole job is the flank layout and this
+        // is a different geometry, not a variant of it.
+        auto flatBadge = [&](double ux, double vy, double h, const char* t, Canvas::TextDir dir) {
+            const double runLen = c.measureText(h, t);
+            const double padU = h * 0.40, padV = h * 0.45;
+            // Anchor so the run is centred on (ux, vy) whichever way it runs.
+            const double v0 = dir == Canvas::TextDir::FrontFacing ? vy - runLen * 0.5 : vy - runLen * 0.5;
+            c.fillRect(ux - h * 0.5 - padU, v0 - padV, h + 2 * padU, runLen + 2 * padV, inkDark, 0.88);
+            // drawText's origin for a rotated run is the START of the string:
+            // FrontFacing advances toward decreasing v, so it starts at the
+            // HIGH-v end; RearFacing starts at the low-v end.
+            const double vStart = dir == Canvas::TextDir::FrontFacing ? vy + runLen * 0.5 : vy - runLen * 0.5;
+            const double uStart = dir == Canvas::TextDir::FrontFacing ? ux + h * 0.5 : ux - h * 0.5;
+            c.drawText(uStart, vStart, h, t, inkLight, 1.0, false, false, dir);
+        };
+        {
+            Canvas::ScopedGloss decalGloss(c, kGlossDecal);
+            flatBadge(0.170, 0.500, 0.024, primary, Canvas::TextDir::FrontFacing);
+            // Deck wordmark at 0.62, not 0.70: the dump caught it landing
+            // directly underneath the tail number.
+            flatBadge(0.620, 0.500, 0.018, second, Canvas::TextDir::RearFacing);
+        }
 
         // A lettered contingency row beside the chips, which G16 left as blank
         // colour blocks because when it shipped there was no way to draw text
