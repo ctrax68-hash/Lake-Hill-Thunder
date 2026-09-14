@@ -688,6 +688,52 @@ if _m:
     check(max(abs(a - b) for a, b in zip(_cpp, _py)) < 1e-9,
           "livery.cpp's tail island matches gen_car_rig.py's (cpp %s vs py %s)" % (_cpp, _py))
 
+# T16: the nose island, guarded exactly as the tail's is above. Same three
+# questions -- does it collide with a swatch, does the cap actually unwrap into
+# it, and does anything else land in it -- because the nose has the same
+# failure modes and one extra: the two islands now sit in the SAME reserved
+# column, so an overlap between them would silently paint the grille onto the
+# rear panel.
+print()
+print("nose fascia UV island")
+_NISL = (R.NOSE_UV_U0, R.NOSE_UV_V0, R.NOSE_UV_U1, R.NOSE_UV_V1)
+
+_nbad = [(n, uv) for n, uv in _SWATCHES.items()
+         if _NISL[0] - _MARGIN <= uv[0] <= _NISL[2] + _MARGIN
+         and _NISL[1] - _MARGIN <= uv[1] <= _NISL[3] + _MARGIN]
+check(not _nbad,
+      "no SW_* swatch sits within %.2f of the nose island%s"
+      % (_MARGIN, "" if not _nbad else " -- collides with " + ", ".join(n for n, _ in _nbad)))
+
+# The two islands must not overlap each other.
+_overlap = not (_NISL[2] < _ISL[0] or _ISL[2] < _NISL[0] or
+                _NISL[3] < _ISL[1] or _ISL[3] < _NISL[1])
+check(not _overlap,
+      "the nose and tail islands do not overlap (nose %s vs tail %s)" % (_NISL, _ISL))
+
+_nose_uvs = [R.uvs[i] for i in range(*R.NOSE_CAP_RANGE)]
+_ninside = lambda uv: (_NISL[0] - 1e-6 <= uv[0] <= _NISL[2] + 1e-6
+                       and _NISL[1] - 1e-6 <= uv[1] <= _NISL[3] + 1e-6)
+check(all(_ninside(uv) for uv in _nose_uvs),
+      "every nose-cap vertex unwraps into the island (%d/%d)"
+      % (sum(1 for uv in _nose_uvs if _ninside(uv)), len(_nose_uvs)))
+_nbody_in = sum(1 for i, uv in enumerate(R.uvs)
+                if not (R.NOSE_CAP_RANGE[0] <= i < R.NOSE_CAP_RANGE[1]) and _ninside(uv))
+check(_nbody_in == 0, "no non-nose vertex samples the island (%d do)" % _nbody_in)
+
+# And livery.cpp must be painting the same rectangle the mesh samples --
+# the tail island's own history is why: the C++ and the generator each held
+# their own copy of the numbers and a drift painted the panel onto the tire
+# swatches.
+_mn = _re.search(r"constexpr double NU0 = ([0-9.]+), NU1 = ([0-9.]+);\s*\n\s*"
+                 r"constexpr double NV0 = ([0-9.]+), NV1 = ([0-9.]+);", _liv)
+check(_mn is not None, "livery.cpp still declares the nose island rectangle")
+if _mn:
+    _ncpp = tuple(float(g) for g in _mn.groups())
+    _npy = (R.NOSE_UV_U0, R.NOSE_UV_U1, R.NOSE_UV_V0, R.NOSE_UV_V1)
+    check(max(abs(a - b) for a, b in zip(_ncpp, _npy)) < 1e-9,
+          "livery.cpp's nose island matches gen_car_rig.py's (cpp %s vs py %s)" % (_ncpp, _npy))
+
 # 4. T11: renderer.cpp carries its OWN copy of the wheel radius, as
 # `constexpr double kWheelRadius`, with nothing but a trailing comment saying
 # it "must match tools/gen_car_rig.py's WHEEL_RADIUS". It feeds

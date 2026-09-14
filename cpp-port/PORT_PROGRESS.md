@@ -12152,3 +12152,71 @@ instrument failures and the project six. The through-line is unchanged: the
 apparatus needs the same scepticism as the subject.
 
 `check_car_rig.py` PASS, `car_proportions.py` 17/17, `ctest` 36/36.
+
+## T16 — the nose could only ever be painted in stripes
+
+### The defect, and the reasoning that left it in place
+
+T8 gave the tail cap a real 2D UV island and explicitly left the nose on the
+old single-column scheme, with the stated reason that "the chase camera is the
+view that matters and it never shows the nose."
+
+That was true of the player's own car and false of every other car on track.
+In a 20-car field the thing most often filling the screen is the BACK of the
+car ahead — which is what T8 fixed — and the thing filling a grid, spotter or
+replay view is the FRONT of the ones beside you. The nose also carries the
+grille, the headlight decals and the air dam, which is most of what identifies
+a stock car head-on.
+
+Until now every nose-cap vertex shared one `u`, so the entire front fascia
+sampled a single texture column and could only be painted in vertical stripes.
+**The three thin V bands livery.cpp drew as a "grille" were not a stylistic
+choice — they were the only mark the UV could express.** I5's own comment says
+so outright: "The nose cap's UV is degenerate in U ... so V is the only axis
+that varies across the car's width."
+
+### The fix
+
+`NOSE_UV_*` and `_nose_uv()`, mirroring the tail's island against the same
+constraints: u 0..0.80 is the body wrap, u > 0.80 is the deliberately
+full-height SW_* swatch column, and the swatch sample points sit at v 0.25 /
+0.5 / 0.75. The tail took v 0.020–0.150, clearing 0.25 by 0.10; the nose takes
+the mirror-image gap at v 0.850–0.980, clearing 0.75 by the same 0.10.
+
+Deliberately NOT mirrored in u relative to the tail. Both islands are painted
+by someone looking AT the face they describe, so "texture-left" means the same
+thing in both; making one the mirror of the other would put the same feature on
+opposite sides of two rectangles stacked in the same atlas, which is a trap
+dressed as a convenience.
+
+The fascia now carries a grille with real HORIZONTAL slats, a chrome surround,
+an accent bar, per-mask-style headlight decals (which is what a Gen-4 actually
+has — stickers on a blank fascia, not lenses) and a lower intake.
+
+`_cap_v()` is deleted rather than left unused: it is exactly the helper that
+gets picked up again later because it looks like the obvious way to UV a cap.
+
+### Guards
+
+Four new clauses in `check_car_rig.py`, mirroring the tail's, plus one the tail
+did not need: **the two islands must not overlap**, since they now share the
+same reserved column and an overlap would silently paint the grille onto the
+rear panel. Verified failing on the old UV — "every nose-cap vertex unwraps
+into the island (0/798)" — and on a livery.cpp that had not yet declared the
+rectangle.
+
+### A stale guard, correctly caught by ctest
+
+`livery_test` asserted the grille's centre slat decoded to SW_RIM's EXACT RGB,
+because that equality was the whole mechanism by which it picked up
+`fs_car.sc`'s chrome specular lobe. T12 deleted those colour branches in favour
+of the gloss mask, so the equality had already stopped meaning anything —
+re-asserting it would have been pinning a coincidence. Rewritten to state the
+thing directly: the surround carries chrome GLOSS, and the opening stays dark
+between its slats.
+
+Worth noting which way this went. The test failed because the code was right,
+and the fix was to make the test describe the new truth rather than to restore
+the old coordinates.
+
+`check_car_rig.py` PASS, `car_proportions.py` 17/17, `ctest` 36/36.

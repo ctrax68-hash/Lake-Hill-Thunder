@@ -1181,8 +1181,11 @@ for i in range(len(RINGS) - 1):
 # side -- came out smeared into radial wedges around a bullseye. Mapping v
 # from z instead lays those bands out as vertical stripes across the tail,
 # which is how G16 drew them and what the old flat cap quad produced.
-def _cap_v(z, wmax):
-    return min(0.97, max(0.03, 0.5 + (z / wmax) * 0.47))
+# T16: _cap_v() is gone. It mapped a cap vertex's LATERAL position to v while
+# every cap vertex shared its station's single u, which is the defect described
+# below -- and with the nose now on its own island, nothing calls it. Deleting
+# it rather than leaving it is the point: it is exactly the sort of helper that
+# gets picked up again later because it looks like the obvious way to UV a cap.
 
 # T8: A REAL UV ISLAND FOR THE TAIL PANEL.
 #
@@ -1221,6 +1224,49 @@ def _tail_uv(p, wmax, y_lo, y_hi):
     t = min(1.0, max(0.0, t))
     return (TAIL_UV_U0 + s * (TAIL_UV_U1 - TAIL_UV_U0),
             TAIL_UV_V1 - t * (TAIL_UV_V1 - TAIL_UV_V0))
+
+# T16: THE SAME ISLAND FOR THE NOSE.
+#
+# T8 gave the tail a real 2D unwrap and left the nose on the single-column
+# scheme, with the stated reason that "the chase camera is the view that
+# matters and it never shows the nose". That was true of the player's own car
+# and false of every other car on track: in a 20-car field the thing most often
+# filling the screen is the BACK of the car ahead -- which T8 fixed -- and the
+# thing filling a spotter/replay/grid view is the front of the ones beside you.
+# The nose also carries the grille, the headlight decals and the bumper cover,
+# which is most of what identifies a stock car head-on.
+#
+# Until now every nose vertex shared one u, so the entire front fascia sampled a
+# single texture column and could only ever be painted in vertical stripes. The
+# grille livery.cpp draws is three thin V bands for exactly that reason -- it is
+# not a stylistic choice, it is the only thing the UV allowed.
+#
+# Placement mirrors the tail's, for the same reasons and against the same
+# constraints: u 0..0.80 is the body wrap, u > 0.80 is the full-height SW_*
+# swatch column, and the swatch sample points sit at v 0.25 / 0.5 / 0.75. The
+# tail took v 0.020-0.150, clearing v=0.25 by 0.10. This takes the mirror-image
+# gap at the top, clearing v=0.75 by the same 0.10. check_car_rig.py asserts no
+# SW_* point lands inside, that every nose-cap vertex unwraps into it, and that
+# no other vertex does.
+NOSE_UV_U0, NOSE_UV_U1 = 0.852, 0.995
+NOSE_UV_V0, NOSE_UV_V1 = 0.850, 0.980
+
+def _nose_uv(p, wmax, y_lo, y_hi):
+    """Lateral -> u, height -> v, across the reserved nose-fascia island.
+
+    Deliberately NOT mirrored in u relative to _tail_uv. Both islands are
+    painted by livery.cpp looking AT the face they describe, so 'texture-left'
+    means the same thing to whoever paints them; making one a mirror of the
+    other would put the same feature on opposite sides of two rectangles that
+    sit one above the other in the same atlas, which is a trap rather than a
+    convenience.
+    """
+    s = 0.5 + (p[2] / wmax) * 0.5
+    t = (p[1] - y_lo) / (y_hi - y_lo) if y_hi > y_lo else 0.5
+    s = min(1.0, max(0.0, s))
+    t = min(1.0, max(0.0, t))
+    return (NOSE_UV_U0 + s * (NOSE_UV_U1 - NOSE_UV_U0),
+            NOSE_UV_V1 - t * (NOSE_UV_V1 - NOSE_UV_V0))
 
 # K1 (car visual fidelity plan, part 3): the nose apex's forward offset.
 # Every cap vertex used to sit in the station's own YZ plane -- the apex's
@@ -1276,13 +1322,13 @@ for (idx, outward) in ((0, (1, 0, 0)), (len(RINGS) - 1, (-1, 0, 0))):
     apex_y = (st[2] + st[3]) / 2.0
     apex_x = st[0] + (NOSE_CAP_DEPTH if idx == 0 else TAIL_CAP_DEPTH) * outward[0]
     apex_pos = (apex_x, apex_y, 0.0)
-    # T8: the TAIL cap unwraps into its own island so a rear panel can be
-    # painted on it. The nose keeps the old single-column scheme for now -- it
-    # has the same defect, but the chase camera is the view that matters and it
-    # never shows the nose.
+    # T8 gave the tail its own island; T16 gives the nose one on the same
+    # argument. Both caps now unwrap into a real 2D rectangle instead of
+    # sampling a single texture column, so livery.cpp can paint a rear panel
+    # and a front fascia rather than vertical stripes.
     _cap_y_lo, _cap_y_hi = st[3], st[4]
     if idx == 0:
-        _cap_uv = lambda p: (u, _cap_v(p[2], wmax))
+        _cap_uv = lambda p: _nose_uv(p, wmax, _cap_y_lo, _cap_y_hi)
     else:
         _cap_uv = lambda p: _tail_uv(p, wmax, _cap_y_lo, _cap_y_hi)
     _cap_start = len(positions)

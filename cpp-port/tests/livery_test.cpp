@@ -204,23 +204,46 @@ int main() {
         }
     }
 
-    // I5: grille slats. The centre slat must decode to SW_RIM's *exact*
-    // color, because that is the entire mechanism by which it picks up
-    // fs_car.sc's I3 chrome specular lobe (a color-match against that same
-    // constant) -- a nearby-but-not-equal color would silently lose the
-    // glint with nothing else visibly wrong, which is precisely the class
-    // of regression a decode check exists to catch. The gaps between slats
-    // must still read as the dark grille opening, or the slats have merged
-    // into one bright block.
+    // I5, rewritten for T16. The grille used to be three thin V bands at
+    // u~0.023, because every nose-cap vertex shared one texture column and a
+    // vertical band was the only mark that UV could express. It now lives in
+    // the nose island as real horizontal slats, so this checks the slats where
+    // they actually are.
+    //
+    // I5's original clause asserted the centre slat decoded to SW_RIM's EXACT
+    // RGB, because that equality was the entire mechanism by which it picked
+    // up fs_car.sc's chrome specular lobe -- a colour-distance match against
+    // that same constant. T12 deleted those colour branches in favour of the
+    // gloss mask, so the equality no longer means anything and asserting it
+    // would be pinning a coincidence. What matters now is stated directly:
+    // the chrome surround carries chrome GLOSS, and the opening stays dark
+    // between its slats rather than merging into one bright block.
     {
         LiveryScheme scheme{0, 0, 0, CarPalette::White};
         const auto pixels = buildLiveryPixels(red, 7, 1, &scheme);
-        const int noseX = (int)(0.023 * kLiveryTextureSize);
-        const auto chrome = pixelAt(pixels, noseX, (int)(0.500 * kLiveryTextureSize));
-        const auto between = pixelAt(pixels, noseX, (int)(0.480 * kLiveryTextureSize));
-        expectTrue("grille centre slat is exactly SW_RIM's chrome color",
-                   chrome[0] == 198 / 255.0 && chrome[1] == 200 / 255.0 && chrome[2] == 206 / 255.0);
-        expectTrue("grille stays dark between slats", luminance(between) < 0.06);
+        // Nose island: u 0.852-0.995, v 0.850-0.980 (gen_car_rig.py's
+        // NOSE_UV_*, which check_car_rig.py pins against this file's copy).
+        auto islandPx = [&](double fx, double fy) {
+            const double u = 0.852 + fx * (0.995 - 0.852);
+            const double v = 0.850 + fy * (0.980 - 0.850);
+            return pixelAt(pixels, (int)(u * kLiveryTextureSize), (int)(v * kLiveryTextureSize));
+        };
+        auto islandAlpha = [&](double fx, double fy) {
+            const double u = 0.852 + fx * (0.995 - 0.852);
+            const double v = 0.850 + fy * (0.980 - 0.850);
+            const int x = (int)(u * kLiveryTextureSize), y = (int)(v * kLiveryTextureSize);
+            return (int)pixels[((size_t)y * kLiveryTextureSize + (size_t)x) * 4 + 3];
+        };
+        // A slat, and the opening between two of them.
+        const auto slatPx = islandPx(0.50, 0.346);
+        const auto betweenPx = islandPx(0.50, 0.315);
+        const int chromeGloss = islandAlpha(0.50, 0.288);
+
+        expectTrue("grille slats are brighter than the opening behind them",
+                   luminance(slatPx) > luminance(betweenPx) + 0.10);
+        expectTrue("grille stays dark between slats", luminance(betweenPx) < 0.10);
+        expectTrue("the grille surround carries chrome gloss",
+                   chromeGloss == (int)(kGlossChrome * 255.0 + 0.5));
     }
 
     // I5: bolder number outlines. drawNumber()'s outline-to-fill ratio went

@@ -1143,49 +1143,11 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     constexpr double kNoseU0 = 0.008, kNoseUW = 0.030;
     constexpr double kTailU0 = 0.764, kTailUW = 0.028;
 
-    // Nose: grille block flanked by headlight lenses.
-    c.fillRect(kNoseU0, 0.15, kNoseUW, 0.70, tone(0.94));
-    {
-        Canvas::ScopedGloss grilleGloss(c, kGlossMatte);  // T12: an opening, not paint
-        c.fillRect(kNoseU0, 0.430, kNoseUW, 0.140, dark);            // grille
-    }
-    // I5 (car visual fidelity plan): grille slats, replacing what was a
-    // single flat dark rectangle. The nose cap's UV is degenerate in U
-    // (every corner shares u=0.02, see the V-band note above), so V is the
-    // only axis that varies across the car's width -- a thin V band here
-    // paints as a narrow vertical slat down the nose, and three of them
-    // give the opening internal structure at the distance the grille is
-    // actually seen from.
-    //
-    // T12: the centre slat used to be chrome by COINCIDENCE -- it reused
-    // SW_RIM's exact RGB so fs_car.sc's colour-distance rim test would fire
-    // on it. That trick is gone with the colour branches, and it is no loss:
-    // "this texel is chrome" is now stated directly in the gloss mask instead
-    // of being smuggled through a shared RGB constant that any future recolour
-    // would have silently broken.
-    {
-        Canvas::ScopedGloss slatGloss(c, kGlossMatte);
-        for (double bv : {0.4575, 0.5315})
-            c.fillRect(kNoseU0, bv, kNoseUW, 0.011, std::array<double, 3>{112 / 255.0, 114 / 255.0, 120 / 255.0});
-    }
-    {
-        Canvas::ScopedGloss chromeGloss(c, kGlossChrome);
-        c.fillRect(kNoseU0, 0.4945, kNoseUW, 0.011, std::array<double, 3>{198 / 255.0, 200 / 255.0, 206 / 255.0});
-    }
-    c.fillRect(kNoseU0, 0.412, kNoseUW, 0.012, accent);              // grille surround
-    c.fillRect(kNoseU0, 0.576, kNoseUW, 0.012, accent);
-    if (maskStyle == 0) {
-        c.fillRect(kNoseU0, 0.290, kNoseUW, 0.105, lampWhite);
-        c.fillRect(kNoseU0, 0.605, kNoseUW, 0.105, lampWhite);
-    } else if (maskStyle == 1) {
-        c.fillRect(kNoseU0, 0.275, kNoseUW, 0.120, lampWhite);
-        c.fillRect(kNoseU0, 0.605, kNoseUW, 0.120, lampWhite);
-        c.fillRect(kNoseU0, 0.327, kNoseUW, 0.014, tone(0.94));      // lens divider
-        c.fillRect(kNoseU0, 0.659, kNoseUW, 0.014, tone(0.94));
-    } else {
-        for (double vy : {0.292, 0.345, 0.610, 0.663})
-            c.fillRect(kNoseU0, vy, kNoseUW, 0.042, lampWhite);      // quad round lamps
-    }
+    // T16: the nose fascia moved to its own UV island, painted at the end of
+    // this function alongside the tail panel -- see the NU0/NV0 block there.
+    // Everything that used to be drawn here was a vertical V band, because
+    // every nose-cap vertex shared one u and a band was the only mark the UV
+    // could express. kNoseU0/kNoseUW are gone with it.
 
     // Tail: two wide taillight lenses split by a thin dark centre panel.
     c.fillRect(kTailU0, 0.15, kTailUW, 0.70, tone(0.86));
@@ -1390,6 +1352,88 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         tRect(0.0, 0.52, 1.0, 0.04, chrome, 0.55);
         tRect(0.0, 0.56, 1.0, 0.44, tone(kShadowM * 0.92));
         tRect(0.30, 0.70, 0.40, 0.16, panelDark, 0.8);
+    }
+
+    // ---- T16: the front fascia ----
+    //
+    // The nose had the same defect the tail had before T8: every cap vertex
+    // shared one texture column, so the whole front of the car could only be
+    // painted in vertical stripes. The grille above was three thin V bands for
+    // that reason and no other. With a real 2D island it can be a grille.
+    //
+    // Painted after the SW_* swatch column for the same reason the tail panel
+    // is -- the swatches are deliberately full-height bands, so both islands
+    // are carved out of them and must come last.
+    //
+    // Coordinates mirror gen_car_rig.py's NOSE_UV_* exactly; check_car_rig.py
+    // asserts the two agree, that no swatch falls inside, and that this island
+    // does not overlap the tail's.
+    {
+        constexpr double NU0 = 0.852, NU1 = 0.995;
+        constexpr double NV0 = 0.850, NV1 = 0.980;
+        const double nw = NU1 - NU0, nh = NV1 - NV0;
+        auto nRect = [&](double fx, double fy, double fw, double fh,
+                         const std::array<double, 3>& col, double a = 1.0) {
+            c.fillRect(NU0 + fx * nw, NV0 + fy * nh, fw * nw, fh * nh, col, a);
+        };
+        // Island coordinates run 0..1 across the car's width and 0 at the top
+        // of the fascia to 1 at the bottom -- the same convention as the tail
+        // island, deliberately not mirrored, so "left" means the same thing in
+        // both rectangles.
+        const std::array<double, 3> grilleDark{18 / 255.0, 18 / 255.0, 21 / 255.0};
+        const std::array<double, 3> slat{112 / 255.0, 114 / 255.0, 120 / 255.0};
+        const std::array<double, 3> chromeN{198 / 255.0, 200 / 255.0, 206 / 255.0};
+
+        // Body paint behind everything, so the corners where the dome wraps
+        // onto the fenders carry the car's own colour, not a rectangle edge.
+        nRect(0.0, 0.0, 1.0, 1.0, tone(kBaseM));
+        // Hood lip across the top, catching light.
+        nRect(0.0, 0.0, 1.0, 0.08, tone(0.94));
+
+        // The grille opening, with REAL horizontal slats -- the mark this
+        // island exists to make possible.
+        {
+            Canvas::ScopedGloss grilleGloss(c, kGlossMatte);
+            nRect(0.18, 0.30, 0.64, 0.30, grilleDark);
+            for (int i = 0; i < 4; ++i)
+                nRect(0.20, 0.335 + i * 0.062, 0.60, 0.022, slat, 0.85);
+        }
+        // Chrome surround along the top edge of the opening.
+        {
+            Canvas::ScopedGloss chromeGloss(c, kGlossChrome);
+            nRect(0.18, 0.278, 0.64, 0.020, chromeN);
+        }
+        // Accent bar above the grille, the car's own secondary colour.
+        nRect(0.10, 0.235, 0.80, 0.032, accent);
+
+        // Headlight DECALS, which is what a Gen-4 actually carries -- the
+        // headlights are stickers on a blank fascia, not lenses. Shape varies
+        // with the car's mask style, same three variants the old V bands had.
+        {
+            Canvas::ScopedGloss decalGloss(c, kGlossDecal);
+            if (maskStyle == 0) {
+                for (double lx : {0.035, 0.815})
+                    nRect(lx, 0.305, 0.150, 0.150, lampWhite);
+            } else if (maskStyle == 1) {
+                for (double lx : {0.030, 0.800}) {
+                    nRect(lx, 0.295, 0.170, 0.170, lampWhite);
+                    nRect(lx, 0.370, 0.170, 0.020, tone(0.60));  // lens divider
+                }
+            } else {
+                for (double lx : {0.030, 0.800})
+                    for (int k = 0; k < 2; ++k)
+                        nRect(lx + k * 0.088, 0.310, 0.075, 0.140, lampWhite);
+            }
+        }
+
+        // Air dam / splitter below, tucked under and darker, with a thin
+        // parting line where the fascia meets it.
+        nRect(0.0, 0.66, 1.0, 0.03, tone(kShadowM), 0.6);
+        {
+            Canvas::ScopedGloss damGloss(c, kGlossMatte);
+            nRect(0.0, 0.69, 1.0, 0.31, tone(kShadowM * 0.85));
+            nRect(0.22, 0.76, 0.56, 0.13, grilleDark, 0.85);  // lower intake
+        }
     }
 
 
