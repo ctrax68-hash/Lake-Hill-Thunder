@@ -12372,3 +12372,70 @@ Verified failing on the old constant: `gap 0.030 m, body bottom 0.080 vs
 splitter top 0.050`.
 
 `check_car_rig.py` PASS, `car_proportions.py` 17/17, `ctest` 36/36.
+
+## T20 — OPEN: the wheels barely render, and I have not fixed it
+
+Reported: "back right tire also not visible". It is real, and it is bigger than
+the back right. **In the parked showcase, at most ONE of the four wheels ever
+renders.**
+
+Measured by tagging all four wheel swatches a colour used nowhere else and
+counting those pixels per showcase azimuth (Cedar Valley, profile camera):
+
+| azimuth | 0 | 45 | 90 | 135 | 180 | 225 | 270 | 315 |
+|---|---|---|---|---|---|---|---|---|
+| wheel px | 92 | 80 | 68 | 28 | 400 | 2472 | 3276 | 432 |
+
+The 28-92 counts are the MIRROR housings, which share the tagged swatch column.
+So the wheels are effectively absent across half the orbit and present as a
+single wheel across the other half.
+
+### Ruled out, each by direct measurement, not by reading code
+
+- **Geometry.** All four wheels exist: 246 verts each, correct x/y/z extents,
+  joints 1-4.
+- **Normals.** Identical on all four: 32 barrel-outward/0 inward, 181 cap
+  outboard/33 inboard. Perfectly symmetric.
+- **Occlusion or being too recessed.** Pushed the tire face to ~110 mm PROUD of
+  the widest bodywork (TRACK_HALF 0.769 -> 0.88). Azimuth 90 still reads 68 px.
+  A wheel standing 11 cm outside the fender cannot be hidden by it.
+- **Lighting/shadow.** The same split appears under a 55-degree noon sun and a
+  12-degree sunset sun (60/3272 vs 68/3428). Not a shaded flank.
+- **Skinning inputs.** Bone palette dumped at runtime: 5 joints,
+  wheelJointIndex 1/2/3/4, all four wheel bones identity-rotation with
+  translation (0, -0.080, 0). Joint indices as they reach the GPU vertex
+  buffer: 5872 verts on bone 0 and exactly 246 on each of bones 1-4, all
+  weights 1.000. Bone count uploaded is 5, well inside the shader's 32.
+- **Culling.** `skinned_mesh.cpp` sets no CULL bit, confirmed on the actual
+  submit path (`carMesh_.draw`), not from a comment.
+
+### The one hard fact I cannot yet explain
+
+**Lifting all four wheel bones by 0.7 m produces a byte-identical render.** The
+bone dump confirms the matrices carry the lift (translation 0.620); the picture
+does not move by one pixel. The wheels are therefore not following their bone
+matrices at all -- which is independently a real bug, because it means the
+wheels can never spin or take suspension travel.
+
+Untested candidate: `vs_car.sc` indexes a uniform array with a non-constant
+expression, `u_boneMatrices[int(a_indices.x)]`. GLSL ES 2.0 does not permit
+that, and some compilers silently fold such an index to 0. That would leave
+every wheel frozen at its bind pose and immune to the palette. It does NOT by
+itself explain the azimuth asymmetry, so there is probably a second thing.
+
+This is the same symptom T9 investigated and attributed to "the camera on the
+downhill side of a banked track". That explanation does not survive the numbers
+above -- the asymmetry is unchanged by sun angle and by moving the wheels 11 cm
+outboard.
+
+### Process note
+
+I hit the stale-binary trap from T15 again: the first lift test filtered the
+build with `grep -E "error:"` and never checked the exit status, so it may have
+measured a stale binary. I re-ran it with the build verified and got the same
+answer, so the finding stands -- but the filter is still the wrong habit and it
+has now cost time twice in one session.
+
+Nothing is committed for this beyond these notes. The tree is clean at the last
+deployed commit, all probes removed, `check_car_rig.py` PASS,
+`car_proportions.py` 17/17, `ctest` 36/36.
