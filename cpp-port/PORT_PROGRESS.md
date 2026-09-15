@@ -12439,3 +12439,46 @@ has now cost time twice in one session.
 Nothing is committed for this beyond these notes. The tree is clean at the last
 deployed commit, all probes removed, `check_car_rig.py` PASS,
 `car_proportions.py` 17/17, `ctest` 36/36.
+
+### T20 continued — the break is `a_indices`, isolated by bisection
+
+Still unfixed, but the mechanism is now located rather than guessed. Three
+probes, each a single variable:
+
+| probe | result | conclusion |
+|---|---|---|
+| lift bones 1-4 by 0.7 m | render byte-identical | wheel verts do not follow their own bones |
+| lift **bone 0** by 0.5 m | whole car rises, wheels **with it**, nothing left on the ground | wheel verts resolve to bone 0 |
+| `skinMat = u_boneMatrices[1]` (constant index), bone 1 lifted | **whole car rises** | the uniform array, its upload and indexing all work |
+
+So the palette is right, the upload is right, constant indexing is right, and
+the per-vertex joint index arrives as 0 for every vertex. **Every vertex on the
+car is skinned to the chassis bone.** The wheels are welded to the body at bind
+pose and can never spin or take suspension travel.
+
+That is a real bug on its own, independent of the visibility complaint, and it
+explains something that had been filed as cosmetic: the wheels have never
+rotated.
+
+### What it is NOT
+
+- Not the vertex data: probed at the GPU buffer, 5872 verts on bone 0 and
+  exactly 246 on each of bones 1-4, all weights 1.000.
+- Not the varying declaration: `varying_car.def.sc` already declares
+  `uvec4 a_indices : BLENDINDICES`, matching the integer binding, and carries a
+  long comment from the session that fixed exactly this class of bug for
+  `vs_skinned.sc`.
+- Not `asInt`: setting `.add(Attrib::Indices, 4, Uint8, false, true)` changes
+  nothing here, which is consistent with that same comment -- bgfx's GL backend
+  picks `glVertexAttribIPointer` from `!isFloat && !normalized` and never
+  consults the flag. Reverted rather than shipped, since it fixes nothing and
+  is unverified on the WebGL2 path this codebase actually ships to.
+
+Next candidate, untested: the GLSL profile `shaderc` emits for `vs_car.sc` on
+this backend may not support integer vertex attributes, so `uvec4 a_indices`
+may be silently read as zero. `vs_skinned.sc` -- the shader the earlier fix was
+written for -- would be worth compiling and diffing against `vs_car.sc`, since
+the crowd-stand seats it drives are not skinned in a way that would reveal the
+same failure.
+
+No code change shipped. Tree clean, `check_car_rig.py` PASS, `ctest` 36/36.
