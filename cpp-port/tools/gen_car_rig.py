@@ -1610,7 +1610,22 @@ _spl_zhalf = _SPL_ST0[1] * 0.90  # narrower than the full nose width, clear of t
 # 0.10 clearance above y=0 -- not just nominal, since this rig has no
 # dynamic ride-height/pitch at the chassis level, only per-wheel suspension
 # travel, so that clearance is a real, static number, not a worst-case one.
-_spl_y = _SPL_ST0[3] - 0.03
+# T19: was `_SPL_ST0[3] - 0.03`, which hung the splitter 0.030 m BELOW the
+# bodywork with nothing joining them. Measured: the lowest true body vertex
+# within 0.30 m of the nose sits at y = 0.080 and the splitter's top face sat at
+# 0.050, so there was open daylight between the two along every side-on view and
+# the splitter read as a detached dark plank floating under the car rather than
+# as part of it.
+#
+# The drop was deliberate when written -- its comment calls it "a visible
+# protruding dip, the actual point of a splitter" -- but that confuses two
+# things. What makes a splitter read is the 0.180 m FORWARD protrusion, which
+# is untouched. Its top surface is the bottom of the air dam and is flush with
+# it on a real car; there is no gap to see through.
+#
+# Flush now. Ground clearance goes 0.030 -> 0.060 m, which at this scale is
+# 3 cm and invisible next to the protrusion that actually carries the look.
+_spl_y = _SPL_ST0[3]
 _spl_th = 0.02
 # x_rear sits slightly BEHIND the nose tip (embeds into the opaque body, the
 # same "overlap rather than gap" idiom I2's mirror history established) so

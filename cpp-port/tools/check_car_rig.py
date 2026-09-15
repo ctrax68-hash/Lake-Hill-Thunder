@@ -529,6 +529,38 @@ check(_spl_min_y is not None and _spl_min_y > 0.02,
 check(any(R.positions[i][0] > R.HALF_LEN for i in _spl_idx),
       "splitter actually protrudes past the nose tip (some x > HALF_LEN=%.3f)" % R.HALF_LEN)
 
+# T19: THE SPLITTER MUST TOUCH THE CAR.
+#
+# It hung 0.030 m below the bodywork with nothing joining them: the lowest true
+# body vertex near the nose was at y = 0.080 and the splitter's top face at
+# 0.050, so from any side-on angle there was daylight between the two and it
+# read as a detached plank floating under the car.
+#
+# Nothing could have caught that. Both pieces were individually correct -- the
+# splitter protruded, cleared the ground, cleared the tire, and every existing
+# clause passed. The defect was the RELATIONSHIP between two things each guard
+# only looked at alone, which is the same shape as T11's buried wheels: a set of
+# individually-satisfied constraints says nothing about the quantity they
+# jointly determine.
+#
+# "True bodywork" excludes anything sampling a flat SW_* swatch point, because
+# the splitter's own rear vertices sit behind HALF_LEN and a naive x filter
+# counts them as body -- which is exactly the mistake the first measurement of
+# this made, reporting a -0.020 m gap (an overlap) when the real figure was
+# +0.030.
+_SW_PTS = {R.SW_SPOILER_DARK, R.SW_SPOILER_BODY, R.SW_TREAD, R.SW_SIDEWALL,
+           R.SW_TIRE_LETTER, R.SW_RIM, R.SW_MIRROR}
+_nose_body_y = [p[1] for p, uv in zip(R.positions, R.uvs)
+                if uv not in _SW_PTS and p[0] > R.HALF_LEN - 0.30]
+if _spl_idx and _nose_body_y:
+    _spl_top = max(R.positions[i][1] for i in _spl_idx)
+    _gap = min(_nose_body_y) - _spl_top
+    # Touching or embedded is fine (this codebase's "overlap rather than gap"
+    # idiom); a positive gap is open air and is the defect.
+    check(_gap <= 1e-9,
+          "splitter meets the bodywork above it (gap %.3f m, body bottom %.3f vs splitter top %.3f)"
+          % (_gap, min(_nose_body_y), _spl_top))
+
 # Clearance from the front tire's cylindrical volume -- the splitter's wide
 # z-span (0.90 of the nose's own halfWidth) makes this worth checking
 # explicitly, same reasoning J2's exhaust check above already applied to

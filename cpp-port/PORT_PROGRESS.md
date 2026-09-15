@@ -12324,3 +12324,51 @@ regression, painting the net on both bands: the passenger clause fails at 4
 bars.
 
 `check_car_rig.py` PASS, `car_proportions.py` 17/17, `ctest` 36/36.
+
+## T19 — the splitter was floating under the car
+
+The one remaining thing I had asserted about the cars without measuring. It
+turned out to be half right, and the half that was wrong is the interesting
+part.
+
+**Wrong:** I had called the splitter "a thin dark line rather than a protruding
+blade". It protrudes 0.180 m ahead of the bumper across the full width, with
+correct hand-set normals on all three faces. The blade is real.
+
+**Right:** it hung in mid-air. The lowest true bodywork vertex near the nose
+sits at y = 0.080 and the splitter's top face sat at 0.050, so there was a
+**0.030 m gap with open daylight through it** and the part read as a detached
+plank floating under the car.
+
+The 0.030 drop was deliberate when written -- its comment calls it "a visible
+protruding dip, the actual point of a splitter" -- but that conflates two
+things. What makes a splitter read is the forward protrusion, untouched here.
+Its top surface IS the bottom of the air dam and is flush with it on a real car.
+Flush now; ground clearance goes 0.030 -> 0.060 m, which is 3 cm against a
+0.180 m protrusion that carries the whole look.
+
+### Why nothing caught it
+
+Every existing splitter clause passed. It protrudes, it clears the ground with
+margin, it clears the front tire, its vertex count is right. **The defect was
+the RELATIONSHIP between two things each guard only examined alone** -- exactly
+the shape of T11's buried wheels, where track, tire diameter and tire width were
+each individually in tolerance while the quantity they jointly determine was
+never measured. That pattern has now produced two separate visible defects in
+this session, and it is worth naming: a set of individually-satisfied
+constraints says nothing about the quantity they jointly determine.
+
+### The measurement itself got it wrong first
+
+The first pass reported a gap of **-0.020 m** -- an overlap, i.e. no problem --
+because "body" was filtered as `x <= HALF_LEN`, and the splitter's own rear
+vertices sit behind HALF_LEN by design (the "overlap rather than gap"
+attachment idiom). It was measuring the splitter against itself. Filtering by
+"not sampling a flat SW_* swatch point" gives the true +0.030. The guard carries
+that filter and a note saying why, because the naive version is the obvious one
+to write.
+
+Verified failing on the old constant: `gap 0.030 m, body bottom 0.080 vs
+splitter top 0.050`.
+
+`check_car_rig.py` PASS, `car_proportions.py` 17/17, `ctest` 36/36.
