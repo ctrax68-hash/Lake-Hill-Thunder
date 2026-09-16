@@ -1030,12 +1030,49 @@ _CAR_ST_JS = [
     # tolerance -- so beltY, halfWidth and yLow are carried across unchanged
     # and the two moved in-between stations take the values the surrounding
     # rows interpolate to at their new x, which is what they held before.
-    (2.421, 0.83,  0.63,  0.08,  0.72),   # last section ring -- the bumper DOME is ahead of it
-    (2.30,  0.89,  0.71,  0.08,  0.76),   # front fascia
-    (2.00,  0.91,  0.80,  0.09,  0.82),   # hood leading edge
-    (1.78,  0.921, 0.88,  0.10,  0.85),   # front fender -- full width
-    (1.60,  0.921, 0.92,  0.11,  0.87),   # FRONT AXLE -- 0.14 of fender over the arch lip
-    (1.19,  0.921, 0.905, 0.13,  0.89),   # hood mid -- long, nearly flat
+    # T23b: AND THE HOOD LINE COMES DOWN, most of all at the nose.
+    #
+    # Same method as the greenhouse above -- our own outline overlaid on the
+    # #21, registered on the wheels and the ground -- reading the height of the
+    # hood/fender line at each station as a fraction of the 1.295 m roof:
+    #
+    #                     reference   ours (before)   error
+    #     nose              0.440        0.556        +150 mm
+    #     front fender      0.618        0.679         +80 mm  (see below)
+    #     front axle        0.674        0.710         +47 mm
+    #     hood mid          0.685        0.699         +16 mm
+    #
+    # The error grows steadily toward the front: the real car's hood falls away
+    # to a low nose and ours ran nearly level out to a blunt high one. Published
+    # Gen-4 geometry agrees with the reference and not with the old table -- the
+    # front fascia's top edge is about 22-24 in off the ground against a 51 in
+    # roof, i.e. 0.43-0.47 -- so car_proportions.py's nose row is retargeted on
+    # the same two-source footing as the cowl above.
+    #
+    # beltY moves with roofY at the four front stations, and has to: the ring's
+    # top is whichever of the two is higher, so lowering roofY alone would have
+    # left the section's real top sitting on an unchanged beltline and moved
+    # nothing at all. At the front axle it stops at 0.885, keeping 0.115 m of
+    # fender above the arch lip -- the clearance the R2b fold note is about,
+    # which the lip's own drop to 0.770 in this same round is what makes room
+    # for.
+    #
+    # THE FRONT FENDER STATION CANNOT REACH ITS READING, and the reason is
+    # worth recording rather than quietly rounding away. The reference puts the
+    # fender line at 0.618 of the roof, i.e. 0.800 m; setting it there folds the
+    # flank at 155.1 deg, which is the R2 defect exactly. The lip at that
+    # station sits at 0.726 because it follows the arch CIRCLE, while the tire
+    # it has to clear is only 0.669 high there -- so a circular opening spends
+    # clearance the real fender does not. 0.84 is the lowest value that keeps
+    # the ~0.10 m of fender the flank needs, and it closes 80 mm of a 100 mm
+    # error. Closing the rest means an arch profile that follows the tire
+    # instead of a circle, which is a larger change than this round.
+    (2.421, 0.83,  0.55,  0.08,  0.57),   # last section ring -- the bumper DOME is ahead of it
+    (2.30,  0.89,  0.60,  0.08,  0.625),  # front fascia
+    (2.00,  0.91,  0.72,  0.09,  0.73),   # hood leading edge
+    (1.78,  0.921, 0.84,  0.10,  0.825),  # front fender -- 0.114 over the arch lip
+    (1.60,  0.921, 0.885, 0.11,  0.87),   # FRONT AXLE -- 0.115 of fender over the arch lip
+    (1.19,  0.921, 0.895, 0.13,  0.885),  # hood mid -- long, nearly flat
     (0.80,  0.915, 0.900, 0.15,  0.91),   # COWL / windshield base
     (0.50,  0.910, 0.907, 0.160, 1.104),  # windshield mid
     (0.205, 0.905, 0.914, 0.17,  1.295),  # A-pillar top -- ROOF STARTS

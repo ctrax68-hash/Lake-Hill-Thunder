@@ -198,8 +198,26 @@ measure("backlite base behind front axle / wb", (AXLE_F - deck_start) / WHEELBAS
 nose_top = station("nose")[4]
 belt_cabin = station("roof_mid")[2]
 deck_top = station("deck_flat")[4]
-measure("nose height / roof height", nose_top / ROOF, 0.551, 0.10, "photo",
+# T23b: RETARGETED, 0.551 -> 0.440, on the same two-source footing as the cowl
+# row above and for the same reason -- the first reference photograph was read
+# through a landmark grid and this number came out too high.
+#
+#   * the #21 overlay, registered on both wheel centres and the ground line,
+#     puts the fascia's top edge 0.440 of the roof height off the ground.
+#   * a Gen-4's front fascia top edge sits about 22-24 in off the ground
+#     against a 51 in roof, i.e. 0.43-0.47.
+#
+# The old 0.551 is 28 in, and the render showed it: a blunt high nose on a car
+# whose hood ran nearly level to it.
+measure("nose height / roof height", nose_top / ROOF, 0.440, 0.10, "photo",
         "a Cup car's nose is LOW")
+# T23b: and the line BETWEEN the nose and the cowl, which nothing measured.
+# The nose row alone constrains one endpoint; the error it was hiding grew
+# steadily along the hood (+150 mm at the nose, +80 at the fender, +47 at the
+# axle, +16 at the cowl), so the shape of that fall needs a row of its own or
+# the next re-authoring is free to make the hood level again and stay green.
+measure("hood at front axle / roof height", station("front_axle")[2] / ROOF, 0.674, 0.10,
+        "photo", "the fender line over the front wheel")
 measure("beltline / roof height", belt_cabin / ROOF, 0.703, 0.08, "photo")
 measure("deck height / roof height", deck_top / ROOF, 0.724, 0.10, "photo")
 
