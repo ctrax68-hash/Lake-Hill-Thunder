@@ -12482,3 +12482,82 @@ the crowd-stand seats it drives are not skinned in a way that would reveal the
 same failure.
 
 No code change shipped. Tree clean, `check_car_rig.py` PASS, `ctest` 36/36.
+
+## T21 — FIXED: the wheels were never rendering, and it was `a_indices`
+
+"Back tire still missing." It was, and the cause is now found and fixed.
+
+### What it actually was
+
+The skinned vertex layout declared joint indices as `AttribType::Uint8` with
+`uvec4 a_indices` in the shader, on the argument that bgfx's GL backend selects
+`glVertexAttribIPointer` from `!isFloat(type) && !normalized`, so the shader
+side must be an integer type to match. **That reasoning is correct and the
+result still did not work.** The indices never arrived. Every wheel vertex read
+a garbage joint index, sampled outside the uniform array, and the resulting
+triangles were discarded — so all four wheels were absent, not merely
+misplaced.
+
+Storing the indices as FLOATS puts them on the same
+`glVertexAttribPointer` path that position, normal and uv already use and are
+known to work on. `int(a_indices.x)` is unchanged. Cost: 12 bytes per vertex on
+one shared 6856-vertex mesh, about 82 KB.
+
+### How it was isolated
+
+Three probes, each moving one variable, after tagging the wheel swatches a
+colour used nowhere else so wheel pixels could be counted:
+
+| probe | result | conclusion |
+|---|---|---|
+| lift bones 1-4 by 0.7 m | render byte-identical | wheel verts do not follow their bones |
+| lift bone 0 by 0.5 m | whole car rises | bone 0 works |
+| `skinMat = u_boneMatrices[1]` (constant) | whole car rises, wheels included | uniform array, upload and indexing all fine |
+| `skinMat = u_boneMatrices[int(a_indices.x)]`, no weight blend | still no wheels | not `a_weight` |
+
+Everything except `a_indices` was eliminated by measurement.
+
+### Result
+
+Wheel pixels in the showcase, before and after:
+
+| azimuth | 0 | 90 | 180 | 270 |
+|---|---|---|---|---|
+| before | 92 | 68 | 400 | 3276 |
+| after | **4096** | **4724** | **992** | **5184** |
+
+The before figures of 28-92 were never wheels at all: they are the mirror
+housings, which share the tagged swatch column. The wheels were contributing
+zero from every angle.
+
+This also fixes something nobody had reported: **the wheels have never
+rotated, and never took suspension travel.** They were not being skinned at
+all, so `computeWheelTransforms()`'s spin angle and suspension offset have been
+computed every frame and thrown away for the entire life of the port.
+
+### What this closes, and what it says about four earlier rounds
+
+T9 investigated this exact symptom and concluded the cause was "the camera on
+the downhill side of a banked track", having first chased mesh, glTF nodes,
+IBMs, winding and the bone palette. T20 re-opened it and ruled out geometry,
+normals, occlusion, lighting, culling and every skinning input — but stopped at
+"a_indices arrives as 0", which was nearly right and one step short.
+
+The wheel-winding fix T9 shipped was real but unrelated, and the "camera"
+conclusion was wrong. The reason this survived so long is that **every
+individual component was correct** — correct mesh, correct normals, correct
+palette, correct vertex data in the buffer, correct varying type for the
+binding bgfx documents. Only the composition failed, and nothing looks at the
+composition except the picture.
+
+### No automated guard, and why
+
+ctest is bgfx-free by construction, so nothing in it can bind a vertex layout
+or rasterise a triangle; there is no place to assert "the wheels drew". The
+reproducible manual check is the one used here and it is cheap: tag the wheel
+swatches in `livery.cpp` with a colour used nowhere else, render the showcase
+at azimuths 0/90/180/270, and count those pixels. Four figures in the
+thousands is correct; anything in the tens is the mirror housings and means the
+wheels are gone again.
+
+`check_car_rig.py` PASS, `car_proportions.py` 17/17, `ctest` 36/36.

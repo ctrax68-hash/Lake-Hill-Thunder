@@ -20,7 +20,7 @@ struct PosNormalUVSkinnedVertex {
     float x, y, z;
     float nx, ny, nz;
     float u, v;
-    uint8_t joints[4];
+    float joints[4];
     float weights[4];
 
     static bgfx::VertexLayout layout() {
@@ -29,7 +29,7 @@ struct PosNormalUVSkinnedVertex {
             .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
             .add(bgfx::Attrib::Normal, 3, bgfx::AttribType::Float)
             .add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
-            .add(bgfx::Attrib::Indices, 4, bgfx::AttribType::Uint8)
+            .add(bgfx::Attrib::Indices, 4, bgfx::AttribType::Float)
             .add(bgfx::Attrib::Weight, 4, bgfx::AttribType::Float)
             .end();
         return l;

@@ -46,7 +46,7 @@ bool SkinnedMesh::create(const ImportedMesh& mesh) {
         v.u = (float)src.u;
         v.v = (float)src.v;
         for (int k = 0; k < 4; ++k) {
-            v.joints[k] = (uint8_t)std::min<uint16_t>(src.joints[k], 255);
+            v.joints[k] = (float)src.joints[k];
             v.weights[k] = (float)src.weights[k];
         }
     }
