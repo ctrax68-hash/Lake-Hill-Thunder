@@ -226,6 +226,24 @@ for _wx in R._WHEEL_AXLE_X:
 check(_full_ok, "wheelhouse wall is at full depth everywhere the tire's radial shadow reaches")
 check(_taper_ok, "wheelhouse wall eases back toward the body line at the mouth's ends (not a trench)")
 
+# T25: NO HUMP IN THE FLANK OVER THE WHEELS. Re-anchoring lifted points kept
+# their old width, so the section's widest point (wf 1.000, y ~0.60 along the
+# doors) rode up to 0.816/0.845 at the axles at full width -- the body's
+# highlight line bowed 25 cm over each wheel. The fix gives a lifted point the
+# width the section has at its NEW height; this holds that no full-width point
+# exists above the height the doors put it at.
+_door_i = min(range(len(R.CHASSIS_STATIONS)), key=lambda i: abs(R.CHASSIS_STATIONS[i][0] - R.station_x("roof_mid")))
+_door_wide_y = max(R.RINGS[_door_i][:R.NK // 2], key=lambda p: p[2])[1]
+_hump = 0.0
+for _wx in R._WHEEL_AXLE_X:
+    _i = min(range(len(R.CHASSIS_STATIONS)), key=lambda j: abs(R.CHASSIS_STATIONS[j][0] - _wx))
+    _st = R.CHASSIS_STATIONS[_i]
+    for p in R.RINGS[_i][:R.NK // 2]:
+        if p[2] >= 0.999 * _st[1]:
+            _hump = max(_hump, p[1] - _door_wide_y)
+check(_hump < 0.05,
+      "flank's widest line does not rise over the wheels (max %.3f m above its door height; was 0.24)" % _hump)
+
 # --- UV ---------------------------------------------------------------------
 print("UV / livery band alignment")
 # R1: anchored by ROLE, not by literal index, so adding crease pairs cannot

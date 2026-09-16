@@ -1142,11 +1142,23 @@ _CAR_ST_JS = [
     # tied to the visible suspension travel. Both came down to 0.03, the lip
     # with them, and the fender now sits where the reference puts it with
     # 0.101 m of clearance -- the ~0.10 m the flank needs in order not to fold.
+    # T25: A PLANE, NOT A RAMP. T23b read the hood line off the #21, whose
+    # nose is rotated toward the camera, and built the fall it measured as a
+    # steady slope from the cowl to the nose. The #41 car-select still is a
+    # far purer side view, and our outline registered on both its wheel
+    # centres (with the frame's 5.2 deg tilt taken out) shows the reference's
+    # fender line running LEVEL from the A-pillar out past the front wheel,
+    # with the whole drop to the nose happening in the last ~0.4 m. The nose
+    # height itself (0.44 of the roof) agrees between both stills and with the
+    # published 22-24 in, so it stays; the two stations over and ahead of the
+    # wheel come back up to the hood plane, and the fall is concentrated in
+    # the fascia. The user's words for the old shape: "front hood still
+    # awkward".
     (2.421, 0.83,  0.55,  0.08,  0.57),   # last section ring -- the bumper DOME is ahead of it
-    (2.30,  0.89,  0.60,  0.08,  0.625),  # front fascia
-    (2.00,  0.91,  0.72,  0.09,  0.73),   # hood leading edge
-    (1.78,  0.921, 0.80,  0.10,  0.79),   # front fender -- 0.101 over the arch lip
-    (1.60,  0.921, 0.873, 0.11,  0.86),   # FRONT AXLE -- 0.123 of fender over the arch lip
+    (2.30,  0.89,  0.66,  0.08,  0.67),   # front fascia -- the fall lives here
+    (2.00,  0.91,  0.80,  0.09,  0.79),   # hood leading edge
+    (1.78,  0.921, 0.86,  0.10,  0.845),  # front fender -- level with the hood, 0.16 over the lip
+    (1.60,  0.921, 0.885, 0.11,  0.87),   # FRONT AXLE -- 0.135 of fender over the arch lip
     (1.19,  0.921, 0.895, 0.13,  0.885),  # hood mid -- long, nearly flat
     (0.80,  0.915, 0.900, 0.15,  0.91),   # COWL / windshield base
     (0.50,  0.910, 0.907, 0.160, 1.104),  # windshield mid
@@ -1261,8 +1273,42 @@ def ring_pts(station):
                 span = SHOULDER - lip_hf
                 if span > 1e-9 and hf < SHOULDER:
                     t = (hf - lip_hf) / span
-                    out[k][1] = max(out[k][1], lip_y + t * (belt_y - lip_y))
+                    new_y = lip_y + t * (belt_y - lip_y)
+                    if new_y > out[k][1]:
+                        out[k][1] = new_y
+                        # T25: THE FLANK HAD A HUMP OVER EACH WHEEL, and this
+                        # line is why. Lifting a point kept the WIDTH its old
+                        # height had, so the section's widest point (hf 0.46,
+                        # wf 1.000, y 0.55 along the doors) was carried up to
+                        # y 0.816 at the front axle and 0.845 at the rear --
+                        # still at full width. The flank's highlight line, the
+                        # thing the eye reads as the body line above the door
+                        # number, bowed up 27 cm over each wheel. The user's
+                        # words: "a weird arch above the numbers, not straight
+                        # like our photos". On the reference the flank is a
+                        # slab and the arch is an opening cut into it; no line
+                        # of the body rises over the wheel.
+                        #
+                        # A lifted point now takes the width the un-arched
+                        # section has AT ITS NEW HEIGHT, so the band between
+                        # the lip and the belt at an arch station has the same
+                        # tumble as that band at a door station, and the
+                        # widest line simply ends at the opening.
+                        out[k][2] = sgn * _wf_at_height(new_y, y_low, belt_y) * w
     return [tuple(p) for p in out]
+
+
+def _wf_at_height(y, y_low, belt_y):
+    """Width fraction of the un-arched section at height y (below the belt)."""
+    hf = SHOULDER * (y - y_low) / max(belt_y - y_low, 1e-9)
+    hf = min(max(hf, 0.0), SHOULDER)
+    prev_h, prev_w = _RING_HALF_F[0]
+    for (h, wf) in _RING_HALF_F[1:]:
+        if h >= hf:
+            t = (hf - prev_h) / max(h - prev_h, 1e-9)
+            return prev_w + (wf - prev_w) * t
+        prev_h, prev_w = h, wf
+    return prev_w
 
 RINGS = [ring_pts(st) for st in CHASSIS_STATIONS]
 

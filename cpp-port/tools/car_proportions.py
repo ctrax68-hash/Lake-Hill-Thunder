@@ -216,7 +216,12 @@ measure("nose height / roof height", nose_top / ROOF, 0.440, 0.10, "photo",
 # steadily along the hood (+150 mm at the nose, +80 at the fender, +47 at the
 # axle, +16 at the cowl), so the shape of that fall needs a row of its own or
 # the next re-authoring is free to make the hood level again and stay green.
-measure("hood at front axle / roof height", station("front_axle")[2] / ROOF, 0.674, 0.10,
+# T25: both hood rows retargeted on the #41 overlay. The #21 that set them is
+# rotated nose-toward-camera, which compresses the front end and reads the
+# fender line low; the #41 is a near-pure side view and puts the fender line
+# level with the hood plane out past the wheel. Nose row unchanged: it agrees
+# across both stills and with the published 22-24 in.
+measure("hood at front axle / roof height", station("front_axle")[2] / ROOF, 0.683, 0.10,
         "photo", "the fender line over the front wheel")
 # T23f: the station between them, which is where the hood's fall was actually
 # being clipped. T23 could only reach 0.84 here (0.649 of the roof) because the
@@ -225,7 +230,7 @@ measure("hood at front axle / roof height", station("front_axle")[2] / ROOF, 0.6
 # first if the arch clearance ever crept back up, so it earns a row of its own
 # rather than being assumed to follow the two around it.
 measure("hood at front fender / roof height", station("front_fender")[2] / ROOF,
-        0.618, 0.10, "photo", "ahead of the front wheel, where the hood's fall was clipped")
+        0.664, 0.10, "photo", "ahead of the front wheel -- level with the hood on the #41")
 measure("beltline / roof height", belt_cabin / ROOF, 0.703, 0.08, "photo")
 measure("deck height / roof height", deck_top / ROOF, 0.724, 0.10, "photo")
 

@@ -165,7 +165,13 @@ int main() {
         // it is no longer chrome.
         expectTrue("steel rim stays distinguishable from the tread rubber",
                    luminance(rim) > luminance(tread) + 0.04);
-        expectTrue("wheel rim is steel, not the old chrome", luminance(rim) < 0.25);
+        // T25: bound moved 0.25 -> 0.40. T22's 0.25 was an ALBEDO bound set from
+        // an albedo ratio, and the render inverted it -- the face is dished and
+        // in the arch's shade, so at 0.14 albedo it rendered 0.031 against the
+        // sunlit tread's 0.035: darker than the rubber. At 0.29 albedo it
+        // renders 0.060, a 1.7x ratio inside the reference's 1.3-2x. The
+        // property this clause protects is "not chrome", and chrome was 0.78.
+        expectTrue("wheel rim is steel, not the old chrome", luminance(rim) < 0.40);
         // T23c: the two BRIGHT RINGS, which are where the reference wheel's
         // read actually comes from. The face being dark is right and was never
         // the whole story -- with nothing on it to catch light the wheel is a
@@ -178,7 +184,11 @@ int main() {
         // The bead ring is the warm one and the lug ring the neutral one; if
         // they ever collapse to the same tone the wheel loses the distinction
         // the reference makes between a bronze flange and steel hardware.
-        expectTrue("bead ring is warmer than the lug ring", bead[0] - bead[2] > lug[0] - lug[2] + 0.05);
+        // T25: restated. The bronze/steel distinction encoded the #49's night
+        // lighting; in daylight both rings are steel and the bead ring is the
+        // brightest thing on the wheel, so that is the property held.
+        expectTrue("bead ring is the brightest element on the wheel",
+                   luminance(bead) > luminance(lug) && luminance(bead) > luminance(rim));
         // And the lettering band stays a moulded-rubber tone, not a whitewall:
         // T22 recorded that painting this solid annulus bright puts a hoop on
         // the tire, and that finding still holds at T23c's warmer value.

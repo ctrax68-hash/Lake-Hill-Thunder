@@ -1624,14 +1624,23 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         // the geometry keeps it a LINE (WHEEL_R_BEAD_O - WHEEL_R_BEAD = 0.045 of
         // the radius), which is what lets it be this bright without reading as
         // a whitewall the way a wide band would.
-        c.fillRect(0.80, 0.34, 0.03, 0.16, std::array<double, 3>{112 / 255.0, 94 / 255.0, 58 / 255.0});
+        // T25: neutral steel, not bronze. The bronze came from the #49 night
+        // still, where every grey on the car is warmed by the stadium lights;
+        // in the daylit #41 and #25 the same ring is plain bright silver.
+        c.fillRect(0.80, 0.34, 0.03, 0.16, std::array<double, 3>{150 / 255.0, 152 / 255.0, 158 / 255.0});
         // T22: DARK STEEL, not chrome. Measured off NASCAR Thunder's own car
         // select screens: on the Target 41 the wheel face reads luminance 0.136
         // against 0.105 for the tire sidewall beside it -- a ratio of 1.30. It
         // is a dark disc barely brighter than the rubber, with no bright
         // spokes at all. This was (198, 200, 206), a 16x ratio, and it rendered
         // as a bright cream disc with five glaring spokes.
-        c.fillRect(0.80, 0.50, 0.03, 0.16, std::array<double, 3>{34 / 255.0, 35 / 255.0, 38 / 255.0});
+        // T25: 34 -> 72. T22 set this from an ALBEDO ratio (face 1.30x the
+        // tire) and the render inverted it: the face is dished inboard and
+        // sits in the arch's shade, so at (34,35,38) it came out 0.031 against
+        // 0.035 for the sunlit tread beside it -- darker than the rubber, a
+        // black disc with a ring on it. The target is the ratio as RENDERED;
+        // livery_test holds the albedo bound and the render is measured below.
+        c.fillRect(0.80, 0.50, 0.03, 0.16, std::array<double, 3>{72 / 255.0, 74 / 255.0, 80 / 255.0});
         // The lug ring on the hub -- the reference reads it around 0.20 against
         // 0.095 for the face it sits on.
         c.fillRect(0.80, 0.66, 0.03, 0.34, std::array<double, 3>{104 / 255.0, 106 / 255.0, 112 / 255.0});
