@@ -828,18 +828,37 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // T23: C-pillar -0.78 -> -0.505 and deck start -1.67 -> -1.56, both moved
     // by the same greenhouse re-authoring.
     const double uRG0 = carU(-0.505), uRG1 = carU(-1.56) - kSeamW;
-    constexpr double GV0 = 0.335, GVH = 0.330;
-    // K2: the beltline V-span (GV0/GVH) is inset only ~0.016 from the real
-    // beltline [car_v(4),car_v(9)]=[0.319,0.681] (thin but non-zero --
-    // glass still stays fully inside the real opening, unlike the two U-
-    // axis bugs above which actually overshot). Deliberately left alone in
-    // this phase: the beltline character line just below is a SEPARATELY
-    // hardcoded 0.320/0.677 pair despite its own comment claiming it
-    // tracks GV0/GVH, and the door-number badge clearance math was tuned
-    // against the current band -- tightening GV0/GVH correctly means a
-    // coordinated multi-constant change, not the single-value fix this
-    // phase is otherwise scoped as. check_car_rig.py's own new checks
-    // record the real target span so this is ready to pick up later.
+    // T23d: THE WINDSHIELD AND BACKLITE WERE PAINTED ONTO THE PILLARS AND THE
+    // REAR QUARTERS, and that is why our greenhouse read as a glass bubble
+    // where the reference's reads as a cabin.
+    //
+    // This band is the V extent of the windshield and rear-glass rects. At
+    // 0.335-0.665 it spanned the whole beltline -- the section's top AND both
+    // of its flanks -- for every station between the cowl and the A-pillar and
+    // between the C-pillar and the deck. But on those stations the flanks are
+    // not glass: they are the A-pillar and the rear quarter panel, which on a
+    // real car are body-coloured and thick. Side-by-side against the #21 that
+    // is the clearest remaining difference: its rear quarter is a big red panel
+    // with the backlite only across the car's width, and ours was glass from
+    // the roof down to the beltline on both sides.
+    //
+    // The band is now the SECTION'S TOP only. RINGV pins the roof edge at
+    // 0.588 and its mirror at 0.412, so 0.405-0.595 is the top plateau plus
+    // 0.007 of turn onto the pillar each side -- the glass reaching just around
+    // the corner, which is what the reference shows and what stops the pillar
+    // reading as a painted-on stripe.
+    //
+    // Everything anchored to GV0/GVH follows it by construction: the glass
+    // frames, the cowl and decklid shutlines, the cage bars, the sun strip and
+    // the A-pillar. The SIDE glass is not in this band and does not move -- it
+    // is painted at its own explicit 0.335/0.075 and 0.590/0.075, which is the
+    // tumblehome, where side glass genuinely is.
+    //
+    // K2's note, still true and still the reason this was left alone until now:
+    // the beltline character line below is a separately hardcoded 0.320/0.677
+    // pair despite its own comment claiming it tracks these, and it is the
+    // BELTLINE, not the glass, so it correctly stays where it is.
+    constexpr double GV0 = 0.405, GVH = 0.190;
 
     // ---- H2 (NT2003 engine-feel plan): panel shutlines ----
     //

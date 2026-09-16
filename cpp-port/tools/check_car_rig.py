@@ -504,7 +504,21 @@ check(0 < _st12_u - _uRG1 <= 0.02,
 # groundwork for a future tightening rather than an assertion of a fix.
 # R1: the real beltline is now read from the ROLE index, not the literal k=4
 # and k=9 the 14-point ring happened to put it at.
-_GV0, _GVH = 0.335, 0.330
+# T23d: 0.335/0.330 -> 0.405/0.190. The windshield and backlite rects used to
+# span the whole beltline, painting glass over the A-pillars and the rear
+# quarter panels; they are now the section's TOP plateau plus a little turn onto
+# the pillar. So the interesting bound is no longer "inside the beltline" (which
+# a narrower band satisfies trivially) but that the band still COVERS the roof
+# plateau -- a windshield narrower than the roof it meets leaves a painted strip
+# of body colour running down the middle of the glass.
+_GV0, _GVH = 0.405, 0.190
+_ROOF_LO, _ROOF_HI = R.RINGV[R.NK - 1 - R.K_ROOF_EDGE], R.RINGV[R.K_ROOF_EDGE]
+check(_GV0 <= _ROOF_LO and _ROOF_HI <= _GV0 + _GVH,
+      "glass V-span [%.3f,%.3f] covers the whole roof plateau [%.3f,%.3f]"
+      % (_GV0, _GV0 + _GVH, _ROOF_LO, _ROOF_HI))
+check((_ROOF_LO - _GV0) < 0.03 and ((_GV0 + _GVH) - _ROOF_HI) < 0.03,
+      "glass V-span overhangs the plateau by only %.3f / %.3f -- it turns onto the pillar, it does not cover it"
+      % (_ROOF_LO - _GV0, (_GV0 + _GVH) - _ROOF_HI))
 _BELT_LO, _BELT_HI = R.RINGV[R.NK - 1 - K_BELT_HI], R.RINGV[K_BELT_HI]
 check(_BELT_LO <= _GV0 and _GV0 + _GVH <= _BELT_HI,
       "livery glass V-span [%.3f,%.3f] stays within the real beltline [%.3f,%.3f]"
