@@ -335,6 +335,64 @@ check(worst_ring_other < 95.0,
 print("  note  wheel-arch crease at the axle stations: %.1f deg (expected -- a car has an arch lip)"
       % worst_ring_axle)
 
+# --- T23: the greenhouse's creases are IN THE EMITTED MESH ------------------
+#
+# Every check above reads R.RING_NRM, the smooth table, which by design still
+# holds the averaged normal at a crease. So none of them can tell whether the
+# crease reached the vertices bgfx is handed -- and a normal table that is
+# built correctly and then not wired into emit_smooth_quad() would leave the
+# car looking exactly as domed as before while all of the above stayed green.
+# That is the failure this project has shipped repeatedly.
+#
+# This measures R.positions/R.normals, the arrays that become the glTF: at a
+# crease station, two quads meeting at one ring point must carry MEASURABLY
+# DIFFERENT normals for that same position; at a smooth station they must not.
+# The angles are printed, so a pass states what it found rather than only that
+# it found something.
+print()
+print("greenhouse creases (measured on the emitted vertices, not on RING_NRM)")
+
+
+def _emitted_normal_spread(x_station, upper_only=True):
+    """Largest angle between two emitted normals sharing one loft position."""
+    by_pos = {}
+    for idx, p in enumerate(R.positions):
+        if abs(p[0] - x_station) > 1e-6:
+            continue
+        key = (round(p[1], 6), round(p[2], 6))
+        by_pos.setdefault(key, []).append(R.normals[idx])
+    # The upper section is the only place T23 creases; a ring point's height
+    # stands in for its mirrored index here, because the emitted arrays carry
+    # positions, not ring indices. K_BELT's own height at this station is the
+    # boundary, computed from the station rather than assumed.
+    st = [s for s in R.CHASSIS_STATIONS if abs(s[0] - x_station) < 1e-9][0]
+    belt_hf = R._RING_HALF_F[R.K_BELT][0]
+    belt_y = st[3] + (belt_hf / R.SHOULDER) * (st[2] - st[3])
+    worst = 0.0
+    for (y, _z), ns in by_pos.items():
+        if upper_only and y < belt_y - 1e-6:
+            continue
+        for a in range(len(ns)):
+            for b in range(a + 1, len(ns)):
+                worst = max(worst, _turn(ns[a], ns[b]))
+    return worst
+
+
+for _role in R._CREASE_ROLES:
+    _x = R.station_x(_role)
+    _spread = _emitted_normal_spread(_x)
+    check(_spread > 12.0,
+          "%-10s is a real edge in the emitted mesh: %.1f deg between its two sides"
+          % (_role, _spread))
+
+# The control. roof_mid sits in the middle of the flat roof, where the surface
+# genuinely does not bend, and it is NOT in _CREASE_ROLES -- so if this ever
+# reports a spread, the crease selection has leaked past the roles it names.
+_smooth_spread = _emitted_normal_spread(R.station_x("roof_mid"))
+check(_smooth_spread < 1.0,
+      "roof_mid stays smooth in the emitted mesh: %.2f deg (the control -- it is not a crease role)"
+      % _smooth_spread)
+
 # --- nose/tail cap (K1, car visual fidelity plan part 3) --------------------
 # The old cap fan's apex X was literally the station's own X -- a flat 2D
 # disc, not a convex bumper fascia -- which nothing here ever checked,
@@ -415,9 +473,14 @@ def _carU_raw(x):
     return 0.02 + (2.51 - x) / 5.02 * 0.76
 
 _K_SEAM_W = 0.0035  # livery.cpp's own kSeamW, copied here for the same reason
-_uWS0, _uWS1 = _carU_raw(0.585), _carU_raw(0.03)
-_uSG0 = _carU_raw(0.03) + _K_SEAM_W
-_uRG0, _uRG1 = _carU_raw(-0.78), _carU_raw(-1.67) - _K_SEAM_W
+# T23: the four station literals moved with the greenhouse (cowl 0.585->0.80,
+# A-pillar 0.03->0.205, C-pillar -0.78->-0.505, deck start -1.67->-1.56). This
+# copy tracking them is the whole point of the section: if livery.cpp had been
+# left on the old numbers, the painted windshield would now sit on the hood and
+# these checks are what says so.
+_uWS0, _uWS1 = _carU_raw(0.80), _carU_raw(0.205)
+_uSG0 = _carU_raw(0.205) + _K_SEAM_W
+_uRG0, _uRG1 = _carU_raw(-0.505), _carU_raw(-1.56) - _K_SEAM_W
 
 _st6_u = R.car_u(_key_station_x("cowl"))    # cowl/windshield base
 _st8_u = R.car_u(_key_station_x("roof_lead"))    # A-pillar top / roof leading edge

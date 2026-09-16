@@ -395,7 +395,10 @@ double carU(double x) {
 // arches -- the JS shadow rings and the H2 lip highlight -- were both placed
 // by hand against an older axle position and never moved when the wheels did.
 constexpr double kArchFrontU0 = 0.0878, kArchFrontU1 = 0.2285;
-constexpr double kArchRearU0 = 0.5052, kArchRearU1 = 0.6528;
+// T23: kArchRearU1 0.6528 -> 0.6459. The rear axle did not move; the arch's
+// rear U bound is the last STATION the carve reaches, and moving deck_start
+// from -1.67 to -1.56 with the greenhouse changed which station that is.
+constexpr double kArchRearU0 = 0.5052, kArchRearU1 = 0.6459;
 constexpr double kArchFrontCU = (kArchFrontU0 + kArchFrontU1) * 0.5;
 constexpr double kArchRearCU = (kArchRearU0 + kArchRearU1) * 0.5;
 constexpr double kArchLipV = 0.8848;  // RINGV[K_LIP]
@@ -781,7 +784,14 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // moved back when the silhouette was re-authored against the reference
     // photo -- the cabin had been sitting far too far forward (cowl 0.21 of a
     // wheelbase behind the front axle against the reference's 0.367).
-    const double uWS0 = carU(0.585), uWS1 = carU(0.03);
+    // T23: cowl 0.585 -> 0.80 and A-pillar top 0.03 -> 0.205. The whole
+    // greenhouse moved FORWARD again when the station table was re-authored
+    // against the user's second reference batch -- T6's 0.367-of-a-wheelbase
+    // cowl was itself an overshoot of a real correction, and both the new
+    // reference and published Gen-4 geometry put it at 0.28-0.29. These stay
+    // expressed as carU() of the station they belong to, and check_car_rig.py
+    // still asserts each one lands on a real station.
+    const double uWS0 = carU(0.80), uWS1 = carU(0.205);
     // K2 (car visual fidelity plan, part 3): uSG0 used to be carU(0.30),
     // which landed 42% of the way inside the windshield's own real U-range
     // [uWS0,uWS1] -- the side window started well past "windshield mid"
@@ -797,7 +807,9 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // moved forward from -1.00 to -0.72 with the notchback roof).
     // R2b: A-pillar 0.28 -> 0.35, and uSG1 -0.67 -> -0.90 so the side glass
     // still ends just ahead of the C-pillar, which moved back to -0.95.
-    const double uSG0 = carU(0.03) + kSeamW, uSG1 = carU(-0.74);
+    // T23: A-pillar 0.03 -> 0.205, and uSG1 -0.74 -> -0.465, keeping the same
+    // 0.04 of clearance ahead of the C-pillar station that moved to -0.505.
+    const double uSG0 = carU(0.205) + kSeamW, uSG1 = carU(-0.465);
     // K2: uRG1 used to be carU(-1.75) (station 12, "deck start"), but the
     // real glass-adjacent roofline rise ends two stations earlier, at
     // carU(-1.40) (station 11, "rear axle... belt/roof rejoin" -- beltY
@@ -813,7 +825,9 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // T6: the backlite is long and SHALLOW on a real Gen-4 (21 deg, measured
     // off the reference), so the rear glass now runs from the roof trailing
     // edge all the way back to where the deck starts.
-    const double uRG0 = carU(-0.78), uRG1 = carU(-1.67) - kSeamW;
+    // T23: C-pillar -0.78 -> -0.505 and deck start -1.67 -> -1.56, both moved
+    // by the same greenhouse re-authoring.
+    const double uRG0 = carU(-0.505), uRG1 = carU(-1.56) - kSeamW;
     constexpr double GV0 = 0.335, GVH = 0.330;
     // K2: the beltline V-span (GV0/GVH) is inset only ~0.016 from the real
     // beltline [car_v(4),car_v(9)]=[0.319,0.681] (thin but non-zero --
@@ -852,7 +866,10 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // break, at the roof-peak station x~-0.60), each side, spanning only
     // the door panel itself (rocker to beltline) rather than the full
     // body height -- a shutline doesn't cross the window.
-    for (double ux : {carU(1.00), carU(-0.60)}) {
+    // T23: the rear shutline tracked "the roof-peak station", which moved from
+    // -0.375 to -0.15 with the greenhouse; the door/quarter break behind it
+    // moves the same 0.225 rather than being left behind on the old roofline.
+    for (double ux : {carU(1.00), carU(-0.375)}) {
         c.fillRect(ux, 0.062, kSeamW, 0.320 - 0.062, seamShadow, 0.28);   // -z door panel
         c.fillRect(ux, 0.680, kSeamW, 0.945 - 0.680, seamShadow, 0.28);  // +z door panel
     }
@@ -1266,7 +1283,8 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         c.fillRect(carU(-0.49) - 0.062, 0.452, 0.014, 0.096, {0.30, 0.30, 0.33});
         c.fillRect(carU(-0.49) + 0.048, 0.452, 0.014, 0.096, {0.30, 0.30, 0.33});
     } else {
-        c.fillRect(carU(-0.49) - 0.056, 0.420, 0.112, 0.160, panelFill);
+        // T23: re-centred on the roof plateau, which now runs 0.205 to -0.505.
+        c.fillRect(carU(-0.15) - 0.056, 0.420, 0.112, 0.160, panelFill);
         drawNumber(c, num, carU(-0.49), 0.50, 0.105, panelNum, dark);   // roof
     }
     for (double vy : {0.235, 0.765}) c.fillEllipse(carU(-0.10), vy, 0.072, 0.082, panelFill);

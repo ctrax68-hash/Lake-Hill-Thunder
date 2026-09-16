@@ -357,7 +357,8 @@ int main() {
         // This replica is hand-synced (the same loose cross-file convention
         // the swatch coordinates above use), so it has to move with them;
         // check_car_rig.py is what actually pins livery.cpp to the geometry.
-        const double uWS0 = carU(0.585), uWS1 = carU(0.03);
+        // T23: 0.585/0.03 -> 0.80/0.205, tracking the greenhouse forward again.
+        const double uWS0 = carU(0.80), uWS1 = carU(0.205);
         constexpr double GV0 = 0.335, GVH = 0.330;
         const double wsClearU1 = uWS1 - 0.036;
         const double bar1u = uWS0 + (wsClearU1 - uWS0) * 0.35;

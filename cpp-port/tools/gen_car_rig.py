@@ -967,19 +967,61 @@ _CAR_ST_JS = [
     # it from a misread photo reintroduced exactly the 154-degree fold R2 fixed,
     # at 158 degrees. The beltline is therefore nearly level from the front axle
     # to the deck, which is what a Cup car has anyway.
+    # T23: THE WHOLE GREENHOUSE MOVES FORWARD 0.22 m.
+    #
+    # The user supplied a second batch of reference stills with "body shape and
+    # style still not inline with my photos". car_proportions.py read 17 of 17
+    # rows in tolerance at the time, so the property that differs was not one
+    # of them -- which is this project's oldest failure mode, recorded twice
+    # already (T11's buried wheels, T19's floating splitter): a set of
+    # individually satisfied constraints says nothing about the quantity they
+    # jointly determine.
+    #
+    # THE MEASUREMENT. Our loft's own profile outline was drawn from this table
+    # and overlaid on the #21 car-select still, registered on both wheel
+    # centres and the ground line, so only the reference carries error. Read
+    # off that overlay, in fractions of the wheelbase behind the front axle:
+    #
+    #                        reference   ours (before)
+    #     cowl                   0.281        0.367
+    #     A-pillar top           0.506        0.569
+    #     C-pillar top           0.763        0.866
+    #     backlite base          1.146        1.178
+    #
+    # Every greenhouse landmark sat too far back, the cowl worst. On the car
+    # that reads as a long hood with the cabin shoved toward the tail, which is
+    # exactly what the side-by-side shows and what "not inline with my photos"
+    # describes.
+    #
+    # WHY THE OLD NUMBER SURVIVED SO LONG. T6 moved the cowl BACK to 0.367 --
+    # from 0.210, which really was too far forward -- against a target read off
+    # the first reference photograph, and overshot. The correction is not
+    # "because the new photo disagrees": a real Gen-4's windshield base sits
+    # about 30-33 in behind the front axle centreline on a 110 in wheelbase,
+    # i.e. 0.27-0.30, which is the reference's 0.281 and not T6's 0.367. Two
+    # independent sources agree against the old target, so car_proportions.py's
+    # row moves with them -- and that file's own header is explicit that a
+    # `photo` target is the weaker kind of evidence for exactly this reason.
+    #
+    # Only the four greenhouse stations and the two interpolation stations
+    # between them move. The axles cannot move (they are the wheels), the
+    # overhangs measured correct, and the hood/deck heights were already in
+    # tolerance -- so beltY, halfWidth and yLow are carried across unchanged
+    # and the two moved in-between stations take the values the surrounding
+    # rows interpolate to at their new x, which is what they held before.
     (2.421, 0.83,  0.63,  0.08,  0.72),   # last section ring -- the bumper DOME is ahead of it
     (2.30,  0.89,  0.71,  0.08,  0.76),   # front fascia
     (2.00,  0.91,  0.80,  0.09,  0.82),   # hood leading edge
     (1.78,  0.921, 0.88,  0.10,  0.85),   # front fender -- full width
     (1.60,  0.921, 0.92,  0.11,  0.87),   # FRONT AXLE -- 0.14 of fender over the arch lip
     (1.19,  0.921, 0.905, 0.13,  0.89),   # hood mid -- long, nearly flat
-    (0.585, 0.915, 0.900, 0.15,  0.91),   # COWL / windshield base
-    (0.30,  0.910, 0.908, 0.16,  1.10),   # windshield mid
-    (0.03,  0.905, 0.914, 0.17,  1.295),  # A-pillar top -- ROOF STARTS
-    (-0.38, 0.905, 0.918, 0.18,  1.295),  # roof, flat
-    (-0.78, 0.910, 0.921, 0.18,  1.295),  # C-pillar top -- ROOF ENDS
-    (-1.16, 0.918, 0.926, 0.19,  1.14),   # REAR AXLE -- rear glass, mid
-    (-1.67, 0.921, 0.932, 0.19,  0.951),  # deck starts
+    (0.80,  0.915, 0.900, 0.15,  0.91),   # COWL / windshield base
+    (0.50,  0.910, 0.907, 0.160, 1.104),  # windshield mid
+    (0.205, 0.905, 0.914, 0.17,  1.295),  # A-pillar top -- ROOF STARTS
+    (-0.15, 0.9075, 0.9175, 0.175, 1.295),  # roof, flat
+    (-0.505, 0.910, 0.921, 0.18,  1.295),  # C-pillar top -- ROOF ENDS
+    (-1.16, 0.918, 0.926, 0.19,  1.081),  # REAR AXLE -- rear glass, mid
+    (-1.56, 0.921, 0.932, 0.19,  0.951),  # deck starts
     (-2.03, 0.905, 0.932, 0.21,  0.945),  # deck, flat
     (-2.32, 0.875, 0.928, 0.25,  0.940),  # deck rear
     (-2.466, 0.82, 0.912, 0.36,  0.930),  # last section ring -- the tail DOME is behind it
@@ -994,12 +1036,12 @@ STATION_ROLES = {
     "nose": 2.421,
     "hood_lead": 2.00,
     "front_axle": 1.60,
-    "cowl": 0.585,
-    "roof_lead": 0.03,
-    "roof_mid": -0.38,
-    "roof_trail": -0.78,
+    "cowl": 0.80,
+    "roof_lead": 0.205,
+    "roof_mid": -0.15,
+    "roof_trail": -0.505,
     "rear_axle": -1.16,
-    "deck_start": -1.67,
+    "deck_start": -1.56,
     "deck_flat": -2.03,
     "tail": -2.466,
 }
@@ -1127,6 +1169,104 @@ def ring_normals():
 
 RING_NRM = ring_normals()
 
+# T23: THE GREENHOUSE HAD NO EDGES, AND THAT IS WHY IT READ AS A BLOB.
+#
+# The user's reference stills (NASCAR Thunder 2003 car-select and race-intro
+# frames) show a stock car as four distinct planes above the beltline: a flat
+# hood, a raked windshield, a flat roof, a shallower backlite, then a flat
+# deck -- each meeting the next along a hard, bright line. Ours rendered as one
+# continuous dome from the cowl to the spoiler, and the station table was NOT
+# the reason. Measured off it, the roofline already turns sharply at every one
+# of those junctions:
+#
+#   cowl        33.3 deg      roof_lead   37.6 deg
+#   roof_trail  23.5 deg      deck_start  20.6 deg
+#
+# ring_normals() above then averaged every one of them away. It takes a CENTRAL
+# difference along the body's length, so at a station where the surface
+# genuinely creases it reports the mean of the two planes and each junction
+# shades as a smooth roll. That was right for H1's problem (the body read as a
+# stack of flat plates) and wrong for this one, and the two are not in tension:
+# a crease should appear exactly where the surface bends and nowhere else.
+#
+# So the loft now carries TWO normal tables. At a crease station the quad ahead
+# of it and the quad behind it each get the one-sided tangent for their own
+# side, giving two normals at one position -- a real edge. Everywhere else both
+# tables hold the same central-difference normal ring_normals() always
+# produced, so nothing that was smooth stops being smooth.
+#
+# WHY THIS NEEDS NO VERTEX-SPLITTING MACHINERY: emit_smooth_quad() appends four
+# fresh vertices per quad and never shares them between quads, so two quads
+# meeting at a station already have independent copies of that ring point. The
+# normal is the only thing that was forcing them to agree.
+#
+# RESTRICTED TO THE UPPER SECTION (mirrored ring index at or above K_BELT).
+# Below the beltline the flank IS smooth on the real car -- R3a established
+# that and it still holds -- and the unrestricted version put a hard line along
+# the rocker at the rear, where deck_start's low points turn 72.9 deg because
+# the wheel-arch carve lifts them, not because the body has an edge there.
+#
+# RING_NRM (the smooth table) is deliberately left in place: check_car_rig.py's
+# lengthwise-turn guard measures the underlying SURFACE for folds, which is a
+# different question from how it is shaded, and rewriting it against the sided
+# tables would have made a deliberate crease indistinguishable from a fold.
+_CREASE_ROLES = ("cowl", "roof_lead", "roof_trail", "deck_start")
+
+def _crease_station_indices():
+    out = set()
+    for role in _CREASE_ROLES:
+        x = station_x(role)
+        hit = [i for i, st in enumerate(CHASSIS_STATIONS) if abs(st[0] - x) < 1e-9]
+        if not hit:
+            raise SystemExit("gen_car_rig: crease role %r resolves to x=%.4f, no station there" % (role, x))
+        i = hit[0]
+        # An end station has no station on one side, so it has no two sides to
+        # crease between. None of the roles above is an end station today; this
+        # is here so that stops being silently true if the table is re-authored.
+        if 0 < i < len(CHASSIS_STATIONS) - 1:
+            out.add(i)
+    return out
+
+CREASE_STATIONS = _crease_station_indices()
+
+def _sided_normal(i, k, t_len):
+    """One ring point's normal for a given lengthwise tangent."""
+    r = RINGS[i]
+    p = r[k]
+    t_ring = _sub(r[(k + 1) % NK], r[(k - 1) % NK])
+    c = _cross(t_ring, t_len)
+    if c[0] * c[0] + c[1] * c[1] + c[2] * c[2] < 1e-18:
+        return RING_NRM[i][k]     # degenerate span; the smooth normal still holds
+    n = _norm(c)
+    mid = (CHASSIS_STATIONS[i][2] + CHASSIS_STATIONS[i][3]) / 2.0
+    if n[1] * (p[1] - mid) + n[2] * p[2] < 0:
+        n = (-n[0], -n[1], -n[2])
+    return n
+
+def crease_normal_tables():
+    """(ahead, behind) normal tables -- see the T23 note above.
+
+    `ahead[i][k]` is used by the quad between stations i-1 and i (the one
+    toward the NOSE, since CHASSIS_STATIONS runs nose-first); `behind[i][k]`
+    by the quad between i and i+1.
+    """
+    ahead, behind = [], []
+    for i, r in enumerate(RINGS):
+        crease = i in CREASE_STATIONS
+        ra, rb = [], []
+        for k, p in enumerate(r):
+            if not crease or min(k, NK - 1 - k) < K_BELT:
+                ra.append(RING_NRM[i][k])
+                rb.append(RING_NRM[i][k])
+                continue
+            ra.append(_sided_normal(i, k, _sub(p, RINGS[i - 1][k])))
+            rb.append(_sided_normal(i, k, _sub(RINGS[i + 1][k], p)))
+        ahead.append(ra)
+        behind.append(rb)
+    return ahead, behind
+
+RING_NRM_AHEAD, RING_NRM_BEHIND = crease_normal_tables()
+
 def car_u(x):
     return 0.02 + (HALF_LEN - x) / (2.0 * HALF_LEN) * 0.76
 
@@ -1150,15 +1290,25 @@ def car_v(k):
     """
     return RINGV[k]
 
-def _rv(i, k):
-    """(position, normal, uv) for ring point k of station i."""
-    return (RINGS[i][k], RING_NRM[i][k], (car_u(CHASSIS_STATIONS[i][0]), car_v(k)))
+def _rv(i, k, nrm=None):
+    """(position, normal, uv) for ring point k of station i.
+
+    T23: `nrm` picks which of the two crease tables this corner reads. It is
+    the table, not a flag, so a call site cannot pick "the crease side" and
+    silently get the smooth normal when the tables are rebuilt.
+    """
+    table = RING_NRM if nrm is None else nrm
+    return (RINGS[i][k], table[i][k], (car_u(CHASSIS_STATIONS[i][0]), car_v(k)))
 
 for i in range(len(RINGS) - 1):
     for k in range(NK - 1):
         # Outward hint from the ring point's own smooth normal -- already
         # corrected to face outward by ring_normals().
-        emit_smooth_quad(_rv(i, k), _rv(i + 1, k), _rv(i + 1, k + 1), _rv(i, k + 1),
+        # T23: this quad lies BEHIND station i and AHEAD of station i+1, so it
+        # reads the matching side of each station's crease pair. At every
+        # non-crease station both tables hold the same smooth normal.
+        emit_smooth_quad(_rv(i, k, RING_NRM_BEHIND), _rv(i + 1, k, RING_NRM_AHEAD),
+                          _rv(i + 1, k + 1, RING_NRM_AHEAD), _rv(i, k + 1, RING_NRM_BEHIND),
                           RING_NRM[i][k])
     # Underbody: RINGF is an open arc (bottom-right .. bottom-left), so the
     # floor closes it. Never visible in normal play, but leaving a hole

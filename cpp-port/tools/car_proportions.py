@@ -146,10 +146,52 @@ cowl = station("cowl")[0]
 roof_lead = station("roof_lead")[0]
 roof_trail = station("roof_trail")[0]
 deck = station("rear_axle")[0]
-measure("cowl behind front axle / wheelbase", (AXLE_F - cowl) / WHEELBASE, 0.367, 0.15,
-        "photo", "97 px of 264 px")
+deck_start = station("deck_start")[0]
+# T23: RETARGETED, and this is the one row in this file whose target has ever
+# moved, so the reason is on the record rather than in a commit message.
+#
+# 0.367 came from the first reference photograph, read through a landmark grid,
+# and it was wrong -- T6 was correcting a genuine error (0.210, the cabin far
+# too far forward) and overshot past the answer. Two independent sources now
+# agree on the smaller number:
+#
+#   * the user's second reference batch. Our own loft's profile outline was
+#     drawn from CHASSIS_STATIONS and overlaid on the #21 car-select still,
+#     registered on both wheel centres and the ground line so that only the
+#     reference carries error: the cowl sits 0.281 of a wheelbase behind the
+#     front axle there.
+#   * real Gen-4 Cup geometry. The windshield base sits roughly 30-33 in behind
+#     the front axle centreline on a 110 in wheelbase -- 0.27 to 0.30.
+#
+# A `photo` target retargeted against a second photo alone would be worth very
+# little; a `photo` target that a spec-class source independently contradicts
+# is a target that was measured wrong. Tolerance stays at 0.15, unchanged: this
+# is a correction, not a loosening.
+measure("cowl behind front axle / wheelbase", (AXLE_F - cowl) / WHEELBASE, 0.290, 0.15,
+        "photo", "0.281 off the #21 overlay; 30-33 in of a 110 in wheelbase")
 measure("flat roof length / wheelbase", (roof_lead - roof_trail) / WHEELBASE, 0.292, 0.20,
         "photo", "77 px of 264 px")
+
+# T23: THE REST OF THE GREENHOUSE, not just its front edge.
+#
+# Before T23 this file measured the cowl and the roof LENGTH and nothing else
+# along the cabin, so the A-pillar top, the C-pillar top and the backlite base
+# were free to sit anywhere those two happened to allow -- and all three were
+# out by roughly the cowl's own error while both existing rows read green. Same
+# shape of defect as T11's buried wheels: the rows that existed each held, and
+# the thing they jointly determine (where the cabin actually sits on the car)
+# was never the subject of a row.
+#
+# All three targets are read off the same #21 overlay as the cowl above, in
+# fractions of the wheelbase behind the front axle, and they are `photo`
+# numbers with a photo tolerance -- they say "the cabin is in the wrong place",
+# not "the C-pillar is 14 mm out".
+measure("A-pillar top behind front axle / wb", (AXLE_F - roof_lead) / WHEELBASE, 0.506, 0.12,
+        "photo", "where the windshield meets the roof")
+measure("C-pillar top behind front axle / wb", (AXLE_F - roof_trail) / WHEELBASE, 0.763, 0.12,
+        "photo", "where the roof meets the backlite")
+measure("backlite base behind front axle / wb", (AXLE_F - deck_start) / WHEELBASE, 1.146, 0.12,
+        "photo", "where the backlite meets the deck")
 
 # --- profile heights ------------------------------------------------------
 # Vertical readings off the same grid, scaled by the known 1.295 m roof.
