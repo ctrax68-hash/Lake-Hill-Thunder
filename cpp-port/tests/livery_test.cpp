@@ -317,8 +317,12 @@ int main() {
         LiveryScheme scheme{0, 0, 0, CarPalette::White};
         const auto pixels = buildLiveryPixels(red, 28, 1, &scheme);
         int darkPixels = 0;
-        for (int y = (int)(0.153 * kLiveryTextureSize); y < (int)(0.317 * kLiveryTextureSize); ++y)
-            for (int x = (int)(0.343 * kLiveryTextureSize); x < (int)(0.487 * kLiveryTextureSize); ++x)
+        // T26: box moved with the number -- centre v 0.2042 (the mirror of
+        // 0.7958), half-height 0.125, u 0.330-0.500. The floor is unchanged: a
+        // bigger number with the same outline ratio can only put MORE dark
+        // texels in its box, so 13000 remains a lower bound the old size met.
+        for (int y = (int)(0.079 * kLiveryTextureSize); y < (int)(0.329 * kLiveryTextureSize); ++y)
+            for (int x = (int)(0.330 * kLiveryTextureSize); x < (int)(0.500 * kLiveryTextureSize); ++x)
                 if (luminance(pixelAt(pixels, x, y)) < 0.10) ++darkPixels;
         expectTrue("door number carries a bold dark outline", darkPixels >= 13000);
     }
@@ -521,15 +525,22 @@ int main() {
         LiveryScheme scheme{0, 0, 0, CarPalette::White};
         const auto pixels = buildLiveryPixels(red, 91, 1, &scheme);
 
+        // T26: box re-centred on the door number's new centre, 0.7958 (top
+        // edge 6 texels under the belt, fh 0.19 with the 1.22x outline), and
+        // widened to hold the 0.056-wide digits; it was the old mid-door box.
         // Same box the "bold dark outline" check above uses, mirrored about
         // its own centre column -- which is drawNumber()'s fcx, carU(-0.10),
         // and therefore the axis mirrorRegionX() flips about.
-        const int u0 = (int)(0.343 * kLiveryTextureSize);
-        const int u1 = (int)(0.487 * kLiveryTextureSize);
+        const int u0 = (int)(0.330 * kLiveryTextureSize);
+        const int u1 = (int)(0.500 * kLiveryTextureSize);
         const int w = u1 - u0;
-        const int halfV = (int)(0.082 * kLiveryTextureSize);
-        const int loC = (int)(0.235 * kLiveryTextureSize);
-        const int hiC = (int)(0.765 * kLiveryTextureSize);
+        // Half-height is the outlined digit box (0.19 x 1.22 / 2), not more:
+        // the box's top edge sits 6 texels under the belt, and a taller box
+        // reaches into the side glass, where the +z door carries the net and
+        // the -z door does not -- an asymmetry that is not the number's.
+        const int halfV = (int)(0.116 * kLiveryTextureSize);
+        const int loC = (int)((1.0 - 0.7958) * kLiveryTextureSize);
+        const int hiC = (int)(0.7958 * kLiveryTextureSize);
 
         long ink = 0, same = 0, mirrored = 0, total = 0;
         for (int dv = -halfV; dv < halfV; ++dv) {
@@ -758,7 +769,11 @@ int main() {
         // sample the glass at a v the net's straps never occupy and count runs
         // that depart from it. That survives any future change to either tone.
         auto barsCrossed = [&](double v0, double v1) {
-            const int x = (int)(0.450 * kLiveryTextureSize);  // mid side glass
+            // T26: 0.450 -> 0.385. The net now hangs in the DOOR pane only,
+            // uSG0 to the B-pillar post at 55% of the glass (u ~0.36-0.405);
+            // 0.450 is the quarter pane behind the post, which carries no net
+            // on either side. 0.385 is the middle of the door pane.
+            const int x = (int)(0.385 * kLiveryTextureSize);  // mid door pane
             const double glassLum =
                 luminance(pixelAt(pixels, x, (int)((v0 + (v1 - v0) * 0.02) * kLiveryTextureSize)));
             int bars = 0;

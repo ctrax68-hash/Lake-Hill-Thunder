@@ -453,25 +453,40 @@ constexpr bool kDigitSegments[10][7] = {
 // Draws one digit into a fcx,fcy-centered fh-tall (fw-wide) box.
 void drawDigit(Canvas& c, int d, double fcx, double fcy, double fw, double fh, const std::array<double, 3>& color) {
     if (d < 0 || d > 9) return;
-    const double t = fw * 0.22; // segment thickness
+    // T26: two stroke thicknesses, not one. `tx` is the width of a vertical
+    // stroke (in U) and `ty` the height of a horizontal one (in V), each 0.22
+    // of the digit box's width IN ITS OWN AXIS. With one `t` for both, a box
+    // whose U/V aspect is not the default 0.62 -- the door numbers, sized in
+    // metres on an anisotropic flank -- drew horizontal bars 2.6x thinner
+    // than the uprights and the numerals read as spindly. For the default
+    // aspect (fw == 0.62 fh) ty == tx exactly, so nothing else changes.
+    const double tx = fw * 0.22;
+    const double ty = fh * 0.62 * 0.22;
     const double x0 = fcx - fw / 2, x1 = fcx + fw / 2;
     const double yTop = fcy - fh / 2, yMid = fcy, yBot = fcy + fh / 2;
     const bool* seg = kDigitSegments[d];
-    if (seg[0]) c.fillRect(x0, yTop, fw, t, color);                     // top
-    if (seg[1]) c.fillRect(x0, yTop, t, fh / 2, color);                 // top-left
-    if (seg[2]) c.fillRect(x1 - t, yTop, t, fh / 2, color);             // top-right
-    if (seg[3]) c.fillRect(x0, yMid - t / 2, fw, t, color);             // middle
-    if (seg[4]) c.fillRect(x0, yMid, t, fh / 2, color);                 // bottom-left
-    if (seg[5]) c.fillRect(x1 - t, yMid, t, fh / 2, color);             // bottom-right
-    if (seg[6]) c.fillRect(x0, yBot - t, fw, t, color);                 // bottom
+    if (seg[0]) c.fillRect(x0, yTop, fw, ty, color);                    // top
+    if (seg[1]) c.fillRect(x0, yTop, tx, fh / 2, color);                // top-left
+    if (seg[2]) c.fillRect(x1 - tx, yTop, tx, fh / 2, color);           // top-right
+    if (seg[3]) c.fillRect(x0, yMid - ty / 2, fw, ty, color);           // middle
+    if (seg[4]) c.fillRect(x0, yMid, tx, fh / 2, color);                // bottom-left
+    if (seg[5]) c.fillRect(x1 - tx, yMid, tx, fh / 2, color);           // bottom-right
+    if (seg[6]) c.fillRect(x0, yBot - ty, fw, ty, color);               // bottom
 }
 
 // Draws a 1-2 digit number, outline then fill (JS's drawNum() stroke+fill
 // order, index.html:2541-2542), centered at (fcx,fcy).
+// T26: `fwDigit` sets the per-digit width in U explicitly. The default
+// derives it from fh in TEXTURE units, which is only right where U and V are
+// isotropic. On the flank they are not: U runs ~0.15 per metre along the car,
+// V ~0.39 per metre down the door (RINGV is arc-length based), so a digit
+// drawn at fw = 0.62 fh came out 1.75x WIDER than tall on the body -- squat,
+// wide numerals that were half the height of the reference's and sat mid-
+// door. The door numbers now pass a width computed from the height in metres.
 void drawNumber(Canvas& c, int num, double fcx, double fcy, double fh, const std::array<double, 3>& fill,
-                const std::array<double, 3>& outline, bool mirrorU = false) {
+                const std::array<double, 3>& outline, bool mirrorU = false, double fwDigit = 0.0) {
     const std::string s = std::to_string(num);
-    const double fw = fh * 0.62;
+    const double fw = fwDigit > 0.0 ? fwDigit : fh * 0.62;
     const double gap = fw * 0.18;
     const double totalW = s.size() == 2 ? fw * 2 + gap : fw;
     double x = fcx - totalW / 2 + fw / 2;
@@ -809,7 +824,13 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // still ends just ahead of the C-pillar, which moved back to -0.95.
     // T23: A-pillar 0.03 -> 0.205, and uSG1 -0.74 -> -0.465, keeping the same
     // 0.04 of clearance ahead of the C-pillar station that moved to -0.505.
-    const double uSG0 = carU(0.205) + kSeamW, uSG1 = carU(-0.465);
+    // T26: the side glass used to start kSeamW (3.5 texels) behind the
+    // windshield's edge and end 0.04 of a station ahead of the C-pillar, so
+    // the glass rects floated in the paint with no pillars between them --
+    // "the windows look like shit around the cab". The #41 shows ~8 cm of
+    // body-coloured A-pillar between the windshield and the door glass and a
+    // similar C-pillar; in this wrap's U that is 0.012 and 0.010.
+    const double uSG0 = carU(0.205) + 0.012, uSG1 = carU(-0.505) - 0.010;
     // K2: uRG1 used to be carU(-1.75) (station 12, "deck start"), but the
     // real glass-adjacent roofline rise ends two stations earlier, at
     // carU(-1.40) (station 11, "rear axle... belt/roof rejoin" -- beltY
@@ -877,8 +898,10 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // just shy of the door-number badges (centered at v=0.235/0.765,
     // fry=0.082, so their far edges sit at v~0.317/0.683) so it reads as
     // running behind them rather than through them.
-    c.fillRect(U0, 0.320, U1 - U0, kSeamW, seamShadow, 0.30);
-    c.fillRect(U0, 0.677, U1 - U0, kSeamW, seamShadow, 0.30);
+    // T26: 0.30 -> 0.55 alpha. With the side glass now reaching this seam it
+    // is the window's bottom seal, which on the reference is a firm dark line.
+    c.fillRect(U0, 0.320, U1 - U0, kSeamW, seamShadow, 0.55);
+    c.fillRect(U0, 0.677, U1 - U0, kSeamW, seamShadow, 0.55);
 
     // Door shutlines: one ahead of the door (roughly the front-fender/
     // door break, x~1.00) and one behind it (roughly the door/quarter-panel
@@ -931,8 +954,12 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         const std::array<double, 3> glassDark{26 / 255.0, 28 / 255.0, 34 / 255.0};
         c.fillRect(uWS0, GV0, uWS1 - uWS0, GVH, glassDark);
         c.fillRect(uRG0, GV0, uRG1 - uRG0, GVH, glassDark);
-        c.fillRect(uSG0, 0.335, uSG1 - uSG0, 0.075, glassDark);
-        c.fillRect(uSG0, 0.590, uSG1 - uSG0, 0.075, glassDark);
+        // T26: 0.075 -> 0.087 tall, so the pane reaches the beltline seam at
+        // 0.677 / 0.323 instead of stopping 0.012 short of it. That 0.012 was
+        // the band of body colour the reference does not have between the
+        // window and the door, and it read as the window sitting too high.
+        c.fillRect(uSG0, 0.323, uSG1 - uSG0, 0.087, glassDark);
+        c.fillRect(uSG0, 0.590, uSG1 - uSG0, 0.087, glassDark);
         // The highlight band stays a band, just a much quieter one: it is the
         // sky streak across the top of the pane, not the pane itself.
         const std::array<double, 3> glassHi{50 / 255.0, 53 / 255.0, 60 / 255.0};
@@ -956,11 +983,21 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         c.fillRect(uSG0 + 2.0 / kLiveryTextureSize, 0.596 + i * 0.063 / 5.0, (uSG1 - uSG0) * 0.55 - 4.0 / kLiveryTextureSize,
                    2.0 / kLiveryTextureSize, weave);
     }
+    // T26: the B-pillar -- a body-coloured post where the door pane ends and
+    // the quarter pane begins (the net covers the front 55% of the glass, so
+    // the post sits at that boundary). On the #41 it is the one light vertical
+    // in the greenhouse and it is what makes two windows read instead of one
+    // long slot.
+    {
+        const double bu = uSG0 + (uSG1 - uSG0) * 0.55;
+        c.fillRect(bu - 0.003, 0.323, 0.006, 0.087, tone(kBaseM));
+        c.fillRect(bu - 0.003, 0.590, 0.006, 0.087, tone(kBaseM));
+    }
     // A/B pillar dark edges
     const std::array<double, 3> pillarDark{14 / 255.0, 14 / 255.0, 16 / 255.0};
     c.fillRect(uWS0 - 2.0 / kLiveryTextureSize, GV0, 4.0 / kLiveryTextureSize, GVH, pillarDark);
-    c.fillRect(uSG1 - 2.0 / kLiveryTextureSize, 0.335, 4.0 / kLiveryTextureSize, 0.075, pillarDark);
-    c.fillRect(uSG1 - 2.0 / kLiveryTextureSize, 0.590, 4.0 / kLiveryTextureSize, 0.075, pillarDark);
+    c.fillRect(uSG1 - 2.0 / kLiveryTextureSize, 0.323, 4.0 / kLiveryTextureSize, 0.087, pillarDark);
+    c.fillRect(uSG1 - 2.0 / kLiveryTextureSize, 0.590, 4.0 / kLiveryTextureSize, 0.087, pillarDark);
 
     // H2 (NT2003 engine-feel plan): window rubber. The pillar edges above
     // only frame the SIDES of each glass rect (the A/B pillars, which are
@@ -1056,8 +1093,11 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         // reflection on that window.
         const std::array<double, 3> netBar{54 / 255.0, 54 / 255.0, 58 / 255.0};
         // The driver's side glass band, from the glass block above.
-        constexpr double kNetV0 = 0.590, kNetVH = 0.075;
-        const double nu0 = uSG0, nu1 = uSG1;
+        // T26: the net hangs in the DOOR opening only -- the front pane up to
+        // the B-pillar post -- and reaches the belt with the glass. It used to
+        // span the whole side glass, so the post landed mid-net.
+        constexpr double kNetV0 = 0.590, kNetVH = 0.087;
+        const double nu0 = uSG0, nu1 = uSG0 + (uSG1 - uSG0) * 0.55 - 0.003;
         const double barW = 5.0 / kLiveryTextureSize;
         // Horizontal webbing straps -- the dominant read on a real net -- plus
         // a sparser vertical set, and a frame around the whole opening.
@@ -1396,13 +1436,34 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         c.fillRect(carU(-0.15) - 0.056, 0.420, 0.112, 0.160, panelFill);
         drawNumber(c, num, carU(-0.49), 0.50, 0.105, panelNum, dark);   // roof
     }
-    for (double vy : {0.235, 0.765}) c.fillEllipse(carU(-0.10), vy, 0.072, 0.082, panelFill);
     if (!paceLightBar) {
-        // T10: the v > 0.5 door only, matching the wordmark rule above. The
-        // numbers were drawn unmirrored on BOTH doors, so they read backwards
-        // on the v > 0.5 flank -- which is what "numbers are backwards" was.
-        drawNumber(c, num, carU(-0.10), 0.235, 0.105, panelNum, dark, false);  // right door
-        drawNumber(c, num, carU(-0.10), 0.765, 0.105, panelNum, dark, true);   // left door
+        // T26: THE DOOR NUMBER, SIZED AND PLACED OFF THE #41.
+        //
+        // Scanning a column through the reference's B-pillar: the window
+        // spans 40 px, the flank (belt to rocker) 60 px, and the number's ink
+        // starts 8 px below the belt and fills 48 of those 60 px -- 80% of the
+        // door, top-aligned to the window. Ours filled 47%, sat mid-door, and
+        // was drawn on a roundel that left a ring of body colour around it;
+        // the user's read was "the height of green above the numbers is way
+        // above the photos". The roundel is gone (the reference has none) and
+        // the digits are sized in metres: 0.50 m tall, 0.31 m per digit, which
+        // in this flank's anisotropic UV is fh 0.19 / fw 0.048, with the
+        // outlined box's top edge 6 texels under the beltline seam at 0.677.
+        //
+        // Still the T10 rule: the v > 0.5 door is drawn mirrored so it reads
+        // forwards on the car.
+        constexpr double kDoorFh = 0.19, kDoorFw = 0.056;
+        constexpr double kDoorTopV = 0.677 + 6.0 / kLiveryTextureSize;
+        const double doorCy = kDoorTopV + kDoorFh * 1.22 * 0.5;
+        // Without the roundel the digits need their own contrast: white fill
+        // with a dark outline on a dark car, the reverse on a light one --
+        // which is what every reference car does (white "41" outlined dark on
+        // red). panelNum/dark were both dark on a green car and the number
+        // came out as a black skeleton with the stripes showing through it.
+        const std::array<double, 3>& doorFill = lum > 0.5 ? dark : white;
+        const std::array<double, 3>& doorLine = lum > 0.5 ? white : dark;
+        drawNumber(c, num, carU(-0.10), 1.0 - doorCy, kDoorFh, doorFill, doorLine, false, kDoorFw);  // right door
+        drawNumber(c, num, carU(-0.10), doorCy, kDoorFh, doorFill, doorLine, true, kDoorFw);         // left door
     }
 
     // ---- nose/tail lamp clusters (index.html:2793-2855, re-placed) ----
