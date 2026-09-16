@@ -12561,3 +12561,71 @@ thousands is correct; anything in the tens is the mirror housings and means the
 wheels are gone again.
 
 `check_car_rig.py` PASS, `car_proportions.py` 17/17, `ctest` 36/36.
+
+## T22 — measured against NASCAR Thunder's own car-select screens
+
+Five stills from the game this port is chasing. Two things measured clearly
+wrong, both fixed; a third measured and left, with the number recorded.
+
+### The greenhouse was inverted
+
+Sampled from the reference: on the Target 41 the side window reads luminance
+**0.327** against **0.090** for the red door beside it — the glass is **3.6x
+BRIGHTER than the body paint**, and 0.70 of the white roof. It is a light
+aperture with the cage and driver visible through it, not tint. The AOL car
+gives the same story from the front: windshield 0.291 against 0.239 for the
+blue hood.
+
+Ours was the other way round: against a white body panel the greenhouse
+rendered 0.36 of it, roughly half where the reference puts it, because
+`glassDark`/`glassHi` were near-black tint. Corrected to a light aperture, and
+the cage bars flipped from LIGHTER than the glass to DARKER — in the reference
+they are dark structure silhouetted against a lit interior, which is what makes
+a window read as a hole rather than a painted panel.
+
+### The wheels were chrome; they should be dark steel
+
+Reference: the wheel face reads **0.136** against **0.105** for the tire beside
+it — a ratio of **1.30**, barely brighter at all, with no highlight on it. A
+dark disc, no bright spokes.
+
+Ours was (198, 200, 206) at chrome gloss — a ratio of 16 — and once T21 made
+the wheels draw at all it was the most conspicuous thing on the car.
+
+Two things had to change, and finding the second took measuring twice:
+darkening the swatch alone barely moved the rendered pixel, because at
+`kGlossChrome` 0.85 the surface was mirroring sky and its own albedo hardly
+mattered. Hence `kGlossSteel`. Then the spokes STILL rendered (178, 151, 121),
+a warm tan, from a neutral grey swatch — that is the specular term, `spec *=
+gloss`, with the flat wheel face catching a 12-degree sun square-on.
+
+### What is still off, with the number
+
+The rim now renders about 0.55 where the tire beside it renders 0.012. That is
+not the reference's 1.30 ratio and it is not going to be by tuning albedo: the
+two surfaces are lit very differently in this scene (the wheel face is normal
+to a low sun, the tire edge is not), so the reference's ratio — measured where
+both were lit alike — is not a target our renderer can hit by paint alone. The
+albedo is now at the reference's relationship (rim 34, tread 12) and the
+remaining gap is lighting, which belongs with T5.
+
+### Four guards updated, none loosened
+
+Every one failed because the code became right, and each was restated to the
+new truth rather than relaxed:
+
+- the cage-vs-glass contrast **flipped sign** (bars are now darker, not lighter)
+- a new clause pins the glass tone itself, so a future edit cannot restore the
+  tint and still pass the contrast clause by darkening the cage further
+- I1's "rim 0.3 brighter than the tread" was **calibrated to chrome** and was
+  asserting the thing the reference contradicts; now "distinguishable" (0.04)
+  plus "not chrome" (< 0.25)
+- **T18's window-net guard broke, and how it broke matters.** It counted pixels
+  brighter than an absolute 0.10 as webbing, which only ever worked because the
+  glass underneath was near-black. Lightening the glass made the OPEN passenger
+  window read as four bars of net. It now measures contrast against the glass
+  tone sampled at a v the straps never occupy, so it survives any future change
+  to either colour. Re-verified against the mirrored-net regression it exists
+  for: 8 bars driver, 4 passenger, fails correctly.
+
+`check_car_rig.py` PASS, `car_proportions.py` 17/17, `ctest` 36/36.

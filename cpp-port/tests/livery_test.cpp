@@ -144,7 +144,20 @@ int main() {
         // The rim should read as a bright, roughly-neutral metallic tone --
         // clearly lighter than the near-black tread/sidewall rubber, which
         // is the whole visual point of I1 (a hub distinct from the tire).
-        expectTrue("metallic rim is brighter than the tread rubber", luminance(rim) > luminance(tread) + 0.3);
+        // T22 turned this assertion around, and the reference is why. I1 wanted
+        // the rim 0.3 brighter than the tread, which was calibrated to a chrome
+        // hub. Measured off NASCAR Thunder's own car-select screens, the wheel
+        // face reads 0.136 against 0.105 for the tire beside it -- a ratio of
+        // 1.30, barely brighter at all, and no highlight on it. A big
+        // luminance gap is exactly what the reference does NOT have.
+        //
+        // So the two properties worth holding are that the hub is still
+        // DISTINGUISHABLE from the rubber (or the wheel loses its read
+        // entirely, which is what I1 was really protecting against) and that
+        // it is no longer chrome.
+        expectTrue("steel rim stays distinguishable from the tread rubber",
+                   luminance(rim) > luminance(tread) + 0.04);
+        expectTrue("wheel rim is steel, not the old chrome", luminance(rim) < 0.25);
     }
 
     // I2 (car visual fidelity plan): the mirror housing swatch decodes to
@@ -352,10 +365,19 @@ int main() {
             pixelAt(pixels, (int)(bar1u * kLiveryTextureSize), (int)((GV0 + GVH * 0.5) * kLiveryTextureSize));
         const auto glassHiPx = pixelAt(pixels, (int)((uWS0 + (wsClearU1 - uWS0) * 0.15) * kLiveryTextureSize),
                                         (int)(0.50 * kLiveryTextureSize));
-        expectTrue("windshield cage bar reads as a distinct steel tone, not plain glass",
-                   luminance(barPx) > luminance(glassHiPx) + 0.02);
-        expectTrue("glass away from the bar is still plain glassHi",
-                   std::fabs(glassHiPx[0] - 26 / 255.0) < 0.02 && std::fabs(glassHiPx[1] - 33 / 255.0) < 0.02);
+        // T22 flipped the sign of this, and the flip is the point. The glass
+        // used to be near-black tint with LIGHTER steel cage bars on it.
+        // Measured off NASCAR Thunder's own car-select screens, the greenhouse
+        // is a light aperture (window luminance 0.327 against 0.090 for the
+        // red door beside it) with the cage reading as DARK structure through
+        // it. So the bar must now be darker than the glass, not brighter.
+        expectTrue("windshield cage bar reads as dark structure against lit glass",
+                   luminance(barPx) < luminance(glassHiPx) - 0.02);
+        // Pins the glass tone itself, so a future edit cannot quietly put the
+        // near-black tint back and still satisfy the contrast clause above by
+        // darkening the cage further.
+        expectTrue("glass is the lightened aperture tone, not tint",
+                   std::fabs(glassHiPx[0] - 96 / 255.0) < 0.03 && std::fabs(glassHiPx[1] - 100 / 255.0) < 0.03);
     }
 
     // K2 (car visual fidelity plan, part 3): the rear glass rect used to
@@ -527,7 +549,7 @@ int main() {
 
         expectTrue("T12: tire tread carries the rubber gloss", aTread == expect(kGlossRubber));
         expectTrue("T12: tire sidewall carries the rubber gloss", aSide == expect(kGlossRubber));
-        expectTrue("T12: wheel rim carries the chrome gloss", aRim == expect(kGlossChrome));
+        expectTrue("T12: wheel rim carries the steel gloss", aRim == expect(kGlossSteel));
         expectTrue("T12: glass carries the glass gloss", aGlass == expect(kGlossGlass));
         expectTrue("T12: plain body paint carries the paint gloss", aPaint == expect(kGlossPaint));
 
@@ -535,8 +557,11 @@ int main() {
         // a regression to a constant alpha breaks first: if the mask ever goes
         // uniform again these collapse to equal, whatever the value is.
         expectTrue("T12: rubber is less reflective than paint", aTread < aPaint);
-        expectTrue("T12: paint is less reflective than chrome", aPaint < aRim);
-        expectTrue("T12: chrome is less reflective than glass", aRim < aGlass);
+        // T22: the rim went from chrome to steel, so it is now LESS reflective
+        // than paint, not more. The ordering that still matters is that
+        // rubber is the least reflective thing and glass the most.
+        expectTrue("T12: steel rim is less reflective than clearcoat paint", aRim < aPaint);
+        expectTrue("T12: steel rim is less reflective than glass", aRim < aGlass);
 
         // And the whole-texture form of the same statement: a uniform mask has
         // one distinct alpha value. This is the clause that fails loudest if
@@ -683,14 +708,27 @@ int main() {
 
         // Count webbing bars crossed by a vertical scan through each side-glass
         // band: a strap is a run brighter than the glass it sits on.
+        // T22 broke this guard, and the way it broke is worth keeping. It
+        // counted pixels BRIGHTER than an absolute 0.10 as webbing, which
+        // worked only because the glass underneath was near-black. Once the
+        // glass was lightened to the reference's aperture tone the glass
+        // itself cleared that threshold and the open passenger window read as
+        // four bars of net.
+        //
+        // An absolute threshold was always the wrong test. The webbing is
+        // whatever CONTRASTS with the glass around it, so measure it that way:
+        // sample the glass at a v the net's straps never occupy and count runs
+        // that depart from it. That survives any future change to either tone.
         auto barsCrossed = [&](double v0, double v1) {
             const int x = (int)(0.450 * kLiveryTextureSize);  // mid side glass
+            const double glassLum =
+                luminance(pixelAt(pixels, x, (int)((v0 + (v1 - v0) * 0.02) * kLiveryTextureSize)));
             int bars = 0;
             bool onBar = false;
             for (int y = (int)(v0 * kLiveryTextureSize); y < (int)(v1 * kLiveryTextureSize); ++y) {
-                const bool bright = luminance(pixelAt(pixels, x, y)) > 0.10;
-                if (bright && !onBar) ++bars;
-                onBar = bright;
+                const bool onWebbing = std::fabs(luminance(pixelAt(pixels, x, y)) - glassLum) > 0.04;
+                if (onWebbing && !onBar) ++bars;
+                onBar = onWebbing;
             }
             return bars;
         };

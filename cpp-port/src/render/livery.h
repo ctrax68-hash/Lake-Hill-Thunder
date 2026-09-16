@@ -110,7 +110,14 @@ inline constexpr int kLiveryTextureSize = 2048;
 // geometry that no longer existed.
 inline constexpr double kGlossPaint = 0.55;   // clearcoat over body paint
 inline constexpr double kGlossGlass = 0.95;   // windows: nearly a mirror
-inline constexpr double kGlossChrome = 0.85;  // rim metal, trim
+inline constexpr double kGlossChrome = 0.85;  // bright trim: grille surround
+// T22: a wheel is painted STEEL, not chrome. Carrying kGlossChrome it mirrored
+// the sky and rendered cream however dark its albedo was -- darkening the
+// swatch from (198,200,206) to (72,74,80) barely moved the rendered pixel,
+// because at 0.85 reflectivity the paint underneath hardly matters. The
+// reference's wheel face sits at 1.30x the tire beside it with no highlight
+// on it at all, which is a low-gloss surface, not a dark mirror.
+inline constexpr double kGlossSteel = 0.12;   // wheel rim: dark, near-matte
 inline constexpr double kGlossDecal = 0.20;   // printed vinyl is matte next to paint
 inline constexpr double kGlossRubber = 0.04;  // tires reflect essentially nothing
 inline constexpr double kGlossMatte = 0.10;   // grille mesh, cage bars, rubber trim

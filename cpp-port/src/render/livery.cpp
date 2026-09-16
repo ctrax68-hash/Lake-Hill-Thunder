@@ -871,12 +871,22 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // wash as the bodywork and had nothing to say it was a mirror.
     {
         Canvas::ScopedGloss glassGloss(c, kGlossGlass);
-        const std::array<double, 3> glassDark{16 / 255.0, 20 / 255.0, 30 / 255.0};
+        // T22: MEASURED OFF THE REFERENCE, not chosen. NASCAR Thunder's own car
+        // select screens show the greenhouse as a LIGHT aperture with the roll
+        // cage and driver visible through it -- not dark tint. Sampled from
+        // them: the Target 41's side window reads luminance 0.327 against 0.090
+        // for its red door, so the glass is 3.6x BRIGHTER than the body paint,
+        // and 0.70 of the white roof beside it.
+        //
+        // Ours was inverted. Against a white body panel the greenhouse rendered
+        // 0.36 of it, roughly half where the reference puts it, because these
+        // two constants were near-black tint.
+        const std::array<double, 3> glassDark{74 / 255.0, 78 / 255.0, 88 / 255.0};
         c.fillRect(uWS0, GV0, uWS1 - uWS0, GVH, glassDark);
         c.fillRect(uRG0, GV0, uRG1 - uRG0, GVH, glassDark);
         c.fillRect(uSG0, 0.335, uSG1 - uSG0, 0.075, glassDark);
         c.fillRect(uSG0, 0.590, uSG1 - uSG0, 0.075, glassDark);
-        const std::array<double, 3> glassHi{26 / 255.0, 33 / 255.0, 46 / 255.0};
+        const std::array<double, 3> glassHi{96 / 255.0, 100 / 255.0, 112 / 255.0};
         c.fillRect(uWS0, 0.47, uWS1 - uWS0, 0.06, glassHi);
         c.fillRect(uRG0, 0.48, uRG1 - uRG0, 0.04, glassHi);
     }
@@ -956,13 +966,18 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         // the greenhouse's mirror response, or the cage reads as a bright
         // streak on the window rather than structure behind it.
         Canvas::ScopedGloss cageGloss(c, kGlossMatte);
-        const std::array<double, 3> cageBar{70 / 255.0, 72 / 255.0, 78 / 255.0};
+        // T22: the cage used to be LIGHTER than the near-black glass. With the
+        // glass corrected to a light aperture it has to go the other way --
+        // in the reference the bars are dark silhouettes against a lit
+        // interior, which is what makes the window read as a hole with
+        // structure in it rather than a painted panel.
+        const std::array<double, 3> cageBar{30 / 255.0, 32 / 255.0, 38 / 255.0};
         constexpr double kCageW = 6.0 / kLiveryTextureSize;
         const double t = kTrim / kLiveryTextureSize;
         const double wsClearU1 = uWS1 - 0.036; // clear of the sun-strip + its divider line
-        c.fillRect(uWS0 + (wsClearU1 - uWS0) * 0.35 - kCageW * 0.5, GV0 + t, kCageW, GVH - 2 * t, cageBar, 0.55);
-        c.fillRect(uWS0 + (wsClearU1 - uWS0) * 0.65 - kCageW * 0.5, GV0 + t, kCageW, GVH - 2 * t, cageBar, 0.55);
-        c.fillRect((uRG0 + uRG1) * 0.5 - kCageW * 0.5, GV0 + t, kCageW, GVH - 2 * t, cageBar, 0.55);
+        c.fillRect(uWS0 + (wsClearU1 - uWS0) * 0.35 - kCageW * 0.5, GV0 + t, kCageW, GVH - 2 * t, cageBar, 0.85);
+        c.fillRect(uWS0 + (wsClearU1 - uWS0) * 0.65 - kCageW * 0.5, GV0 + t, kCageW, GVH - 2 * t, cageBar, 0.85);
+        c.fillRect((uRG0 + uRG1) * 0.5 - kCageW * 0.5, GV0 + t, kCageW, GVH - 2 * t, cageBar, 0.85);
     }
 
     // ---- T18: the driver's window net, and the roof flaps ----
@@ -1435,11 +1450,25 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         // Lettering is moulded rubber, not paint; the rim is the one genuinely
         // metallic thing on the car.
         Canvas::ScopedGloss letterGloss(c, kGlossRubber);
-        c.fillRect(0.80, 0.0, 0.03, 0.5, std::array<double, 3>{130 / 255.0, 130 / 255.0, 132 / 255.0});  // tire lettering band
+        // T22: the reference's sidewall lettering is a THIN white arc of text on
+        // black rubber. This swatch is a solid annulus covering the whole band,
+        // so painting it near-white made the tire wear a bright grey ring it
+        // should not have. Dropped to a dim sidewall tone: still distinct from
+        // the tread, no longer a hoop.
+        c.fillRect(0.80, 0.0, 0.03, 0.5, std::array<double, 3>{28 / 255.0, 28 / 255.0, 30 / 255.0});  // sidewall band
     }
     {
-        Canvas::ScopedGloss rimGloss(c, kGlossChrome);
-        c.fillRect(0.80, 0.5, 0.03, 0.5, std::array<double, 3>{198 / 255.0, 200 / 255.0, 206 / 255.0});  // metallic rim/hub
+        Canvas::ScopedGloss rimGloss(c, kGlossSteel);
+        // T22: DARK STEEL, not chrome. Measured off NASCAR Thunder's own car
+        // select screens: on the Target 41 the wheel face reads luminance 0.136
+        // against 0.105 for the tire sidewall beside it -- a ratio of 1.30. It
+        // is a dark disc barely brighter than the rubber, with no bright
+        // spokes at all.
+        //
+        // This was (198, 200, 206), a 16x ratio, and it rendered as a bright
+        // cream disc with five glaring spokes -- the most conspicuous thing on
+        // the car once the wheels started drawing at all.
+        c.fillRect(0.80, 0.5, 0.03, 0.5, std::array<double, 3>{34 / 255.0, 35 / 255.0, 38 / 255.0});  // steel rim/hub
     }
 
     // I2 (car visual fidelity plan): the new door-mirror housing's swatch --
