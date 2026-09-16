@@ -75,6 +75,29 @@ void main()
 {
 	vec3 n = normalize(v_normal);
 	vec3 viewDir = normalize(u_camPos.xyz - v_worldPos);
+	// T24: TWO-SIDED LIGHTING. This renderer culls nothing (renderer.cpp's own
+	// convention -- it is what keeps the car a closed solid when a camera sees
+	// through an arch or under the tail), so a surface whose normal points AWAY
+	// from the eye is a normal thing to be looking at here, and every term
+	// below was computing nonsense for it:
+	//
+	//   dot(n, viewDir) < 0  ->  ndotv clamps to 0  ->  fresnel = 1, its
+	//   maximum, so reflectMix reaches gloss * 0.80 -- and reflect() about a
+	//   normal that faces away sends reflectDir UP, into the sky half of the
+	//   hemisphere.
+	//
+	// So any back-facing painted surface rendered as a full-strength sky
+	// mirror. In the chase camera -- the view the player spends a race in --
+	// the sliver of underbody visible under the rear valance came out
+	// (156,166,180), a pale blue plate brighter than the asphalt beside it,
+	// on near-black rocker paint. It is not an underbody bug: it is what every
+	// back-facing texel on the car was doing, and the underbody is just where
+	// the geometry lets you see one.
+	//
+	// Flipping the normal toward the eye is the standard treatment and it
+	// changes nothing for front-facing surfaces, where the dot is already
+	// positive.
+	if (dot(n, viewDir) < 0.0) { n = -n; }
 	vec3 lightDir = u_sunDir.xyz;
 	vec3 halfDir = normalize(viewDir + lightDir);
 

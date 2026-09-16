@@ -1449,20 +1449,44 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // could express. kNoseU0/kNoseUW are gone with it.
 
     // Tail: two wide taillight lenses split by a thin dark centre panel.
-    c.fillRect(kTailU0, 0.15, kTailUW, 0.70, tone(0.86));
+    //
+    // T24: CLIPPED OFF THE DECK. This band is the lamps WRAPPING AROUND THE
+    // CORNER onto the rear quarters -- the rear face itself has had its own UV
+    // island since T8. But the band was painted across the full V range on the
+    // body wrap's rearmost column, and V 0.412-0.588 on that column is not a
+    // quarter panel: it is the top plateau, i.e. the DECK. So a red lamp band
+    // and then a dark "centre panel" were being painted straight across the
+    // deck's trailing edge, which in the chase camera -- the view the player
+    // spends a race in -- is a pink pinstripe under the spoiler running the
+    // whole width of the car.
+    //
+    // The band now paints only outside the plateau. Same lamps, same wrap,
+    // nothing on the deck. The centre panel is dropped entirely rather than
+    // clipped: it exists to divide the two lenses ACROSS the rear face, and
+    // the rear face is the island's job now, so on the flanks it divided
+    // nothing and was only ever the dark half of this artifact.
+    constexpr double kDeckV0 = 0.412, kDeckV1 = 0.588;
+    auto lampBand = [&](double v0, double h, const std::array<double, 3>& col) {
+        const double v1 = v0 + h;
+        if (v0 < kDeckV0) c.fillRect(kTailU0, v0, kTailUW, std::min(v1, kDeckV0) - v0, col);
+        if (v1 > kDeckV1) {
+            const double lo = std::max(v0, kDeckV1);
+            c.fillRect(kTailU0, lo, kTailUW, v1 - lo, col);
+        }
+    };
+    lampBand(0.15, 0.70, tone(0.86));
     if (maskStyle == 0) {
-        c.fillRect(kTailU0, 0.310, kTailUW, 0.150, taillight);
-        c.fillRect(kTailU0, 0.540, kTailUW, 0.150, taillight);
+        lampBand(0.310, 0.150, taillight);
+        lampBand(0.540, 0.150, taillight);
     } else if (maskStyle == 1) {
-        c.fillRect(kTailU0, 0.295, kTailUW, 0.165, taillight);
-        c.fillRect(kTailU0, 0.540, kTailUW, 0.165, taillight);
-        c.fillRect(kTailU0, 0.365, kTailUW, 0.014, dark);            // lens divider
-        c.fillRect(kTailU0, 0.621, kTailUW, 0.014, dark);
+        lampBand(0.295, 0.165, taillight);
+        lampBand(0.540, 0.165, taillight);
+        lampBand(0.365, 0.014, dark);                                // lens divider
+        lampBand(0.621, 0.014, dark);
     } else {
         for (double vy : {0.310, 0.390, 0.540, 0.620})
-            c.fillRect(kTailU0, vy, kTailUW, 0.062, taillight);      // stacked lenses
+            lampBand(vy, 0.062, taillight);                          // stacked lenses
     }
-    c.fillRect(kTailU0, 0.462, kTailUW, 0.076, dark);                // centre panel
     // J6 (car visual fidelity plan, part 2): manufacturer badge upgrade --
     // outline + bar, a direct port of JS's own drawBadge()
     // (index.html:2724-2732: fill ellipse + a stroked outline + a bar rect
