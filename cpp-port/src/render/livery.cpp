@@ -1480,26 +1480,41 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     {
         // Lettering is moulded rubber, not paint; the rim is the one genuinely
         // metallic thing on the car.
+        // T23c: this column is FOUR bands now, matching gen_car_rig.py's split
+        // of the same column. The band EDGES are 0.34/0.50/0.66, not an even
+        // quarter split: the sample points have to stay inside v (0.20, 0.80),
+        // clear of the tail and nose islands' 0.05 margin, which this column is
+        // inside in u. Zoom the #49's front wheel in the second
+        // reference batch and the wheel's whole read comes from two bright
+        // rings -- a bronze bead ring at the rim flange and a lug ring on the
+        // hub, each about twice the luminance of the dark face and rubber
+        // between them. T22 got the FACE right and left the wheel with nothing
+        // on it to catch light.
         Canvas::ScopedGloss letterGloss(c, kGlossRubber);
-        // T22: the reference's sidewall lettering is a THIN white arc of text on
-        // black rubber. This swatch is a solid annulus covering the whole band,
-        // so painting it near-white made the tire wear a bright grey ring it
-        // should not have. Dropped to a dim sidewall tone: still distinct from
-        // the tread, no longer a hoop.
-        c.fillRect(0.80, 0.0, 0.03, 0.5, std::array<double, 3>{28 / 255.0, 28 / 255.0, 30 / 255.0});  // sidewall band
+        // T22's finding stands for this band: the reference's sidewall
+        // lettering is a thin arc of text, and this swatch is a solid annulus,
+        // so painting it near-white gives the tire a whitewall. It goes warm
+        // rather than bright -- about 3x the rubber's luminance, which reads as
+        // moulded lettering catching light without becoming a hoop.
+        c.fillRect(0.80, 0.0, 0.03, 0.34, std::array<double, 3>{48 / 255.0, 43 / 255.0, 33 / 255.0});
     }
     {
-        Canvas::ScopedGloss rimGloss(c, kGlossSteel);
+        Canvas::ScopedGloss ringGloss(c, kGlossSteel);
+        // The bead ring: the brightest thing on the wheel in the reference, and
+        // the geometry keeps it a LINE (WHEEL_R_BEAD_O - WHEEL_R_BEAD = 0.045 of
+        // the radius), which is what lets it be this bright without reading as
+        // a whitewall the way a wide band would.
+        c.fillRect(0.80, 0.34, 0.03, 0.16, std::array<double, 3>{112 / 255.0, 94 / 255.0, 58 / 255.0});
         // T22: DARK STEEL, not chrome. Measured off NASCAR Thunder's own car
         // select screens: on the Target 41 the wheel face reads luminance 0.136
         // against 0.105 for the tire sidewall beside it -- a ratio of 1.30. It
         // is a dark disc barely brighter than the rubber, with no bright
-        // spokes at all.
-        //
-        // This was (198, 200, 206), a 16x ratio, and it rendered as a bright
-        // cream disc with five glaring spokes -- the most conspicuous thing on
-        // the car once the wheels started drawing at all.
-        c.fillRect(0.80, 0.5, 0.03, 0.5, std::array<double, 3>{34 / 255.0, 35 / 255.0, 38 / 255.0});  // steel rim/hub
+        // spokes at all. This was (198, 200, 206), a 16x ratio, and it rendered
+        // as a bright cream disc with five glaring spokes.
+        c.fillRect(0.80, 0.50, 0.03, 0.16, std::array<double, 3>{34 / 255.0, 35 / 255.0, 38 / 255.0});
+        // The lug ring on the hub -- the reference reads it around 0.20 against
+        // 0.095 for the face it sits on.
+        c.fillRect(0.80, 0.66, 0.03, 0.34, std::array<double, 3>{104 / 255.0, 106 / 255.0, 112 / 255.0});
     }
 
     // I2 (car visual fidelity plan): the new door-mirror housing's swatch --

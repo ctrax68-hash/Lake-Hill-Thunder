@@ -612,7 +612,7 @@ check(any(R.positions[i][0] > R.HALF_LEN for i in _spl_idx),
 # this made, reporting a -0.020 m gap (an overlap) when the real figure was
 # +0.030.
 _SW_PTS = {R.SW_SPOILER_DARK, R.SW_SPOILER_BODY, R.SW_TREAD, R.SW_SIDEWALL,
-           R.SW_TIRE_LETTER, R.SW_RIM, R.SW_MIRROR}
+           R.SW_TIRE_LETTER, R.SW_RIM, R.SW_MIRROR, R.SW_BEAD, R.SW_LUG}
 _nose_body_y = [p[1] for p, uv in zip(R.positions, R.uvs)
                 if uv not in _SW_PTS and p[0] > R.HALF_LEN - 0.30]
 if _spl_idx and _nose_body_y:
@@ -687,6 +687,54 @@ check(_hub_ring_ok, "every wheel's outer cap carries exactly %d hub-nut ring ver
 check(_hub_joint_ok,
       "every hub-nut vertex is bound to its own wheel's joint (1-4), never chassis joint 0")
 check(_hub_outer_only_ok, "no hub-nut geometry on any wheel's inner (never-seen) cap")
+
+# --- T23c: the two bright rings ---------------------------------------------
+#
+# The wheel's whole read in the reference comes from a bronze bead ring and a
+# lug ring, and a swatch repaint alone cannot produce either -- they need their
+# own annuli, the same argument I1's own comment makes for why a single-swatch
+# fan can never show a rim/tire distinction. So the assertion is on the EMITTED
+# vertices: each ring exists, on the outer cap only, bound to its own wheel's
+# joint so it spins with the tire. A ring bound to chassis joint 0 would sit
+# still while the wheel turned, which no still frame can show.
+_bead_ok, _lug_ok, _ring_joint_ok, _ring_outer_ok = True, True, True, True
+for _wi, (wx, wz) in enumerate(R.wheel_offsets):
+    _joint = _wi + 1
+    _outer_sign = 1 if wz > 0 else -1
+    for _sw, _rout, _rin in ((R.SW_BEAD, R.WHEEL_R_BEAD_O * R.WHEEL_RADIUS,
+                              R.WHEEL_R_BEAD * R.WHEEL_RADIUS),
+                             (R.SW_LUG, R.WHEEL_R_BEAD * R.WHEEL_RADIUS * R.WHEEL_R_LUG_O,
+                              R.WHEEL_R_BEAD * R.WHEEL_RADIUS * R.WHEEL_R_LUG_I)):
+        # The |z - wz| filter is not decoration: both wheels on an axle share
+        # wx, so a radius test in X-Y alone matches BOTH of them and every count
+        # below comes out doubled. The first version of this check did exactly
+        # that and failed against correct geometry.
+        def _at(r):
+            return [(p, j) for uv, j, p in zip(R.uvs, R.joints0, R.positions) if uv == _sw
+                    and abs(p[2] - wz) < 0.3
+                    and abs(math.hypot(p[0] - wx, p[1] - R.WHEEL_RADIUS) - r) < 1e-9]
+        _v, _vi = _at(_rout), _at(_rin)
+        _n = 16  # add_wheel()'s call-site `sides`
+        if _sw == R.SW_BEAD and (len(_v) != _n or len(_vi) != _n):
+            _bead_ok = False
+        if _sw == R.SW_LUG and (len(_v) != _n or len(_vi) != _n):
+            _lug_ok = False
+        if any(j[0] != _joint for _p, j in _v + _vi):
+            _ring_joint_ok = False
+        # Outer cap only: every vertex must sit on the side of the hub that
+        # faces away from the car.
+        if any((p[2] - wz) * _outer_sign <= 0 for p, _j in _v + _vi):
+            _ring_outer_ok = False
+check(_bead_ok, "every wheel's outer cap carries a bead ring (16 vertices on each of its two radii)")
+check(_lug_ok, "every wheel's outer cap carries a lug ring (16 vertices on each of its two radii)")
+check(_ring_joint_ok, "every bead- and lug-ring vertex is bound to its own wheel's joint, never chassis joint 0")
+check(_ring_outer_ok, "no bead- or lug-ring geometry on any wheel's inner (never-seen) cap")
+check(R.WHEEL_R_BEAD_O - R.WHEEL_R_BEAD <= 0.06,
+      "the bead ring stays a LINE (%.3f of the radius); wider and the tire wears a whitewall"
+      % (R.WHEEL_R_BEAD_O - R.WHEEL_R_BEAD))
+check(R.WHEEL_R_LUG_O < 1.0 and R.WHEEL_R_LUG_I > R._HUB_R_FRAC,
+      "the lug ring sits on the rim face, outside the centre nut (%.2f-%.2f of R_INNER vs nut %.2f)"
+      % (R.WHEEL_R_LUG_I, R.WHEEL_R_LUG_O, R._HUB_R_FRAC))
 check(0 < _HR < _R_BEAD,
       "hub-nut radius (%.4f) stays strictly inside the rim face's own R_INNER (%.4f)"
       % (_HR, _R_BEAD))

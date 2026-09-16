@@ -104,8 +104,24 @@ SW_SIDEWALL = (0.90, 0.75)  # near-black rubber, the outer end-cap annulus
 # reach u=0.792, past the body wrap's own U1=0.78 -- the true open margin is
 # (0.792, 0.85), not (0.78, 0.85). u=0.83-0.85 stays reserved for I2's
 # mirror swatch, a separate column in the same margin.
-SW_TIRE_LETTER = (0.815, 0.25)  # lighter "lettering" annulus, inside the rubber
-SW_RIM = (0.815, 0.75)          # bright metallic hub disc, innermost
+# T23c: the 0.815 column is now FOUR bands, not two. Zooming the #49's front
+# wheel in the second reference batch, what makes a Cup wheel read as one is not
+# the rim face -- that is a dark disc barely brighter than the rubber, which T22
+# already got right. It is the two BRIGHT RINGS on it: a warm bronze bead ring
+# where the rim flange meets the tire, and a ring of lug nuts on the hub, both
+# around twice the luminance of everything around them. Ours had neither, so the
+# wheel rendered as a dark disc with five dark slots and nothing to catch light.
+#
+# Sample points move off what are now band EDGES, and they are squeezed into
+# v (0.20, 0.80) rather than spread evenly: this column sits 0.037 from the
+# tail/nose islands in u, inside check_car_rig.py's 0.05 island margin, so it
+# is the V separation alone that keeps these clear of them. An even 0.12/0.37/
+# 0.62/0.87 spread looks tidier and puts two samples inside the island margin,
+# which the guard catches.
+SW_TIRE_LETTER = (0.815, 0.26)  # moulded sidewall lettering annulus
+SW_BEAD = (0.815, 0.42)         # bronze bead ring at the rim flange
+SW_RIM = (0.815, 0.58)          # dark steel rim face and hub
+SW_LUG = (0.815, 0.74)          # bright lug-nut ring on the hub
 
 # I2 (car visual fidelity plan): a fixed dark plastic/trim swatch for the
 # new door mirror -- a separate column (u=0.835) from I1's tire swatches
@@ -162,6 +178,14 @@ WHEEL_R_SHOULDER = 0.90   # tread rolls into the sidewall here
 WHEEL_R_LETTER_O = 0.80   # sidewall lettering ring, outer edge
 WHEEL_R_LETTER_I = 0.73   # sidewall lettering ring, inner edge
 WHEEL_R_BEAD = 0.54       # tire bead / rim flange -- a 15 in wheel in a 28 in tire
+# T23c: the bronze bead ring occupies the sidewall's innermost sliver, between
+# the rubber above it and the rim flange it sits on. Thin on purpose -- in the
+# reference it is a line, not a band; widening it would give the wheel a
+# whitewall, which is the exact failure T22 recorded for the lettering annulus.
+WHEEL_R_BEAD_O = 0.585    # outer edge of the bead ring
+# The lug circle, as fractions of the RIM FACE's own radius (R_INNER), so it
+# scales with the wheel rather than with the tire.
+WHEEL_R_LUG_I, WHEEL_R_LUG_O = 0.42, 0.52
 WHEEL_Z_CROWN = 0.72      # tread crown, as a fraction of half_width
 WHEEL_Z_DISH = 0.34       # rim face recessed inboard, as a fraction of half_width
 WHEEL_SPOKES = 5
@@ -233,6 +257,7 @@ def add_wheel(cx, cy, cz, radius, half_width, joint_idx, sides=10):
     R_LET_O = radius * WHEEL_R_LETTER_O
     R_LET_I = radius * WHEEL_R_LETTER_I
     R_INNER = radius * WHEEL_R_BEAD
+    R_BEAD_O = radius * WHEEL_R_BEAD_O
 
     # End caps: normals/winding are hand-set per vertex (not derived from
     # winding, as emit_quad() does), and this renderer applies no backface
@@ -282,8 +307,11 @@ def add_wheel(cx, cy, cz, radius, half_width, joint_idx, sides=10):
         # The lettering ring, sitting ON the sidewall the way a real one does,
         # rather than being the last thing before the rim as it was in I1.
         annulus_tris(make_ring(R_LET_O, SW_TIRE_LETTER), make_ring(R_LET_I, SW_TIRE_LETTER))
-        # Sidewall, inner half, down to the bead.
-        annulus_tris(make_ring(R_LET_I, SW_SIDEWALL), make_ring(R_INNER, SW_SIDEWALL))
+        # Sidewall, inner half, down to the bead ring.
+        annulus_tris(make_ring(R_LET_I, SW_SIDEWALL), make_ring(R_BEAD_O, SW_SIDEWALL))
+        # T23c: the bronze bead ring itself, the brighter of the two rings the
+        # reference wheel gets its structure from.
+        annulus_tris(make_ring(R_BEAD_O, SW_BEAD), make_ring(R_INNER, SW_BEAD))
 
         # R2b: the rim face as WHEEL_SPOKES spokes with dark gaps between
         # them, and dished inboard so the face is not coplanar with the tire.
@@ -327,6 +355,30 @@ def add_wheel(cx, cy, cz, radius, half_width, joint_idx, sides=10):
         # is exactly why check_car_rig.py asserts the joint binding directly
         # rather than trusting a screenshot to catch it.
         if outer_face:
+            # T23c: the lug ring -- the second of the two bright rings. It sits
+            # proud of the dished rim face by the same offset the centre nut
+            # below uses, for the same reason: coplanar with the face it would
+            # z-fight against the spoke wedges.
+            _lug_z = z_rim + side_sign * (half_width * _HUB_Z_OFFSET_FRAC)
+            _lug_o = len(positions)
+            for _li in range(sides):
+                _la = 2 * math.pi * _li / sides
+                add_vertex((cx + math.cos(_la) * R_INNER * WHEEL_R_LUG_O,
+                            cy + math.sin(_la) * R_INNER * WHEEL_R_LUG_O, _lug_z), n, SW_LUG)
+            _lug_i = len(positions)
+            for _li in range(sides):
+                _la = 2 * math.pi * _li / sides
+                add_vertex((cx + math.cos(_la) * R_INNER * WHEEL_R_LUG_I,
+                            cy + math.sin(_la) * R_INNER * WHEEL_R_LUG_I, _lug_z), n, SW_LUG)
+            for _li in range(sides):
+                _l2 = (_li + 1) % sides
+                a0, a1 = _lug_o + _li, _lug_o + _l2
+                b0, b1 = _lug_i + _li, _lug_i + _l2
+                if side_sign > 0:
+                    indices.extend([a0, b0, b1, a0, b1, a1])
+                else:
+                    indices.extend([a0, b1, b0, a0, a1, b1])
+
             _hub_r = R_INNER * _HUB_R_FRAC
             # R2b: measured from the DISHED rim face, not the tire's outer
             # plane -- otherwise the nut floats half a wheel-width proud of

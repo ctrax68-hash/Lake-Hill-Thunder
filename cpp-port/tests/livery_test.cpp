@@ -135,8 +135,13 @@ int main() {
         const auto pixels = buildLiveryPixels(red, 7, 1, &scheme);
         const auto tread = pixelAt(pixels, (int)(0.90 * kLiveryTextureSize), (int)(0.25 * kLiveryTextureSize));
         const auto sidewall = pixelAt(pixels, (int)(0.90 * kLiveryTextureSize), (int)(0.75 * kLiveryTextureSize));
-        const auto tireLetter = pixelAt(pixels, (int)(0.815 * kLiveryTextureSize), (int)(0.25 * kLiveryTextureSize));
-        const auto rim = pixelAt(pixels, (int)(0.815 * kLiveryTextureSize), (int)(0.75 * kLiveryTextureSize));
+        // T23c: the 0.815 column is four bands now, sampled at v 0.26/0.42/
+        // 0.58/0.74 -- see gen_car_rig.py's SW_* block for why they are bunched
+        // into the middle of the column rather than spread evenly.
+        const auto tireLetter = pixelAt(pixels, (int)(0.815 * kLiveryTextureSize), (int)(0.26 * kLiveryTextureSize));
+        const auto bead = pixelAt(pixels, (int)(0.815 * kLiveryTextureSize), (int)(0.42 * kLiveryTextureSize));
+        const auto rim = pixelAt(pixels, (int)(0.815 * kLiveryTextureSize), (int)(0.58 * kLiveryTextureSize));
+        const auto lug = pixelAt(pixels, (int)(0.815 * kLiveryTextureSize), (int)(0.74 * kLiveryTextureSize));
         expectTrue("wheel tread differs from sidewall", tread != sidewall);
         expectTrue("wheel sidewall differs from tire-lettering band", sidewall != tireLetter);
         expectTrue("tire-lettering band differs from the metallic rim", tireLetter != rim);
@@ -158,6 +163,25 @@ int main() {
         expectTrue("steel rim stays distinguishable from the tread rubber",
                    luminance(rim) > luminance(tread) + 0.04);
         expectTrue("wheel rim is steel, not the old chrome", luminance(rim) < 0.25);
+        // T23c: the two BRIGHT RINGS, which are where the reference wheel's
+        // read actually comes from. The face being dark is right and was never
+        // the whole story -- with nothing on it to catch light the wheel is a
+        // dark disc with dark slots. Both rings must clear the face they sit
+        // on by a real margin, or the geometry added for them buys nothing.
+        expectTrue("bead ring is materially brighter than the rim face it flanges onto",
+                   luminance(bead) > luminance(rim) + 0.10);
+        expectTrue("lug ring is materially brighter than the rim face it sits on",
+                   luminance(lug) > luminance(rim) + 0.10);
+        // The bead ring is the warm one and the lug ring the neutral one; if
+        // they ever collapse to the same tone the wheel loses the distinction
+        // the reference makes between a bronze flange and steel hardware.
+        expectTrue("bead ring is warmer than the lug ring", bead[0] - bead[2] > lug[0] - lug[2] + 0.05);
+        // And the lettering band stays a moulded-rubber tone, not a whitewall:
+        // T22 recorded that painting this solid annulus bright puts a hoop on
+        // the tire, and that finding still holds at T23c's warmer value.
+        expectTrue("tire lettering band stays below a whitewall", luminance(tireLetter) < 0.25);
+        expectTrue("tire lettering band still reads above the rubber",
+                   luminance(tireLetter) > luminance(sidewall) + 0.05);
     }
 
     // I2 (car visual fidelity plan): the mirror housing swatch decodes to
