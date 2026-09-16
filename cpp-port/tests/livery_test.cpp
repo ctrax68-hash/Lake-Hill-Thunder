@@ -6,8 +6,11 @@
 #include "../src/render/livery.h"
 #include "../src/sim/car.h"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
+#include <set>
 #include <utility>
 
 namespace {
@@ -764,6 +767,70 @@ int main() {
 
         expectTrue("T18: the driver's window carries net webbing", driverBars >= 3);
         expectTrue("T18: the passenger window is open glass, not netted", passengerBars == 0);
+    }
+
+    // ---- T23e: the front contingency stack and the rocker fastener row ----
+    //
+    // Both are DENSITY features: what matters is not any one chip's colour but
+    // that a cluster of distinct chips and a repeating row of rivets are
+    // actually there, on the panel, clear of everything else painted on it. So
+    // both clauses count, and both print what they counted -- a decal guard
+    // that only samples one point passes just as happily against a single chip
+    // as against the block it is supposed to describe.
+    {
+        LiveryScheme scheme{0, 0, 0, CarPalette::White};
+        const auto pixels = buildLiveryPixels(red, 7, 1, &scheme);
+
+        // THE FIRST VERSION OF THIS CLAUSE WAS WORTHLESS and the replacement is
+        // shaped by why. It counted distinct saturated tones in the stack's U/V
+        // box and asked for four or more. Disabling the stack entirely still
+        // produced six -- the body paint and the scheme's own stripes are
+        // saturated too -- so it passed against the exact defect it describes.
+        // That is the fourth guard in this project to do that.
+        //
+        // What actually distinguishes a chip grid from a painted panel is
+        // STRUCTURE, not palette: scanning DOWN a chip column must cross four
+        // separate saturated runs, one per row, where plain bodywork gives one
+        // long run however colourful it is.
+        int minRuns = 1 << 30, totalTones = 0;
+        std::set<int> chipTones;
+        auto saturated = [](const std::array<double, 3>& px) {
+            const double mx = std::max({px[0], px[1], px[2]});
+            const double mn = std::min({px[0], px[1], px[2]});
+            return mx >= 0.25 && mx - mn >= 0.20;
+        };
+        for (int col = 0; col < 3; ++col) {
+            const int x = (int)((0.254 + col * 0.020 + 0.017 * 0.5) * kLiveryTextureSize);
+            int runs = 0;
+            bool on = false;
+            for (int y = (int)(0.840 * kLiveryTextureSize); y < (int)(0.940 * kLiveryTextureSize); ++y) {
+                const auto px = pixelAt(pixels, x, y);
+                const bool sat = saturated(px);
+                if (sat && !on) ++runs;
+                if (sat) chipTones.insert(((int)(px[0] * 8) << 6) | ((int)(px[1] * 8) << 3) | (int)(px[2] * 8));
+                on = sat;
+            }
+            minRuns = std::min(minRuns, runs);
+        }
+        totalTones = (int)chipTones.size();
+        std::printf("livery_test: T23e front contingency stack -- %d chips down the thinnest column, %d tones\n",
+                    minRuns, totalTones);
+        expectTrue("T23e: the front quarter carries a STACK of chips, not one painted panel",
+                   minRuns >= 4);
+        expectTrue("T23e: the stack is multi-colour", totalTones >= 3);
+
+        // The fastener row, counted as RUNS of pale texels along its own v, so
+        // one long smear cannot pass as a row of rivets.
+        const int fy = (int)(0.9435 * kLiveryTextureSize);
+        int rivets = 0;
+        bool on = false;
+        for (int x = (int)(0.235 * kLiveryTextureSize); x < (int)(0.505 * kLiveryTextureSize); ++x) {
+            const bool pale = luminance(pixelAt(pixels, x, fy)) > 0.30;
+            if (pale && !on) ++rivets;
+            on = pale;
+        }
+        std::printf("livery_test: T23e rocker fastener row -- %d separate rivets\n", rivets);
+        expectTrue("T23e: the rocker carries a repeating row of fasteners, not a stripe", rivets >= 12);
     }
 
     if (g_failures == 0) {

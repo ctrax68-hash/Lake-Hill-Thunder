@@ -1144,6 +1144,83 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         }
     }
 
+    // ---- T23e: the FRONT-quarter contingency block, and the fastener row ----
+    //
+    // G16 put one horizontal row of six chips on the rear quarter. The user's
+    // reference stills carry a second, denser cluster in a different place and
+    // a different shape: a tall STACK on the lower front quarter, just aft of
+    // the front wheel, three or four chips wide and four deep. On the #49 and
+    // the #21 it is the busiest thing on the lower body, and it is what makes
+    // the flank read as a race car rather than a painted panel -- the same
+    // argument G16 made for the rear row, applied to the cluster it left out.
+    //
+    // U PLACEMENT IS BOXED IN ON BOTH SIDES and was chosen against the things
+    // already there, not by eye: the front arch ends at kArchFrontU1 = 0.2285,
+    // the door shutline is at carU(1.00) = 0.2486, the associate badge sits at
+    // u 0.290 but only down to v ~0.827, and the door-number roundel starts
+    // around u 0.325. So the stack lives in u [0.254, 0.311] and below
+    // v 0.846, which is the one gap on this panel.
+    {
+        constexpr int kCols = 3, kRows = 4;
+        constexpr double kU0 = 0.254, kDU = 0.020, kCW = 0.017;
+        constexpr double kV0 = 0.846, kDV = 0.024, kCH = 0.018;
+        constexpr double kBorder = 2.0 / kLiveryTextureSize;
+        const std::array<double, 3> backing{240 / 255.0, 240 / 255.0, 240 / 255.0};
+        // Same palette as the rear row, offset by the car's idx so the two
+        // clusters on one car are not colour-for-colour copies of each other.
+        static const std::array<std::array<double, 3>, 6> kStackColors{{
+            {0.13, 0.35, 0.76}, // blue
+            {0.93, 0.48, 0.10}, // orange
+            {0.95, 0.95, 0.95}, // white
+            {0.86, 0.16, 0.14}, // red
+            {0.96, 0.80, 0.10}, // yellow
+            {0.16, 0.58, 0.25}, // green
+        }};
+        // A chip is 37 x 49 texels at 2048, which is too small for a wordmark
+        // (kMarkH's own note puts the floor at ~4 texels a glyph and this would
+        // give 3). Two dark bars stand in for the print instead -- the same
+        // "cheap, plausible look over a physical model" the window net and the
+        // cage bars already use, and at any distance the car is actually seen
+        // it is what a contingency sticker resolves to anyway.
+        const std::array<double, 3> printBar{0.12, 0.12, 0.13};
+        for (int side = 0; side < 2; ++side) {
+            for (int r = 0; r < kRows; ++r) {
+                for (int col = 0; col < kCols; ++col) {
+                    const auto& chip = kStackColors[(size_t)((idx + r * kCols + col) % (int)kStackColors.size())];
+                    const double cu = kU0 + col * kDU;
+                    // side 0 is the +z flank; side 1 mirrors it about v = 0.5,
+                    // the same v -> 1-v flip every other paired decal here uses.
+                    const double cv = (side == 0) ? (kV0 + r * kDV) : (1.0 - (kV0 + r * kDV) - kCH);
+                    c.fillRect(cu - kBorder, cv - kBorder, kCW + 2 * kBorder, kCH + 2 * kBorder, backing);
+                    c.fillRect(cu, cv, kCW, kCH, chip);
+                    c.fillRect(cu + kCW * 0.14, cv + kCH * 0.26, kCW * 0.72, kCH * 0.13, printBar, 0.75);
+                    c.fillRect(cu + kCW * 0.14, cv + kCH * 0.58, kCW * 0.52, kCH * 0.13, printBar, 0.75);
+                }
+            }
+        }
+    }
+
+    // The rocker fastener row. Every reference car shows a line of small pale
+    // rivets along the bottom of the flank where the skirt bolts to the body,
+    // and it is one of the few details that survives at chase-cam distance
+    // because it is a REPEATING pattern -- the eye picks up the rhythm long
+    // after any single dot is sub-pixel.
+    //
+    // It sits at v 0.9415, between the lowest contingency chip (which ends at
+    // 0.936) and the near-black rocker band (which starts at 0.948), and runs
+    // from just aft of the front arch to just ahead of the rear one so it does
+    // not cross either opening.
+    {
+        Canvas::ScopedGloss boltGloss(c, kGlossMatte);
+        const std::array<double, 3> bolt{0.62, 0.63, 0.65};
+        constexpr double kU0 = 0.240, kU1 = 0.498, kStep = 0.0165;
+        constexpr double kW = 0.0042, kH = 0.0050;
+        for (double u = kU0; u <= kU1; u += kStep) {
+            c.fillRect(u, 0.9415, kW, kH, bolt, 0.85);
+            c.fillRect(u, 1.0 - 0.9415 - kH, kW, kH, bolt, 0.85);
+        }
+    }
+
     // ---- T4: wordmarks ----
     //
     // G16 put the contingency STRIP in and left it as blank coloured chips,
