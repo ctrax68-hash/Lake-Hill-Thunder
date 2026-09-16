@@ -1654,7 +1654,20 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // Body swatch reuses this car's own base paint tone so the spoiler
     // reads as body-colored, not a fixed gray.
     c.fillRect(0.95, 0.0, 0.05, 0.5, tone(kBaseM));                                                // spoiler top (body color)
-    c.fillRect(0.95, 0.5, 0.05, 0.5, std::array<double, 3>{10 / 255.0, 10 / 255.0, 12 / 255.0});  // spoiler underside/risers
+    {
+        // T24: MATTE, not clearcoat. This swatch is worn by the spoiler's
+        // underside and endplates AND by the whole front splitter, and it was
+        // inheriting paint gloss. A near-black texel at gloss 0.55 seen at the
+        // shallow angle every camera looks down on a splitter from gives
+        // reflectMix around 0.31, so the splitter rendered as a pale blue-grey
+        // blade sticking out from under a green nose -- the same Fresnel
+        // arithmetic that made back-facing texels mirrors, just reached by
+        // viewing angle instead of by a flipped normal. A splitter is matte
+        // black composite and a spoiler's underside is shadowed sheet; neither
+        // has a clearcoat on it.
+        Canvas::ScopedGloss aeroGloss(c, kGlossMatte);
+        c.fillRect(0.95, 0.5, 0.05, 0.5, std::array<double, 3>{10 / 255.0, 10 / 255.0, 12 / 255.0});  // spoiler underside/risers
+    }
 
     // ---- T8: the rear panel ----
     //
