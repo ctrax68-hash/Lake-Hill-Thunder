@@ -796,9 +796,23 @@ _WHEEL_AXLE_X = [HALF_LEN - _FRONT_OVERHANG, HALF_LEN - _FRONT_OVERHANG - WHEELB
 # The arch is now a circular opening about the axle: the four lowest ring
 # points are lifted onto a lip curve and pulled inboard to form a wheelhouse,
 # and everything above the lip is re-anchored so the section cannot fold.
-ARCH_R = 0.46          # opening radius about the axle centre (T11: 0.45 ->
-                       # 0.46, holding the same suspension clearance over the
-                       # 0.36 tire the assert below pins it to)
+# T23: 0.46 -> 0.41, and the suspension budget below with it.
+#
+# MEASURED ON THE REFERENCE. On the #21 car-select still, scaled by the roof
+# height, the front fender's lip sits BELOW the tire's own crown -- the arch
+# covers the top of the tire and there is no daylight over it at all. Ours left
+# ARCH_R - WHEEL_RADIUS = 0.10 m of air above a 0.72 m tire at rest, which in a
+# side-on frame is a black crescent about a seventh of the wheel's diameter,
+# and it is the "tires need to fill their arches" note the first reference
+# batch already produced.
+#
+# The radius could not come down before because the assert below pins it to
+# WHEEL_RADIUS + SUSP_MAX_TRAVEL, and 0.08 m of VISIBLE wheel travel is itself
+# the wrong number for this car: a Cup car on its springs moves perhaps 25-40
+# mm, not 80. So the travel budget drops to 0.045 (renderer.cpp's kMaxTravel
+# moves with it -- it is the same quantity, and check_car_rig.py compares the
+# two) and the radius follows it down to 0.41, leaving 0.05 m over the tire.
+ARCH_R = 0.41          # opening radius about the axle centre
 ARCH_CY = WHEEL_RADIUS # opening centre sits at axle height, 0.35
 ARCH_INNER_Z = 0.58    # wheelhouse wall; the tire's inner face is at 0.62
 # R2c: 0.58 -> 0.52. A 1.16 m mouth around a 0.70 m tire is not an arch, it
@@ -806,13 +820,20 @@ ARCH_INNER_Z = 0.58    # wheelhouse wall; the tire's inner face is at 0.62
 # it is pinned at >= 0.43 by the suspension travel below -- so the mouth is
 # tightened lengthwise only, which is the axis the travel budget does not
 # constrain.
+# T23 left this at 0.52 deliberately, having first tried 0.47 to keep the mouth
+# in proportion to the smaller radius. It cannot go there: the wheelhouse wall's
+# taper runs from ARCH_WALL_FULL (0.40, keyed to the tire) out to this value, so
+# 0.47 leaves 70 mm for a taper that ARCH_SAMPLE_DX has no station inside, and
+# the R2c "not a trench" guard fails -- correctly, the wall really was still 79%
+# pulled in at the last station in the mouth. The lengthwise mouth was already
+# right at 1.04 m for a 0.72 m tire; only the lip HEIGHT was wrong.
 ARCH_X_MAX = 0.52      # half-length of the opening along the body
 # K_LIP is defined with the ring itself (role indices live next to the table
 # they index, so a ring edit cannot leave a stale k behind here).
 
 # ARCH_R must clear a fully compressed wheel: renderer.cpp lifts the wheel
 # joint by up to kMaxTravel under load, and nothing previously knew that.
-SUSP_MAX_TRAVEL = 0.08
+SUSP_MAX_TRAVEL = 0.045
 assert ARCH_R >= WHEEL_RADIUS + SUSP_MAX_TRAVEL, "arch would clip a compressed wheel"
 assert ARCH_INNER_Z <= TRACK_HALF - WHEEL_HALF_WIDTH - 0.02, "wheelhouse wall would touch the tire"
 

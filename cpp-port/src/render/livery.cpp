@@ -888,22 +888,35 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // wash as the bodywork and had nothing to say it was a mirror.
     {
         Canvas::ScopedGloss glassGloss(c, kGlossGlass);
-        // T22: MEASURED OFF THE REFERENCE, not chosen. NASCAR Thunder's own car
-        // select screens show the greenhouse as a LIGHT aperture with the roll
-        // cage and driver visible through it -- not dark tint. Sampled from
-        // them: the Target 41's side window reads luminance 0.327 against 0.090
-        // for its red door, so the glass is 3.6x BRIGHTER than the body paint,
-        // and 0.70 of the white roof beside it.
+        // T23: T22's MEASUREMENT WAS TAKEN ON THE WRONG CAR, AND IT IS REVERSED
+        // HERE.
         //
-        // Ours was inverted. Against a white body panel the greenhouse rendered
-        // 0.36 of it, roughly half where the reference puts it, because these
-        // two constants were near-black tint.
-        const std::array<double, 3> glassDark{74 / 255.0, 78 / 255.0, 88 / 255.0};
+        // T22 sampled one car-select still -- a dark red car -- found its side
+        // window at 0.327 against 0.090 for the door beside it, and concluded
+        // the glass is "3.6x BRIGHTER than the body paint". Measured across the
+        // second reference batch, that ratio is a property of the red paint,
+        // not of the glass:
+        //
+        //     #49, white car:  window 0.087   door 0.747   ratio 0.12
+        //     #21, red car:    window 0.238   door 0.259   ratio 0.92
+        //
+        // The invariant is the window's own ABSOLUTE luminance, 0.09-0.24 in
+        // both -- a dark opening you see into. On a dark red car that lands
+        // near the body, which is the coincidence T22 generalised from.
+        //
+        // Ours rendered the greenhouse at 0.55-0.65 against white bodywork at
+        // 0.50-0.60, i.e. the windows came out BRIGHTER than a white panel,
+        // because a near-mirror gloss (below) was multiplying an already
+        // lightened tint. Both halves of that are corrected: the tone goes back
+        // to a dark interior, and kGlossGlass comes down with it.
+        const std::array<double, 3> glassDark{26 / 255.0, 28 / 255.0, 34 / 255.0};
         c.fillRect(uWS0, GV0, uWS1 - uWS0, GVH, glassDark);
         c.fillRect(uRG0, GV0, uRG1 - uRG0, GVH, glassDark);
         c.fillRect(uSG0, 0.335, uSG1 - uSG0, 0.075, glassDark);
         c.fillRect(uSG0, 0.590, uSG1 - uSG0, 0.075, glassDark);
-        const std::array<double, 3> glassHi{96 / 255.0, 100 / 255.0, 112 / 255.0};
+        // The highlight band stays a band, just a much quieter one: it is the
+        // sky streak across the top of the pane, not the pane itself.
+        const std::array<double, 3> glassHi{50 / 255.0, 53 / 255.0, 60 / 255.0};
         c.fillRect(uWS0, 0.47, uWS1 - uWS0, 0.06, glassHi);
         c.fillRect(uRG0, 0.48, uRG1 - uRG0, 0.04, glassHi);
     }
@@ -983,12 +996,12 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         // the greenhouse's mirror response, or the cage reads as a bright
         // streak on the window rather than structure behind it.
         Canvas::ScopedGloss cageGloss(c, kGlossMatte);
-        // T22: the cage used to be LIGHTER than the near-black glass. With the
-        // glass corrected to a light aperture it has to go the other way --
-        // in the reference the bars are dark silhouettes against a lit
-        // interior, which is what makes the window read as a hole with
-        // structure in it rather than a painted panel.
-        const std::array<double, 3> cageBar{30 / 255.0, 32 / 255.0, 38 / 255.0};
+        // T23: back to LIGHTER than the glass, which is where it was before T22
+        // inverted it off the mis-generalised measurement above. Zoom into the
+        // #49's door opening in the second reference batch and the cage and net
+        // are a pale lattice standing out of a dark hole -- bars catching light
+        // inside an unlit interior, not silhouettes against a lit one.
+        const std::array<double, 3> cageBar{96 / 255.0, 99 / 255.0, 108 / 255.0};
         constexpr double kCageW = 6.0 / kLiveryTextureSize;
         const double t = kTrim / kLiveryTextureSize;
         const double wsClearU1 = uWS1 - 0.036; // clear of the sun-strip + its divider line

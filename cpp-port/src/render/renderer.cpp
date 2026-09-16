@@ -2462,7 +2462,12 @@ void Renderer::renderFrame(const RaceState& raceState, const std::vector<Car>& c
         // a drift that builds clean and looks fine in a still frame.
         constexpr double kWheelRadius = 0.36;
         constexpr double kLoadToTravel = 0.0001;
-        constexpr double kMaxTravel = 0.08;
+        // T23: 0.08 -> 0.045. This is the same quantity as gen_car_rig.py's
+        // SUSP_MAX_TRAVEL, which pins the wheel-arch radius, and 80 mm of
+        // visible wheel travel is more than a Cup car on its springs actually
+        // shows -- it was forcing an arch opening with a 100 mm crescent of
+        // daylight over every tire. See that file's ARCH_R note.
+        constexpr double kMaxTravel = 0.045;
 
         for (auto& c : cars) {
             // G15: draw each car at its interpolated pose (see

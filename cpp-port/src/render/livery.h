@@ -109,7 +109,14 @@ inline constexpr int kLiveryTextureSize = 2048;
 // the exact duplication that has repeatedly let guards pass while describing
 // geometry that no longer existed.
 inline constexpr double kGlossPaint = 0.55;   // clearcoat over body paint
-inline constexpr double kGlossGlass = 0.95;   // windows: nearly a mirror
+// T23: 0.95 -> 0.30. At 0.95 the greenhouse mirrored the sky hard enough to
+// render BRIGHTER than white bodywork (0.55-0.65 against 0.50-0.60), while
+// both reference cars in the second batch show the window opening at 0.09-0.24
+// absolute -- a dark hole you see into, with at most a streak of sky across the
+// top of the pane. The tint went down with it (livery.cpp's glassDark); this
+// number is the half of the error that made darkening the tint alone useless,
+// exactly as kGlossSteel was for the wheels below.
+inline constexpr double kGlossGlass = 0.30;   // windows: a dark pane, lightly lit
 inline constexpr double kGlossChrome = 0.85;  // bright trim: grille surround
 // T22: a wheel is painted STEEL, not chrome. Carrying kGlossChrome it mirrored
 // the sky and rendered cream however dark its albedo was -- darkening the

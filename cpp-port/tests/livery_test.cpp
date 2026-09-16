@@ -366,19 +366,19 @@ int main() {
             pixelAt(pixels, (int)(bar1u * kLiveryTextureSize), (int)((GV0 + GVH * 0.5) * kLiveryTextureSize));
         const auto glassHiPx = pixelAt(pixels, (int)((uWS0 + (wsClearU1 - uWS0) * 0.15) * kLiveryTextureSize),
                                         (int)(0.50 * kLiveryTextureSize));
-        // T22 flipped the sign of this, and the flip is the point. The glass
-        // used to be near-black tint with LIGHTER steel cage bars on it.
-        // Measured off NASCAR Thunder's own car-select screens, the greenhouse
-        // is a light aperture (window luminance 0.327 against 0.090 for the
-        // red door beside it) with the cage reading as DARK structure through
-        // it. So the bar must now be darker than the glass, not brighter.
-        expectTrue("windshield cage bar reads as dark structure against lit glass",
-                   luminance(barPx) < luminance(glassHiPx) - 0.02);
-        // Pins the glass tone itself, so a future edit cannot quietly put the
-        // near-black tint back and still satisfy the contrast clause above by
-        // darkening the cage further.
-        expectTrue("glass is the lightened aperture tone, not tint",
-                   std::fabs(glassHiPx[0] - 96 / 255.0) < 0.03 && std::fabs(glassHiPx[1] - 100 / 255.0) < 0.03);
+        // T23 flips this BACK, because T22's measurement was taken on one dark
+        // red car and did not generalise. Across the second reference batch the
+        // window opening holds its own absolute luminance -- 0.087 on the white
+        // #49 against a 0.747 door, 0.238 on the red #21 against a 0.259 door --
+        // so it is a dark hole, and the cage and net inside it are a PALE
+        // lattice catching light. Bar brighter than glass.
+        expectTrue("windshield cage bar reads as pale structure inside a dark opening",
+                   luminance(barPx) > luminance(glassHiPx) + 0.02);
+        // Pins the glass tone itself, so a future edit cannot quietly lighten
+        // the pane back toward a mirror and still satisfy the contrast clause
+        // above by lightening the cage with it.
+        expectTrue("glass is the dark-opening tone, not a lit aperture",
+                   std::fabs(glassHiPx[0] - 50 / 255.0) < 0.03 && std::fabs(glassHiPx[1] - 53 / 255.0) < 0.03);
     }
 
     // K2 (car visual fidelity plan, part 3): the rear glass rect used to
