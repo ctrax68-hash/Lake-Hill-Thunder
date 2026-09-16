@@ -218,6 +218,14 @@ measure("nose height / roof height", nose_top / ROOF, 0.440, 0.10, "photo",
 # the next re-authoring is free to make the hood level again and stay green.
 measure("hood at front axle / roof height", station("front_axle")[2] / ROOF, 0.674, 0.10,
         "photo", "the fender line over the front wheel")
+# T23f: the station between them, which is where the hood's fall was actually
+# being clipped. T23 could only reach 0.84 here (0.649 of the roof) because the
+# arch lip sat too high to put any more fender under it; T23f's tire-following
+# lip freed the last 40 mm. Measured, this row is the one that would go quiet
+# first if the arch clearance ever crept back up, so it earns a row of its own
+# rather than being assumed to follow the two around it.
+measure("hood at front fender / roof height", station("front_fender")[2] / ROOF,
+        0.618, 0.10, "photo", "ahead of the front wheel, where the hood's fall was clipped")
 measure("beltline / roof height", belt_cabin / ROOF, 0.703, 0.08, "photo")
 measure("deck height / roof height", deck_top / ROOF, 0.724, 0.10, "photo")
 

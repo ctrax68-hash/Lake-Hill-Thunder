@@ -848,23 +848,34 @@ _WHEEL_AXLE_X = [HALF_LEN - _FRONT_OVERHANG, HALF_LEN - _FRONT_OVERHANG - WHEELB
 # The arch is now a circular opening about the axle: the four lowest ring
 # points are lifted onto a lip curve and pulled inboard to form a wheelhouse,
 # and everything above the lip is re-anchored so the section cannot fold.
-# T23: 0.46 -> 0.41, and the suspension budget below with it.
+# T23: 0.46 -> 0.41 -> derived. And the suspension budget below with it.
 #
 # MEASURED ON THE REFERENCE. On the #21 car-select still, scaled by the roof
 # height, the front fender's lip sits BELOW the tire's own crown -- the arch
 # covers the top of the tire and there is no daylight over it at all. Ours left
-# ARCH_R - WHEEL_RADIUS = 0.10 m of air above a 0.72 m tire at rest, which in a
-# side-on frame is a black crescent about a seventh of the wheel's diameter,
-# and it is the "tires need to fill their arches" note the first reference
-# batch already produced.
+# 0.10 m of air above a 0.72 m tire at rest, which in a side-on frame is a
+# black crescent about a seventh of the wheel's diameter, and it is the "tires
+# need to fill their arches" note the first reference batch already produced.
 #
-# The radius could not come down before because the assert below pins it to
-# WHEEL_RADIUS + SUSP_MAX_TRAVEL, and 0.08 m of VISIBLE wheel travel is itself
-# the wrong number for this car: a Cup car on its springs moves perhaps 25-40
-# mm, not 80. So the travel budget drops to 0.045 (renderer.cpp's kMaxTravel
-# moves with it -- it is the same quantity, and check_car_rig.py compares the
-# two) and the radius follows it down to 0.41, leaving 0.05 m over the tire.
-ARCH_R = 0.41          # opening radius about the axle centre
+# The clearance could not come down before because the assert below pins it to
+# SUSP_MAX_TRAVEL, and 0.08 m of VISIBLE wheel travel is the wrong number for
+# this car: a Cup car on its springs moves perhaps 25-40 mm, not 80.
+#
+# T23f: ARCH_CLEAR IS THE LEVER, NOT THE CIRCLE, and T23's own note in the
+# station table got that wrong. It said a circular opening "spends clearance a
+# real fender does not", which sounded right and is worth almost nothing:
+# measured against the tire's own silhouette, a circle of radius 0.41 runs
+# 0.050 over the tire at the axle and 0.057 at the fender station, a 7 mm
+# divergence -- not the 40 mm that note implied was there to recover. What
+# actually held the fender line up was the clearance constant itself.
+#
+# So the lip now FOLLOWS THE TIRE at a fixed clearance rather than tracing a
+# circle, which is what a fender does, and that clearance is the one number
+# that decides how much daylight shows over the wheel. It is tied to the
+# suspension travel because a compressed wheel must not come through the
+# bodywork, so the two move together: 0.03 each, down from 0.045.
+ARCH_CLEAR = 0.03      # lip clearance over the tire's own silhouette
+ARCH_R = WHEEL_RADIUS + ARCH_CLEAR   # the lip's height above the axle at dx=0
 ARCH_CY = WHEEL_RADIUS # opening centre sits at axle height, 0.35
 ARCH_INNER_Z = 0.58    # wheelhouse wall; the tire's inner face is at 0.62
 # R2c: 0.58 -> 0.52. A 1.16 m mouth around a 0.70 m tire is not an arch, it
@@ -885,19 +896,31 @@ ARCH_X_MAX = 0.52      # half-length of the opening along the body
 
 # ARCH_R must clear a fully compressed wheel: renderer.cpp lifts the wheel
 # joint by up to kMaxTravel under load, and nothing previously knew that.
-SUSP_MAX_TRAVEL = 0.045
+SUSP_MAX_TRAVEL = 0.03
 assert ARCH_R >= WHEEL_RADIUS + SUSP_MAX_TRAVEL, "arch would clip a compressed wheel"
 assert ARCH_INNER_Z <= TRACK_HALF - WHEEL_HALF_WIDTH - 0.02, "wheelhouse wall would touch the tire"
 
 def _arch_lip_y(x, axle_x, y_base):
-    """Height of the arch lip at station x, for one axle."""
+    """Height of the arch lip at station x, for one axle.
+
+    T23f: the lip tracks the TIRE's own silhouette at a fixed ARCH_CLEAR, not a
+    circle about the axle. Over the tire the two differ by only ~7 mm, so this
+    is not where the fender line was being held up (see ARCH_CLEAR's note); what
+    it does change is the opening's ENDS, where a circle is still 0.196 m up at
+    the point the tire has reached the ground. Following the tire brings the
+    arch down with it there, which is the shape the reference shows -- an
+    opening cut around a wheel, not a radius struck from its centre.
+    """
     dx = abs(x - axle_x)
     if dx >= ARCH_X_MAX:
         return y_base
-    if dx <= ARCH_R:
-        return ARCH_CY + math.sqrt(max(0.0, ARCH_R * ARCH_R - dx * dx))
-    t = (dx - ARCH_R) / (ARCH_X_MAX - ARCH_R)
-    return ARCH_CY + (y_base - ARCH_CY) * (t * t * (3.0 - 2.0 * t))
+    if dx <= WHEEL_RADIUS:
+        return ARCH_CY + math.sqrt(max(0.0, WHEEL_RADIUS * WHEEL_RADIUS - dx * dx)) + ARCH_CLEAR
+    # Past the tire's own footprint the lip has nothing left to follow, so it
+    # eases down to the un-arched section the same way it always did.
+    t = (dx - WHEEL_RADIUS) / (ARCH_X_MAX - WHEEL_RADIUS)
+    top = ARCH_CY + ARCH_CLEAR
+    return top + (y_base - top) * (t * t * (3.0 - 2.0 * t))
 
 # The arch needs stations to resolve its curve; the silhouette table only has
 # one at each axle. These offsets are inserted either side of both axles and
@@ -1109,21 +1132,21 @@ _CAR_ST_JS = [
     # which the lip's own drop to 0.770 in this same round is what makes room
     # for.
     #
-    # THE FRONT FENDER STATION CANNOT REACH ITS READING, and the reason is
-    # worth recording rather than quietly rounding away. The reference puts the
-    # fender line at 0.618 of the roof, i.e. 0.800 m; setting it there folds the
-    # flank at 155.1 deg, which is the R2 defect exactly. The lip at that
-    # station sits at 0.726 because it follows the arch CIRCLE, while the tire
-    # it has to clear is only 0.669 high there -- so a circular opening spends
-    # clearance the real fender does not. 0.84 is the lowest value that keeps
-    # the ~0.10 m of fender the flank needs, and it closes 80 mm of a 100 mm
-    # error. Closing the rest means an arch profile that follows the tire
-    # instead of a circle, which is a larger change than this round.
+    # T23f: THE FRONT FENDER STATION NOW REACHES ITS READING, 0.800 m, and the
+    # route there is not the one T23 predicted. T23 stopped at 0.84 because
+    # 0.800 folded the flank at 155.1 deg -- the R2 defect -- and blamed the
+    # circular arch profile for "spending clearance a real fender does not".
+    # That was wrong by a factor of six: measured against the tire's own
+    # silhouette, a circle runs 7 mm wider at this station, not 40. What held
+    # the fender up was ARCH_CLEAR, the lip's clearance over the tire, which is
+    # tied to the visible suspension travel. Both came down to 0.03, the lip
+    # with them, and the fender now sits where the reference puts it with
+    # 0.101 m of clearance -- the ~0.10 m the flank needs in order not to fold.
     (2.421, 0.83,  0.55,  0.08,  0.57),   # last section ring -- the bumper DOME is ahead of it
     (2.30,  0.89,  0.60,  0.08,  0.625),  # front fascia
     (2.00,  0.91,  0.72,  0.09,  0.73),   # hood leading edge
-    (1.78,  0.921, 0.84,  0.10,  0.825),  # front fender -- 0.114 over the arch lip
-    (1.60,  0.921, 0.885, 0.11,  0.87),   # FRONT AXLE -- 0.115 of fender over the arch lip
+    (1.78,  0.921, 0.80,  0.10,  0.79),   # front fender -- 0.101 over the arch lip
+    (1.60,  0.921, 0.873, 0.11,  0.86),   # FRONT AXLE -- 0.123 of fender over the arch lip
     (1.19,  0.921, 0.895, 0.13,  0.885),  # hood mid -- long, nearly flat
     (0.80,  0.915, 0.900, 0.15,  0.91),   # COWL / windshield base
     (0.50,  0.910, 0.907, 0.160, 1.104),  # windshield mid
@@ -1145,6 +1168,10 @@ _CAR_ST_JS = [
 STATION_ROLES = {
     "nose": 2.421,
     "hood_lead": 2.00,
+    # T23f: named because car_proportions.py now measures the hood line here --
+    # it is the station the arch lip was clipping, and a role name survives a
+    # re-authoring where a literal x does not.
+    "front_fender": 1.78,
     "front_axle": 1.60,
     "cowl": 0.80,
     "roof_lead": 0.205,

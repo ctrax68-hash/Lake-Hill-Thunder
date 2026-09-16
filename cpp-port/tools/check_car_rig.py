@@ -52,6 +52,29 @@ for _wx in R._WHEEL_AXLE_X:
 check(R.ARCH_R >= R.WHEEL_RADIUS + R.SUSP_MAX_TRAVEL,
       "arch radius clears a fully compressed wheel (%.3f >= %.3f)"
       % (R.ARCH_R, R.WHEEL_RADIUS + R.SUSP_MAX_TRAVEL))
+
+# T23f: THE LIP FOLLOWS THE TIRE, AT A CLEARANCE THAT DOES NOT DRIFT.
+#
+# This is the number that decides how much daylight shows over each wheel, and
+# for most of this project's life it was a side effect of a radius chosen for
+# other reasons. Asserting ARCH_R alone cannot see it: a circle satisfies that
+# bound and still opens out to 0.196 m of clearance by the edge of the tire's
+# own footprint, which is the crescent the reference does not have.
+#
+# So sample the lip across the tire and hold the clearance itself. The upper
+# bound is what catches a drift back to a circle; the lower bound is the
+# suspension travel, which a compressed wheel would otherwise come through.
+_clear = []
+for _f in (0.0, 0.2, 0.4, 0.6, 0.8, 0.95):
+    _dx = _f * R.WHEEL_RADIUS
+    _tire = R.WHEEL_RADIUS + math.sqrt(max(0.0, R.WHEEL_RADIUS ** 2 - _dx ** 2))
+    _clear.append(R._arch_lip_y(R._WHEEL_AXLE_X[0] + _dx, R._WHEEL_AXLE_X[0], 0.0) - _tire)
+check(min(_clear) >= R.SUSP_MAX_TRAVEL - 1e-9,
+      "arch lip clears a compressed tire everywhere across its footprint (min %.4f >= %.4f)"
+      % (min(_clear), R.SUSP_MAX_TRAVEL))
+check(max(_clear) - min(_clear) < 0.005,
+      "arch lip FOLLOWS the tire rather than a circle: clearance varies %.4f m across the footprint "
+      "(a circle of the same radius varies 0.146)" % (max(_clear) - min(_clear)))
 check(all(len(r) == R.NK for r in R.RINGS), "every station has NK=%d ring points" % R.NK)
 # R1: assert the ring's STRUCTURE, not a magic count. A count check could
 # never catch an asymmetric ring; these can, and they survive future point
