@@ -760,9 +760,24 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     }
 
     // rocker + seam dark (index.html:2666-2669).
+    //
+    // T31: PAINTED AFTER THE ARCH RINGS, not before. The rings below are
+    // circles of radius 0.071 centred at v 0.055 and 0.945, so each spans
+    // v -0.016..0.126 -- and the outermost of the four is tone(0.9), the BODY
+    // COLOUR. Painted after this band it punched a body-coloured disc straight
+    // through it, at exactly the two u where the arches are.
+    //
+    // That band is not decoration. gen_car_rig.py's underbody floor quads are
+    // emitted with v = 0.01 and 0.99 for their whole length, so the entire
+    // floor of the car samples this row -- and it was sampling green. In the
+    // rear three-quarter view it reads as a striped panel under the back
+    // bumper, which is the second time this session the underbody has been the
+    // place a livery bug became visible (T24's sky-mirror was the first).
+    //
+    // Nothing is lost by the reorder: below v 0.052 the ring's own colour is
+    // (10,10,12) against this band's (18,18,20), indistinguishable, and above
+    // it the rings are untouched.
     const std::array<double, 3> kNearBlack{18 / 255.0, 18 / 255.0, 20 / 255.0};
-    c.fillRect(0, 0, 1.0, 0.052, kNearBlack);
-    c.fillRect(0, 0.948, 1.0, 0.052, kNearBlack);
 
     // wheel arches: graduated shadow rings (index.html:2670-2679).
     //
@@ -788,6 +803,8 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
             c.fillCircle(ux, vy, 0.047, {10 / 255.0, 10 / 255.0, 12 / 255.0});
         }
     }
+    c.fillRect(0, 0, 1.0, 0.052, kNearBlack);
+    c.fillRect(0, 0.948, 1.0, 0.052, kNearBlack);
 
     // H2 (NT2003 engine-feel plan): wheel-arch lip. Distinct from the
     // shadow rings above (which paint the dark cavity INSIDE the opening,

@@ -941,6 +941,37 @@ int main() {
         expectTrue("T23e: the rocker carries a repeating row of fasteners, not a stripe", rivets >= 12);
     }
 
+    // ---- T31: the underbody row is near-black for its whole length ----
+    //
+    // gen_car_rig.py emits every underbody floor quad with v = 0.01 (and 0.99
+    // for its mirror), so that single texture row is the entire floor of the
+    // car. Nothing had ever checked it, and the wheel-arch shadow rings --
+    // circles centred at v 0.055 with radius 0.071, the outermost of them the
+    // BODY COLOUR -- were painted after the near-black rocker band and put a
+    // green disc through it at both arches. It showed in the chase and rear
+    // views as a striped panel under the back bumper.
+    //
+    // Scanned across the body wrap (u 0.02-0.78) rather than sampled at a
+    // point: the defect was two discs, and a point check placed anywhere but
+    // on one of them would have passed.
+    {
+        LiveryScheme scheme{0, 0, 0, CarPalette::White};
+        const auto pixels = buildLiveryPixels(red, 7, 1, &scheme);
+        double worst = 0.0;
+        int worstX = 0;
+        for (int v : {1, 3, 8}) {
+            for (int x = (int)(0.02 * kLiveryTextureSize); x < (int)(0.78 * kLiveryTextureSize); ++x) {
+                for (int y : {v, kLiveryTextureSize - 1 - v}) {
+                    const double l = luminance(pixelAt(pixels, x, y));
+                    if (l > worst) { worst = l; worstX = x; }
+                }
+            }
+        }
+        std::printf("livery_test: T31 underbody row -- brightest %.3f at u %.3f\n",
+                    worst, (double)worstX / kLiveryTextureSize);
+        expectTrue("T31: the underbody row is near-black for the whole body wrap", worst < 0.12);
+    }
+
     if (g_failures == 0) {
         std::printf("livery_test: shading bands, stripe styles, and number decals all match expectations.\n");
         return 0;

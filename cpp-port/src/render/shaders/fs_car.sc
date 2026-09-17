@@ -97,13 +97,26 @@ void main()
 	// Flipping the normal toward the eye is the standard treatment and it
 	// changes nothing for front-facing surfaces, where the dot is already
 	// positive.
+	//
+	// T31: ONLY THE VIEW-DEPENDENT TERMS TAKE THE FLIPPED NORMAL. T24 flipped
+	// it for everything, which fixed the mirror and handed every back-facing
+	// texel the SKY's ambient and the sun as well -- so the car's own underside,
+	// visible in the gap under the rear bumper, rendered brighter than its lit
+	// flanks and showed the livery's stripes down there like a lit panel.
+	//
+	// What a surface receives depends on where it actually points, not on where
+	// the camera is: a downward face sees the ground, and it sees no sun. So
+	// the hemisphere ambient and the diffuse term below keep the GEOMETRIC
+	// normal, and only fresnel, the reflection direction and the specular lobe
+	// -- which are about the eye -- use the flipped one.
+	vec3 nGeom = n;
 	if (dot(n, viewDir) < 0.0) { n = -n; }
 	vec3 lightDir = u_sunDir.xyz;
 	vec3 halfDir = normalize(viewDir + lightDir);
 
-	float hemiT = clamp(n.y * 0.5 + 0.5, 0.0, 1.0);
+	float hemiT = clamp(nGeom.y * 0.5 + 0.5, 0.0, 1.0);
 	vec3 ambient = mix(u_hemiGround.rgb, u_hemiSky.rgb, hemiT);
-	float ndotl = max(dot(n, lightDir), 0.0);
+	float ndotl = max(dot(nGeom, lightDir), 0.0);
 	// T12: the livery's alpha channel is a GLOSS (reflectivity) mask, written
 	// per material by livery.cpp -- see its kGloss* constants. It used to be a
 	// hardcoded 255 that nothing read.
@@ -162,6 +175,14 @@ void main()
 	// Pushing them apart costs nothing and is the difference between a hint of
 	// a horizon and the hard bright line the reference photographs show.
 	vec3 envColor = mix(u_hemiGround.rgb * 0.55, u_hemiSky.rgb * 1.35, reflT);
+	// T31: a BACK-FACING texel reflects the ground, never the sky. reflect()
+	// about the eye-flipped normal sends the reflection upward whatever the
+	// surface is, so the car's own underside kept mirroring sky even after the
+	// ambient was fixed -- it came out a pale plate in the gap under the rear
+	// bumper where there should be shadow. What is actually down there is
+	// asphalt and the car's own floor, so the ground tone is the honest answer
+	// and it costs one mix.
+	envColor = mix(envColor, u_hemiGround.rgb * 0.35, step(dot(nGeom, viewDir), 0.0));
 
 	// H6: color-match against livery.cpp's own taillight/amber-bar paint
 	// constants (RGB, not affected by texture filtering enough to matter --
