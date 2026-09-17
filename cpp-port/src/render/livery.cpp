@@ -181,9 +181,18 @@ public:
     // +X and gets both the opposite.
     enum class TextDir { AlongU, FrontFacing, RearFacing };
 
+    // T30: `xScale` squeezes the run along U without touching its height.
+    //
+    // The livery's UV is ANISOTROPIC on the flank -- U advances 0.150 per
+    // metre along the car, V 0.362 per metre down the door (RINGV is arc-length
+    // based) -- so a glyph drawn with equal U and V extents comes out 2.4x too
+    // wide on the body. Every wordmark on the flank has quietly had that
+    // stretch; it is tolerable on a long thin wordmark and not on a numeral,
+    // which is why the door numbers were still 7-segment. Pass the surface's
+    // own dU/dx over dV/dy here and the glyph is physically square.
     void drawText(double fx, double fy, double fh, const std::string& text,
                   const std::array<double, 3>& color, double alpha = 1.0, bool centered = false,
-                  bool mirrorU = false, TextDir dir = TextDir::AlongU) {
+                  bool mirrorU = false, TextDir dir = TextDir::AlongU, double xScale = 1.0) {
         const font::AtlasImage& atlas = liveryFontAtlas();
         if (!atlas.ok || text.empty()) return;
 
@@ -199,21 +208,35 @@ public:
         font::pushText(quads, 0.0f, font::ascent(px), text, px, 0xffffffffu);
         if (quads.empty()) return;
 
+        const double runRaw = font::measure(text, px);
+        // T30: MIRROR ABOUT THE INK, NOT THE ADVANCE BOX.
+        //
+        // font::measure returns the pen advance, which includes the first
+        // glyph's left bearing and the last one's right bearing. Reflecting a
+        // glyph box about runRaw/2 therefore SWAPS those two bearings, and the
+        // ink lands off by their difference -- about 25 texels for "44" at door
+        // size. It has been that way since T10 and every mirrored graphic on the
+        // car carried it; it only became visible when the numbers stopped being
+        // 7-segment blocks wide enough to hide it.
+        //
+        // Reflecting about the ink's own span keeps the mark where it was.
+        double inkMin = 1e30, inkMax = -1e30;
+        for (size_t g = 0; g + 5 < quads.size(); g += 6) {
+            inkMin = std::min(inkMin, (double)quads[g].x);
+            inkMax = std::max(inkMax, (double)quads[g + 2].x);
+        }
+        const double mirrorSum = inkMin + inkMax;
         double ox = fx * size_;
-        if (centered) ox -= font::measure(text, px) * 0.5;
+        if (centered) ox -= runRaw * xScale * 0.5;
         const double oy = fy * size_;
-
-        // pushText emits 6 vertices per glyph; [0] is the top-left corner and
-        // [2] the bottom-right, which is all a blit needs.
-        const double runW = font::measure(text, px);
         for (size_t g = 0; g + 5 < quads.size(); g += 6) {
             const PosColorUvVertex& a = quads[g];
             const PosColorUvVertex& b = quads[g + 2];
             // Mirror the glyph's BOX about the run's centre as well as its
             // sampling, so the whole string reverses rather than each letter
             // being flipped in place.
-            const double gx0 = mirrorU ? runW - b.x : a.x;
-            const double gx1 = mirrorU ? runW - a.x : b.x;
+            const double gx0 = (mirrorU ? mirrorSum - b.x : a.x) * xScale;
+            const double gx1 = (mirrorU ? mirrorSum - a.x : b.x) * xScale;
             // Glyph-space extents: rx runs along the string, ry down the glyph.
             const double ry0 = a.y, ry1 = b.y;
             // Destination box, per direction. The rotated cases transpose the
@@ -275,7 +298,7 @@ public:
         const double ascentAtBaked = font::ascent((float)baked);
         if (ascentAtBaked <= 0.0) return 0.0;
         const float px = (float)(fh * size_ * baked / ascentAtBaked);
-        return font::measure(text, px) / (double)size_;
+        return font::measure(text, px) / (double)size_;  // xScale 1; callers that squeeze scale this
     }
 
     // T10: flip a rectangle of already-painted pixels left-to-right.
@@ -472,6 +495,35 @@ void drawDigit(Canvas& c, int d, double fcx, double fcy, double fw, double fh, c
     if (seg[4]) c.fillRect(x0, yMid, tx, fh / 2, color);                // bottom-left
     if (seg[5]) c.fillRect(x1 - tx, yMid, tx, fh / 2, color);           // bottom-right
     if (seg[6]) c.fillRect(x0, yBot - ty, fw, ty, color);               // bottom
+}
+
+// T30: THE CAR'S NUMBERS COME FROM THE FONT ATLAS NOW.
+//
+// drawNumber() below is a 7-segment rasteriser -- livery.h's note (3) has
+// always said so, and the reason given was that no font existed in this port.
+// One has since G26, and it is what every wordmark on the car already uses; the
+// numbers were the last thing still drawn as calculator digits, and against the
+// reference's bold numerals that is the most conspicuous difference left on a
+// panel whose whole job is to carry a number.
+//
+// The outline is the run drawn eight times around the fill rather than a larger
+// glyph underneath: the atlas has one weight, so there is no bolder face to put
+// behind it, and eight offsets give a ring of even thickness that a scaled-up
+// glyph would not (a scaled glyph grows about its own centre, so its ring is
+// thin at the top and thick at the bottom). `outlineF` is in texture fractions
+// so it scales with kLiveryTextureSize.
+void drawFontNumber(Canvas& c, int num, double fcx, double fcyTop, double fh,
+                    const std::array<double, 3>& fill, const std::array<double, 3>& outline,
+                    bool mirrorU, double xScale, double outlineF) {
+    const std::string s = std::to_string(num);
+    for (int oy = -1; oy <= 1; ++oy) {
+        for (int ox = -1; ox <= 1; ++ox) {
+            if (ox == 0 && oy == 0) continue;
+            c.drawText(fcx + ox * outlineF, fcyTop + oy * outlineF, fh, s, outline, 1.0, true,
+                       mirrorU, Canvas::TextDir::AlongU, xScale);
+        }
+    }
+    c.drawText(fcx, fcyTop, fh, s, fill, 1.0, true, mirrorU, Canvas::TextDir::AlongU, xScale);
 }
 
 // Draws a 1-2 digit number, outline then fill (JS's drawNum() stroke+fill
@@ -1462,6 +1514,16 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // carU(-1.00)=0.551), i.e. on the actual roof; the deck faces sample
     // v in [0.3,0.7] per gen_car_rig.py's is_top rule, so v=0.5 +- 0.08
     // stays on the roof band.
+    // T30: the surface's own UV anisotropy, so a glyph comes out square on the
+    // body. U advances 0.1496 per metre along the car (carU spans 0.76 over
+    // 5.08 m); V advances 0.362 per metre down the flank (RINGV's arc length
+    // from the belt to the rocker) and 0.160 per metre across the roof plateau
+    // (0.176 of V over a 1.10 m roof). So the roof is nearly isotropic and the
+    // flank is not, by a factor of 2.4 -- which is why the numbers were still
+    // 7-segment: a font glyph drawn with equal U and V extents came out squat.
+    constexpr double kFlankXScale = 0.1496 / 0.362;
+    constexpr double kRoofXScale = 0.1496 / 0.160;
+    constexpr double kNumOutline = 5.0 / kLiveryTextureSize;
     const std::array<double, 3> panelFill = lum > 0.5 ? dark : white;
     const std::array<double, 3> panelNum = lum > 0.5 ? white : dark;
     if (paceLightBar) {
@@ -1481,7 +1543,10 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         // T23: re-centred on the roof plateau, which now runs 0.205 to -0.505.
         // T27: roof plateau is 0.365 to -0.77 now; centred on it.
         c.fillRect(carU(-0.20) - 0.056, 0.420, 0.112, 0.160, panelFill);
-        drawNumber(c, num, carU(-0.20), 0.50, 0.105, panelNum, dark);   // roof
+        // Roof: fcyTop, not a centre -- drawFontNumber takes the glyph box's
+        // top edge, the way drawText does.
+        drawFontNumber(c, num, carU(-0.20), 0.50 - 0.105 * 0.5, 0.105, panelNum, dark,
+                       false, kRoofXScale, kNumOutline);                                        // roof
     }
     if (!paceLightBar) {
         // T26: THE DOOR NUMBER, SIZED AND PLACED OFF THE #41.
@@ -1499,9 +1564,8 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         //
         // Still the T10 rule: the v > 0.5 door is drawn mirrored so it reads
         // forwards on the car.
-        constexpr double kDoorFh = 0.19, kDoorFw = 0.056;
+        constexpr double kDoorFh = 0.19;
         constexpr double kDoorTopV = 0.677 + 6.0 / kLiveryTextureSize;
-        const double doorCy = kDoorTopV + kDoorFh * 1.22 * 0.5;
         // Without the roundel the digits need their own contrast: white fill
         // with a dark outline on a dark car, the reverse on a light one --
         // which is what every reference car does (white "41" outlined dark on
@@ -1509,8 +1573,10 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         // came out as a black skeleton with the stripes showing through it.
         const std::array<double, 3>& doorFill = lum > 0.5 ? dark : white;
         const std::array<double, 3>& doorLine = lum > 0.5 ? white : dark;
-        drawNumber(c, num, carU(-0.10), 1.0 - doorCy, kDoorFh, doorFill, doorLine, false, kDoorFw);  // right door
-        drawNumber(c, num, carU(-0.10), doorCy, kDoorFh, doorFill, doorLine, true, kDoorFw);         // left door
+        drawFontNumber(c, num, carU(-0.10), 1.0 - kDoorTopV - kDoorFh, kDoorFh, doorFill, doorLine,
+                       false, kFlankXScale, kNumOutline);                                       // right door
+        drawFontNumber(c, num, carU(-0.10), kDoorTopV, kDoorFh, doorFill, doorLine,
+                       true, kFlankXScale, kNumOutline);                                        // left door
     }
 
     // ---- nose/tail lamp clusters (index.html:2793-2855, re-placed) ----
