@@ -261,8 +261,14 @@ measure("windshield rake (deg from horizontal)", math.degrees(math.atan2(ws_rise
 # combined scale gives the wrong angle. Windshield 34.1, backlite 20.9 -- the
 # backlite is SHALLOWER, which is what makes the deck read long. R2b changed
 # these to 32/30 on the opposite belief and made the silhouette worse.
+# T29: 30.0 -> 24.4. The 30 was computed from the table T27 authored, not read
+# off the photo -- circular, and the direct residual measurement says so: with
+# the roof flat out to the C-pillar it stood 0.091 m above the reference there.
+# Crowning the roof to match drops the rake to 24.4, which is inside the band
+# the photo actually supports (the A-pillar top is blurred over ~15 px, and
+# putting it at either end of that blur swings this angle between 15 and 25).
 measure("backlite rake (deg from horizontal)", math.degrees(math.atan2(bl_rise, -bl_run)),
-        30.0, 0.15, "photo", "#41 trace: 0.435 m fall over 0.74 m -- STEEPER than the windshield")
+        24.4, 0.15, "photo", "#41 residuals: the roof was 0.091 m high at the C-pillar")
 
 # --- report ---------------------------------------------------------------
 print("car_proportions -- generated mesh vs real Gen-4 Cup")

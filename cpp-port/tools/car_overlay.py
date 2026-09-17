@@ -230,7 +230,14 @@ def main():
     worst = []
     for i, st in enumerate(R.CHASSIS_STATIONS):
         role = roles.get(round(st[0], 4), "")
-        t, bl, bo = ours_top[[o[0] for o in ours_top].index(st[0])][1], ours_belt[i][1], ours_bot[i][1]
+        # Look BOTH silhouette lines up by x. ours_bot is sorted and carries the
+        # cap bins as well as the stations, so indexing it by the station index
+        # -- which the first version did -- read a cap point at the nose and a
+        # neighbouring station everywhere else. Every `bot` residual printed was
+        # misaligned, and the nose's +0.314 was the cap dome, not the air dam.
+        t = ours_top[[o[0] for o in ours_top].index(st[0])][1]
+        bo = ours_bot[[o[0] for o in ours_bot].index(st[0])][1]
+        bl = ours_belt[i][1]
         rt, rb, rbo = ref_at(ref_top, st[0]), ref_at(ref_belt, st[0]), ref_at(ref_bot, st[0])
         f = lambda v: "%7.3f" % v if v is not None else "      -"
         d = lambda o, rr: ("%+7.3f" % (o - rr)) if rr is not None else "      -"

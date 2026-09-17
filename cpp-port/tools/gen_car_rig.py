@@ -1198,12 +1198,20 @@ _CAR_ST_JS = [
     (1.60,  0.921, 1.05,  0.18,  1.055),  # FRONT AXLE -- 0.30 of fender over the arch lip
     (1.19,  0.921, 1.06,  0.16,  1.065),  # hood mid -- level
     (0.95,  0.915, 1.06,  0.14,  1.06),   # COWL / windshield base -- the hood plane meets the glass here
-    (0.65,  0.910, 0.98,  0.13,  1.20),   # windshield mid
-    (0.365, 0.905, 0.90,  0.12,  1.295),  # A-pillar top -- ROOF STARTS
-    (-0.20, 0.9075, 0.905, 0.105, 1.295), # roof, flat
-    (-0.77, 0.910, 0.910, 0.08,  1.295),  # C-pillar top -- ROOF ENDS
-    (-1.16, 0.918, 0.905, 0.06,  1.07),   # REAR AXLE -- backlite, mid
+    # T29: THE ROOF IS CROWNED AND THE REAR BELT IS LOWER. With the bottom
+    # line fixed (see the tool note below) the residuals against the #41 left
+    # errors in exactly one place: the roof stayed flat at 1.326 out to the
+    # C-pillar where the reference had already fallen to 1.235 (+0.091), and
+    # the beltline through the rear cabin ran 0.056-0.059 high. The reference
+    # roof peaks just behind the A-pillar and falls from there, which is a
+    # crown along the car's length, not the plateau this table had.
+    (0.65,  0.910, 0.98,  0.13,  1.165),  # windshield mid
+    (0.365, 0.905, 0.895, 0.12,  1.295),  # A-pillar top -- ROOF STARTS (peak)
+    (-0.20, 0.9075, 0.878, 0.105, 1.295), # roof
+    (-0.77, 0.910, 0.852, 0.08,  1.204),  # C-pillar top -- ROOF ENDS, crowned down
+    (-1.16, 0.918, 0.865, 0.06,  1.07),   # REAR AXLE -- backlite, mid
     (-1.52, 0.921, 0.86,  0.05,  0.86),   # deck starts
+    (-1.70, 0.915, 0.815, 0.05,  0.815),  # deck knee -- the backlite's fall ends here
     (-2.03, 0.905, 0.85,  0.08,  0.85),   # deck, flat
     (-2.32, 0.875, 0.84,  0.15,  0.84),   # deck rear
     (-2.466, 0.82, 0.83,  0.30,  0.83),   # last section ring -- the tail DOME is behind it
@@ -1463,7 +1471,24 @@ RING_NRM = ring_normals()
 # lengthwise-turn guard measures the underlying SURFACE for folds, which is a
 # different question from how it is shaded, and rewriting it against the sided
 # tables would have made a deliberate crease indistinguishable from a fold.
-_CREASE_ROLES = ("cowl", "roof_lead", "roof_trail", "deck_start")
+# T29: roof_trail COMES OFF THIS LIST, because the reference does not have a
+# crease there. Slopes of the #41's traced roofline, per station, in degrees
+# below horizontal:
+#
+#     -0.20 -> -0.65   7.5      -0.65 -> -0.78  11.1
+#     -0.78 -> -0.83  11.3      -0.83 -> -0.97  18.3      -0.97 -> -1.17  24.1
+#
+# It curves continuously from the roof into the backlite; there is no break to
+# crease. The other three are breaks and stay: the cowl turns 0 -> 22.6 deg,
+# roof_lead turns 25.9 -> -0.8 (a 27 degree corner, the sharpest on the car),
+# and deck_start turns 35 -> 18.7.
+#
+# T23 put roof_trail here when the table had a FLAT roof ending abruptly, and
+# creasing it was right for that shape. Crowning the roof to the photo made the
+# junction 10.8 degrees, and the guard failed -- correctly. The answer is not to
+# lower the guard's threshold but to stop claiming an edge the car does not
+# have.
+_CREASE_ROLES = ("cowl", "roof_lead", "deck_start")
 
 def _crease_station_indices():
     out = set()
