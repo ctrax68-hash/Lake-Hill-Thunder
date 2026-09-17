@@ -1154,22 +1154,59 @@ _CAR_ST_JS = [
     # wheel come back up to the hood plane, and the fall is concentrated in
     # the fascia. The user's words for the old shape: "front hood still
     # awkward".
-    (2.421, 0.83,  0.55,  0.08,  0.57),   # last section ring -- the bumper DOME is ahead of it
-    (2.30,  0.89,  0.66,  0.08,  0.67),   # front fascia -- the fall lives here
-    (2.00,  0.91,  0.80,  0.09,  0.79),   # hood leading edge
-    (1.78,  0.921, 0.86,  0.10,  0.845),  # front fender -- level with the hood, 0.16 over the lip
-    (1.60,  0.921, 0.885, 0.11,  0.87),   # FRONT AXLE -- 0.135 of fender over the arch lip
-    (1.19,  0.921, 0.895, 0.13,  0.885),  # hood mid -- long, nearly flat
-    (0.80,  0.915, 0.900, 0.15,  0.91),   # COWL / windshield base
-    (0.50,  0.910, 0.907, 0.160, 1.104),  # windshield mid
-    (0.205, 0.905, 0.914, 0.17,  1.295),  # A-pillar top -- ROOF STARTS
-    (-0.15, 0.9075, 0.9175, 0.175, 1.295),  # roof, flat
-    (-0.505, 0.910, 0.921, 0.18,  1.295),  # C-pillar top -- ROOF ENDS
-    (-1.16, 0.918, 0.926, 0.19,  1.081),  # REAR AXLE -- rear glass, mid
-    (-1.56, 0.921, 0.932, 0.19,  0.951),  # deck starts
-    (-2.03, 0.905, 0.932, 0.21,  0.945),  # deck, flat
-    (-2.32, 0.875, 0.928, 0.25,  0.940),  # deck rear
-    (-2.466, 0.82, 0.912, 0.36,  0.930),  # last section ring -- the tail DOME is behind it
+    # T27: RE-AUTHORED TO THE #41's TRACED OUTLINE, line by line.
+    #
+    # The user's instruction: "add more lines and keep going until our cars
+    # match the exact outline". tools/car_overlay.py now projects our top,
+    # bottom and belt lines onto a reference registered on both wheel hubs
+    # (which also removes the frame's 4.7 deg roll) and prints the residual at
+    # every station in metres. The reference is a hand-read trace of the #41
+    # car-select still -- the purest side view supplied -- with every height
+    # scaled by 0.945 so that its 0.381 m tire becomes our 0.360 m one; the
+    # wheelbase sets the horizontal scale, so the wheels stay in the arches.
+    #
+    # What the residuals said, before this table (metres, ours minus ref):
+    #
+    #     hood over the front wheel   -0.235      nose top            -0.37
+    #     cowl                        -0.26       windshield mid      -0.24
+    #     roof                        -0.02..-0.10 (crown vs spec: fine)
+    #     beltline along the door     -0.02..-0.04 (fine)
+    #     deck behind the backlite    +0.06..+0.09
+    #
+    # And where the lines TURN: the reference cowl is at x 0.96 (ours 0.81),
+    # the A-pillar top at 0.37 (ours 0.21), the C-pillar top at -0.78 (ours
+    # -0.51), the backlite base at -1.54 (ours -1.58). So the roof is 1.15 m
+    # long, not 0.72, and the backlite falls at ~30 deg, not 18. The earliest
+    # reference photograph gave 21 deg for that glass and every round since
+    # carried it; the #41 is the better photograph and it disagrees.
+    #
+    # The hood is the big one. The reference runs it nearly LEVEL at ~1.05 m
+    # from the cowl out to the wheel -- 0.15 m above the door's own beltline,
+    # which is not how a road car is drawn but is how this game's car is --
+    # and only lets it fall in the last 0.6 m to a 0.89 m nose. Ours had been
+    # read off the rotated #21 and built as a 0.57 m nose with a ramp behind
+    # it. The whole front third of the table moves up by 0.17-0.32 m.
+    #
+    # The rocker line is the photo's too: 0.19 m off the ground at the nose,
+    # 0.05 m behind the rear wheel -- the skirt hangs lower at the back.
+    #
+    # Columns: (x_js, halfWidth, beltY, yLow, roofY). Widths untouched.
+    (2.421, 0.83,  0.84,  0.19,  0.885),  # last section ring -- the bumper DOME is ahead of it
+    (2.30,  0.89,  0.90,  0.19,  0.92),   # front fascia -- the nose's fall lives here
+    (2.00,  0.91,  1.00,  0.19,  1.01),   # hood leading edge
+    (1.78,  0.921, 1.03,  0.18,  1.04),   # front fender
+    (1.60,  0.921, 1.05,  0.18,  1.055),  # FRONT AXLE -- 0.30 of fender over the arch lip
+    (1.19,  0.921, 1.06,  0.16,  1.065),  # hood mid -- level
+    (0.95,  0.915, 1.06,  0.14,  1.06),   # COWL / windshield base -- the hood plane meets the glass here
+    (0.65,  0.910, 0.98,  0.13,  1.20),   # windshield mid
+    (0.365, 0.905, 0.90,  0.12,  1.295),  # A-pillar top -- ROOF STARTS
+    (-0.20, 0.9075, 0.905, 0.105, 1.295), # roof, flat
+    (-0.77, 0.910, 0.910, 0.08,  1.295),  # C-pillar top -- ROOF ENDS
+    (-1.16, 0.918, 0.905, 0.06,  1.07),   # REAR AXLE -- backlite, mid
+    (-1.52, 0.921, 0.86,  0.05,  0.86),   # deck starts
+    (-2.03, 0.905, 0.85,  0.08,  0.85),   # deck, flat
+    (-2.32, 0.875, 0.84,  0.15,  0.84),   # deck rear
+    (-2.466, 0.82, 0.83,  0.30,  0.83),   # last section ring -- the tail DOME is behind it
 ]
 
 # T6: landmark stations BY NAME. Every consumer that wants "the cowl" or "the
@@ -1185,12 +1222,12 @@ STATION_ROLES = {
     # re-authoring where a literal x does not.
     "front_fender": 1.78,
     "front_axle": 1.60,
-    "cowl": 0.80,
-    "roof_lead": 0.205,
-    "roof_mid": -0.15,
-    "roof_trail": -0.505,
+    "cowl": 0.95,
+    "roof_lead": 0.365,
+    "roof_mid": -0.20,
+    "roof_trail": -0.77,
     "rear_axle": -1.16,
-    "deck_start": -1.56,
+    "deck_start": -1.52,
     "deck_flat": -2.03,
     "tail": -2.466,
 }

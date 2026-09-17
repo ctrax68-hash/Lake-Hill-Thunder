@@ -519,9 +519,11 @@ _K_SEAM_W = 0.0035  # livery.cpp's own kSeamW, copied here for the same reason
 # copy tracking them is the whole point of the section: if livery.cpp had been
 # left on the old numbers, the painted windshield would now sit on the hood and
 # these checks are what says so.
-_uWS0, _uWS1 = _carU_raw(0.80), _carU_raw(0.205)
-_uSG0 = _carU_raw(0.205) + _K_SEAM_W
-_uRG0, _uRG1 = _carU_raw(-0.505), _carU_raw(-1.56) - _K_SEAM_W
+# T27: cowl 0.95, A-pillar 0.365, C-pillar -0.77, deck start -1.52 -- the
+# greenhouse re-authored to the #41's traced outline.
+_uWS0, _uWS1 = _carU_raw(0.95), _carU_raw(0.365)
+_uSG0 = _carU_raw(0.365) + 0.012
+_uRG0, _uRG1 = _carU_raw(-0.77), _carU_raw(-1.52) - _K_SEAM_W
 
 _st6_u = R.car_u(_key_station_x("cowl"))    # cowl/windshield base
 _st8_u = R.car_u(_key_station_x("roof_lead"))    # A-pillar top / roof leading edge
@@ -530,8 +532,8 @@ _st12_u = R.car_u(_key_station_x("deck_start"))  # deck start
 
 check(abs(_uWS0 - _st6_u) < 1e-9, "windshield uWS0 exactly matches the cowl station (regression guard)")
 check(abs(_uWS1 - _st8_u) < 1e-9, "windshield uWS1 exactly matches the A-pillar station (regression guard)")
-check(abs(_uSG0 - (_st8_u + _K_SEAM_W)) < 1e-9,
-      "side-glass uSG0 anchors to the A-pillar station + seam margin (K2 fix)")
+check(abs(_uSG0 - (_st8_u + 0.012)) < 1e-9,
+      "side-glass uSG0 anchors to the A-pillar station + the T26 pillar band (0.012)")
 check(abs(_uRG0 - _st10_u) < 1e-9, "rear-glass uRG0 exactly matches the C-pillar station (regression guard)")
 # The actual bug-catcher: fails against the pre-K2 uRG1 (carU(-1.75), which
 # overshoots station 11 by far more than 0.01), passes after the fix, and

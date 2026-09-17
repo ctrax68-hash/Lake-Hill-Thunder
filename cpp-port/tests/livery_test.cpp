@@ -399,7 +399,8 @@ int main() {
         // the swatch coordinates above use), so it has to move with them;
         // check_car_rig.py is what actually pins livery.cpp to the geometry.
         // T23: 0.585/0.03 -> 0.80/0.205, tracking the greenhouse forward again.
-        const double uWS0 = carU(0.80), uWS1 = carU(0.205);
+        // T27: 0.80/0.205 -> 0.95/0.365, the greenhouse re-authored to the #41.
+        const double uWS0 = carU(0.95), uWS1 = carU(0.365);
         constexpr double GV0 = 0.335, GVH = 0.330;
         const double wsClearU1 = uWS1 - 0.036;
         const double bar1u = uWS0 + (wsClearU1 - uWS0) * 0.35;
@@ -590,7 +591,12 @@ int main() {
         const int aTread = alphaAt(0.90, 0.25);   // tire rubber
         const int aSide = alphaAt(0.90, 0.75);    // sidewall rubber
         const int aRim = alphaAt(0.815, 0.75);    // metallic rim
-        const int aGlass = alphaAt(0.325, 0.44);  // windshield
+        // T27: 0.325 -> 0.290. The windshield now spans u 0.256-0.345 (cowl
+        // 0.95, A-pillar 0.365) and 0.325 fell inside its sun-strip accent,
+        // which carries decal gloss, not glass gloss. 0.290 is mid-pane.
+        // ...and 0.290 landed on the second roll-cage bar (matte, 0.85 alpha:
+        // it read 33). 0.266 is open glass between the frame trim and bar one.
+        const int aGlass = alphaAt(0.266, 0.44);  // windshield
         const int aPaint = alphaAt(0.100, 0.25);  // plain body paint
 
         std::printf("livery_test: T12 gloss mask -- tread %d sidewall %d rim %d glass %d paint %d\n",
@@ -773,7 +779,7 @@ int main() {
             // uSG0 to the B-pillar post at 55% of the glass (u ~0.36-0.405);
             // 0.450 is the quarter pane behind the post, which carries no net
             // on either side. 0.385 is the middle of the door pane.
-            const int x = (int)(0.385 * kLiveryTextureSize);  // mid door pane
+            const int x = (int)(0.365 * kLiveryTextureSize);  // mid door pane (T27: pane is u ~0.33-0.40)
             const double glassLum =
                 luminance(pixelAt(pixels, x, (int)((v0 + (v1 - v0) * 0.02) * kLiveryTextureSize)));
             int bars = 0;

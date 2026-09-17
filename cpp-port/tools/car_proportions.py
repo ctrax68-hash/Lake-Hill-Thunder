@@ -167,10 +167,21 @@ deck_start = station("deck_start")[0]
 # little; a `photo` target that a spec-class source independently contradicts
 # is a target that was measured wrong. Tolerance stays at 0.15, unchanged: this
 # is a correction, not a loosening.
-measure("cowl behind front axle / wheelbase", (AXLE_F - cowl) / WHEELBASE, 0.290, 0.15,
-        "photo", "0.281 off the #21 overlay; 30-33 in of a 110 in wheelbase")
-measure("flat roof length / wheelbase", (roof_lead - roof_trail) / WHEELBASE, 0.292, 0.20,
-        "photo", "77 px of 264 px")
+# T27: EVERY `photo` ROW BELOW IS NOW READ OFF THE #41 THROUGH tools/car_overlay.py.
+#
+# That tool registers our outline on the reference's two wheel hubs (removing
+# the frame's roll), scales heights by the tire ratio (the photo's 0.381 m
+# tire to our 0.360), and prints the residual at every station in metres. It
+# is the loss function the user asked for -- "keep going until our cars match
+# the exact outline" -- and these targets are its numbers, not a landmark
+# grid's. Where they contradict the earlier photographs (the backlite rake
+# above all: 30 deg here against the 21 deg read off the very first photo),
+# the #41 wins: it is the purest side view supplied and the only one the
+# overlay could be registered on to better than a wheel-radius.
+measure("cowl behind front axle / wheelbase", (AXLE_F - cowl) / WHEELBASE, 0.235, 0.15,
+        "photo", "#41 trace: cowl at x 0.96")
+measure("flat roof length / wheelbase", (roof_lead - roof_trail) / WHEELBASE, 0.412, 0.15,
+        "photo", "#41 trace: roof from x 0.37 to -0.78")
 
 # T23: THE REST OF THE GREENHOUSE, not just its front edge.
 #
@@ -186,11 +197,11 @@ measure("flat roof length / wheelbase", (roof_lead - roof_trail) / WHEELBASE, 0.
 # fractions of the wheelbase behind the front axle, and they are `photo`
 # numbers with a photo tolerance -- they say "the cabin is in the wrong place",
 # not "the C-pillar is 14 mm out".
-measure("A-pillar top behind front axle / wb", (AXLE_F - roof_lead) / WHEELBASE, 0.506, 0.12,
+measure("A-pillar top behind front axle / wb", (AXLE_F - roof_lead) / WHEELBASE, 0.447, 0.12,
         "photo", "where the windshield meets the roof")
-measure("C-pillar top behind front axle / wb", (AXLE_F - roof_trail) / WHEELBASE, 0.763, 0.12,
+measure("C-pillar top behind front axle / wb", (AXLE_F - roof_trail) / WHEELBASE, 0.859, 0.12,
         "photo", "where the roof meets the backlite")
-measure("backlite base behind front axle / wb", (AXLE_F - deck_start) / WHEELBASE, 1.146, 0.12,
+measure("backlite base behind front axle / wb", (AXLE_F - deck_start) / WHEELBASE, 1.130, 0.12,
         "photo", "where the backlite meets the deck")
 
 # --- profile heights ------------------------------------------------------
@@ -209,8 +220,12 @@ deck_top = station("deck_flat")[4]
 #
 # The old 0.551 is 28 in, and the render showed it: a blunt high nose on a car
 # whose hood ran nearly level to it.
-measure("nose height / roof height", nose_top / ROOF, 0.440, 0.10, "photo",
-        "a Cup car's nose is LOW")
+# T27: 0.440 -> 0.680. Not a real car's nose and not meant to be one: the #41
+# trace, tire-normalised, puts the top of the fascia at 0.885 m. The game this
+# car is being matched to draws a high, nearly level hood that only falls in
+# the last 0.6 m, and the user has asked for that outline, not the spec sheet's.
+measure("nose height / roof height", nose_top / ROOF, 0.680, 0.10, "photo",
+        "#41 trace: nose station top 0.885 m")
 # T23b: and the line BETWEEN the nose and the cowl, which nothing measured.
 # The nose row alone constrains one endpoint; the error it was hiding grew
 # steadily along the hood (+150 mm at the nose, +80 at the fender, +47 at the
@@ -221,8 +236,8 @@ measure("nose height / roof height", nose_top / ROOF, 0.440, 0.10, "photo",
 # fender line low; the #41 is a near-pure side view and puts the fender line
 # level with the hood plane out past the wheel. Nose row unchanged: it agrees
 # across both stills and with the published 22-24 in.
-measure("hood at front axle / roof height", station("front_axle")[2] / ROOF, 0.683, 0.10,
-        "photo", "the fender line over the front wheel")
+measure("hood at front axle / roof height", station("front_axle")[2] / ROOF, 0.811, 0.10,
+        "photo", "#41 trace: 1.05 m over the front wheel")
 # T23f: the station between them, which is where the hood's fall was actually
 # being clipped. T23 could only reach 0.84 here (0.649 of the roof) because the
 # arch lip sat too high to put any more fender under it; T23f's tire-following
@@ -230,7 +245,7 @@ measure("hood at front axle / roof height", station("front_axle")[2] / ROOF, 0.6
 # first if the arch clearance ever crept back up, so it earns a row of its own
 # rather than being assumed to follow the two around it.
 measure("hood at front fender / roof height", station("front_fender")[2] / ROOF,
-        0.664, 0.10, "photo", "ahead of the front wheel -- level with the hood on the #41")
+        0.795, 0.10, "photo", "#41 trace: 1.03 m ahead of the front wheel")
 measure("beltline / roof height", belt_cabin / ROOF, 0.703, 0.08, "photo")
 measure("deck height / roof height", deck_top / ROOF, 0.724, 0.10, "photo")
 
@@ -240,14 +255,14 @@ ws_run = station("cowl")[0] - station("roof_lead")[0]
 bl_rise = station("roof_trail")[4] - station("deck_start")[4]
 bl_run = station("deck_start")[0] - station("roof_trail")[0]
 measure("windshield rake (deg from horizontal)", math.degrees(math.atan2(ws_rise, ws_run)),
-        34.0, 0.15, "photo")
+        22.0, 0.15, "photo", "#41 trace: 0.235 m rise over 0.59 m to a 1.295 roof")
 # Measured off the reference with SEPARATE horizontal and vertical scales: the
 # car there is rotated off pure profile so x is foreshortened ~1.17x, and one
 # combined scale gives the wrong angle. Windshield 34.1, backlite 20.9 -- the
 # backlite is SHALLOWER, which is what makes the deck read long. R2b changed
 # these to 32/30 on the opposite belief and made the silhouette worse.
 measure("backlite rake (deg from horizontal)", math.degrees(math.atan2(bl_rise, -bl_run)),
-        21.0, 0.25, "photo", "SHALLOWER than the windshield -- R2b had this backwards")
+        30.0, 0.15, "photo", "#41 trace: 0.435 m fall over 0.74 m -- STEEPER than the windshield")
 
 # --- report ---------------------------------------------------------------
 print("car_proportions -- generated mesh vs real Gen-4 Cup")

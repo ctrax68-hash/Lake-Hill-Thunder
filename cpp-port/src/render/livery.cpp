@@ -806,7 +806,8 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // reference and published Gen-4 geometry put it at 0.28-0.29. These stay
     // expressed as carU() of the station they belong to, and check_car_rig.py
     // still asserts each one lands on a real station.
-    const double uWS0 = carU(0.80), uWS1 = carU(0.205);
+    // T27: cowl 0.80 -> 0.95, A-pillar 0.205 -> 0.365 (the #41 trace).
+    const double uWS0 = carU(0.95), uWS1 = carU(0.365);
     // K2 (car visual fidelity plan, part 3): uSG0 used to be carU(0.30),
     // which landed 42% of the way inside the windshield's own real U-range
     // [uWS0,uWS1] -- the side window started well past "windshield mid"
@@ -830,7 +831,7 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // "the windows look like shit around the cab". The #41 shows ~8 cm of
     // body-coloured A-pillar between the windshield and the door glass and a
     // similar C-pillar; in this wrap's U that is 0.012 and 0.010.
-    const double uSG0 = carU(0.205) + 0.012, uSG1 = carU(-0.505) - 0.010;
+    const double uSG0 = carU(0.365) + 0.012, uSG1 = carU(-0.77) - 0.010;
     // K2: uRG1 used to be carU(-1.75) (station 12, "deck start"), but the
     // real glass-adjacent roofline rise ends two stations earlier, at
     // carU(-1.40) (station 11, "rear axle... belt/roof rejoin" -- beltY
@@ -848,7 +849,8 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // edge all the way back to where the deck starts.
     // T23: C-pillar -0.78 -> -0.505 and deck start -1.67 -> -1.56, both moved
     // by the same greenhouse re-authoring.
-    const double uRG0 = carU(-0.505), uRG1 = carU(-1.56) - kSeamW;
+    // T27: C-pillar -0.505 -> -0.77, deck start -1.56 -> -1.52.
+    const double uRG0 = carU(-0.77), uRG1 = carU(-1.52) - kSeamW;
     // T23d: THE WINDSHIELD AND BACKLITE WERE PAINTED ONTO THE PILLARS AND THE
     // REAR QUARTERS, and that is why our greenhouse read as a glass bubble
     // where the reference's reads as a cabin.
@@ -911,7 +913,7 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // T23: the rear shutline tracked "the roof-peak station", which moved from
     // -0.375 to -0.15 with the greenhouse; the door/quarter break behind it
     // moves the same 0.225 rather than being left behind on the old roofline.
-    for (double ux : {carU(1.00), carU(-0.375)}) {
+    for (double ux : {carU(1.10), carU(-0.45)}) {
         c.fillRect(ux, 0.062, kSeamW, 0.320 - 0.062, seamShadow, 0.28);   // -z door panel
         c.fillRect(ux, 0.680, kSeamW, 0.945 - 0.680, seamShadow, 0.28);  // +z door panel
     }
@@ -1023,8 +1025,8 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     glassFrame(uWS0, uWS1, GV0, GVH);
     glassFrame(uRG0, uRG1, GV0, GVH);
     // roof flaps
-    c.fillRect(carU(-0.45), 0.435, 0.045, 0.052, tone(0.72));
-    c.fillRect(carU(-0.45), 0.513, 0.045, 0.052, tone(0.72));
+    c.fillRect(carU(-0.62), 0.435, 0.045, 0.052, tone(0.72));
+    c.fillRect(carU(-0.62), 0.513, 0.045, 0.052, tone(0.72));
 
     // ---- J6 (car visual fidelity plan, part 2): roll-cage glimpse bars ----
     // No JS precedent (grep confirms zero "roll cage"/"rollbar" hits anywhere
@@ -1433,8 +1435,9 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         c.fillRect(carU(-0.49) + 0.048, 0.452, 0.014, 0.096, {0.30, 0.30, 0.33});
     } else {
         // T23: re-centred on the roof plateau, which now runs 0.205 to -0.505.
-        c.fillRect(carU(-0.15) - 0.056, 0.420, 0.112, 0.160, panelFill);
-        drawNumber(c, num, carU(-0.49), 0.50, 0.105, panelNum, dark);   // roof
+        // T27: roof plateau is 0.365 to -0.77 now; centred on it.
+        c.fillRect(carU(-0.20) - 0.056, 0.420, 0.112, 0.160, panelFill);
+        drawNumber(c, num, carU(-0.20), 0.50, 0.105, panelNum, dark);   // roof
     }
     if (!paceLightBar) {
         // T26: THE DOOR NUMBER, SIZED AND PLACED OFF THE #41.
