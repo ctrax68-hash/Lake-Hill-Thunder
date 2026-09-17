@@ -775,11 +775,21 @@ int main() {
         // sample the glass at a v the net's straps never occupy and count runs
         // that depart from it. That survives any future change to either tone.
         auto barsCrossed = [&](double v0, double v1) {
-            // T26: 0.450 -> 0.385. The net now hangs in the DOOR pane only,
-            // uSG0 to the B-pillar post at 55% of the glass (u ~0.36-0.405);
-            // 0.450 is the quarter pane behind the post, which carries no net
-            // on either side. 0.385 is the middle of the door pane.
-            const int x = (int)(0.365 * kLiveryTextureSize);  // mid door pane (T27: pane is u ~0.33-0.40)
+            // T28: SCAN SEVERAL COLUMNS AND TAKE THE BEST, instead of picking
+            // one. A single column is hostage to where the net's VERTICAL
+            // weave straps happen to fall: this probe was moved to 0.365 when
+            // the pane moved, landed on a 2-texel vertical strap, and then the
+            // whole column read as one bar -- so the reference sample WAS the
+            // strap and the guard reported zero webbing on a fully netted
+            // window. Which column is "the middle of the pane" is not a
+            // property worth encoding; that the pane carries webbing is.
+            //
+            // 0.360-0.405 sits inside the door pane on both of the leaning
+            // pane's rows (u 0.339-0.472 at the belt, 0.349-0.483 at the roof
+            // edge) and clear of the A-pillar seal at either end.
+            int best = 0;
+            for (double fu = 0.360; fu <= 0.405; fu += 0.004) {
+            const int x = (int)(fu * kLiveryTextureSize);
             const double glassLum =
                 luminance(pixelAt(pixels, x, (int)((v0 + (v1 - v0) * 0.02) * kLiveryTextureSize)));
             int bars = 0;
@@ -789,7 +799,9 @@ int main() {
                 if (onWebbing && !onBar) ++bars;
                 onBar = onWebbing;
             }
-            return bars;
+            best = std::max(best, bars);
+            }
+            return best;
         };
         const int driverBars = barsCrossed(0.595, 0.660);
         const int passengerBars = barsCrossed(0.340, 0.405);

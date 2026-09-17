@@ -1232,6 +1232,39 @@ STATION_ROLES = {
     "tail": -2.466,
 }
 
+# T28: THE SIDE WINDOW'S FOUR CORNERS, read off the #41 through
+# tools/car_overlay.py's registration (roll removed, tire-normalised), in the
+# x_js domain the station table and livery.cpp's carU() share.
+#
+# T28c: RE-READ, AND THE FIRST TWO READINGS WERE BOTH WRONG. I read the pane
+# off a cab zoom as a short slot leaning back at the top (0.405/-0.474), then
+# lengthened it by eye. Projecting the corners properly -- image point through
+# the registration basis, not by eyeballing a crop -- gives something quite
+# different:
+#
+#     front top  0.325   front belt  0.305     (the A-pillar is near vertical)
+#     rear  top -0.890   rear  belt -1.190     (the C-pillar is RAKED, hard)
+#
+# Two corrections in that. The opening is 1.50 x_js at the belt, not 0.94 --
+# a Cup car's door window runs from just behind the A-pillar all the way back
+# over the rear axle, and mine stopped halfway. And the rear edge leans the
+# OTHER WAY from what I built: it rakes BACKWARD going down, so the glass's
+# bottom-rear corner is 0.30 behind its top-rear corner. I had it leaning
+# forward, which is a shape no car has.
+#
+# The sail panel is therefore measured at the BELT, between the glass and the
+# deck, which is where a quarter panel is actually wide -- not against the
+# roof's trailing edge, which the raked glass legitimately passes.
+#
+# livery.cpp copies these four numbers (loose cross-file sync, the convention
+# every other livery anchor uses) and check_car_rig.py asserts the copies.
+SIDE_GLASS_XJS = {
+    "front_belt": 0.305,
+    "front_top": 0.325,
+    "rear_belt": -1.190,
+    "rear_top": -0.890,
+}
+
 def station_x(role):
     """Scaled x of a named landmark station. Raises if the role is gone."""
     if role not in STATION_ROLES:

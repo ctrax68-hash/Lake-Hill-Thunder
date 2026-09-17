@@ -831,7 +831,31 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // "the windows look like shit around the cab". The #41 shows ~8 cm of
     // body-coloured A-pillar between the windshield and the door glass and a
     // similar C-pillar; in this wrap's U that is 0.012 and 0.010.
-    const double uSG0 = carU(0.365) + 0.012, uSG1 = carU(-0.77) - 0.010;
+    // T28: THE SIDE WINDOW IS A LEANING QUADRILATERAL, NOT A RECTANGLE, and it
+    // is a good deal shorter than the roof. Four corners read off the #41 and
+    // held in gen_car_rig.py's SIDE_GLASS_XJS (copies here; check_car_rig.py
+    // asserts they agree): at the belt the pane runs x_js 0.405 -> -0.474, at
+    // the roof edge 0.335 -> -0.550. The roof itself ends at -0.77, so the
+    // 0.2-0.3 m between the glass and the backlite is the C-pillar SAIL PANEL
+    // -- the wide body-coloured panel every Gen-4 has and this car never did:
+    // the old rectangle ran the glass to -0.836, right into the backlite.
+    //
+    // uSG0/uSG1 keep their names as the BELT-row bounds; the T-suffixed pair is
+    // the roof-edge row. Anything that must stay inside the pane on every row
+    // (the net, the post) uses the narrower of the two at each end.
+    const double uSG0 = carU(0.305), uSG1 = carU(-1.190);
+    const double uSG0T = carU(0.325), uSG1T = carU(-0.890);
+    // Fill a quad whose left/right edges are straight lines from (u at vTop)
+    // to (u at vBot), one texel row at a time.
+    auto fillSlant = [&](double uL_top, double uR_top, double vTop, double uL_bot, double uR_bot, double vBot,
+                         const std::array<double, 3>& col, double alpha = 1.0) {
+        const double step = 1.0 / kLiveryTextureSize;
+        for (double v = vTop; v < vBot; v += step) {
+            const double t = (v - vTop) / (vBot - vTop);
+            const double l = uL_top + (uL_bot - uL_top) * t, r = uR_top + (uR_bot - uR_top) * t;
+            c.fillRect(l, v, r - l, step, col, alpha);
+        }
+    };
     // K2: uRG1 used to be carU(-1.75) (station 12, "deck start"), but the
     // real glass-adjacent roofline rise ends two stations earlier, at
     // carU(-1.40) (station 11, "rear axle... belt/roof rejoin" -- beltY
@@ -960,8 +984,11 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         // 0.677 / 0.323 instead of stopping 0.012 short of it. That 0.012 was
         // the band of body colour the reference does not have between the
         // window and the door, and it read as the window sitting too high.
-        c.fillRect(uSG0, 0.323, uSG1 - uSG0, 0.087, glassDark);
-        c.fillRect(uSG0, 0.590, uSG1 - uSG0, 0.087, glassDark);
+        // +z flank: roof edge at v 0.590 (top row), belt at 0.677. -z is the
+        // mirror: roof edge at 0.410, belt at 0.323 -- so its "top" row is the
+        // higher v.
+        fillSlant(uSG0T, uSG1T, 0.590, uSG0, uSG1, 0.677, glassDark);
+        fillSlant(uSG0, uSG1, 0.323, uSG0T, uSG1T, 0.410, glassDark);
         // The highlight band stays a band, just a much quieter one: it is the
         // sky streak across the top of the pane, not the pane itself.
         const std::array<double, 3> glassHi{50 / 255.0, 53 / 255.0, 60 / 255.0};
@@ -977,12 +1004,24 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     c.fillRect(uWS1 - 0.032, GV0 + 0.015, 0.005, GVH - 0.015,
                std::array<double, 3>{14 / 255.0, 14 / 255.0, 16 / 255.0});
     // driver window net (index.html:2713-2722)
-    c.fillRect(uSG0, 0.590, (uSG1 - uSG0) * 0.55, 0.075, {8 / 255.0, 8 / 255.0, 10 / 255.0});
+    // T28: the door pane's INNER rectangle -- the rearmost the front edge gets
+    // (at the roof edge) to the post -- so the net stays on glass on every row
+    // of the leaning pane.
+    const double uPane0 = std::max(uSG0, uSG0T);
+    // T28c: 0.55 -> 0.72. The opening is 1.5 x_js long now, and on the
+    // reference the one light vertical in it sits near the BACK -- the door's
+    // rear edge, with a small quarter light behind it -- not halfway along.
+    const double uPost = uPane0 + (std::min(uSG1, uSG1T) - uPane0) * 0.72;
+    // T28c: the net covers the front 55% OF THE DOOR PANE, which is itself
+    // 0.72 of a much longer opening -- the driver sits forward and the net is
+    // in front of him, so it must not grow with the window.
+    const double uNet1 = uPane0 + (uPost - uPane0) * 0.55;
+    c.fillRect(uPane0, 0.590, uNet1 - uPane0, 0.075, {8 / 255.0, 8 / 255.0, 10 / 255.0});
     for (int i = 0; i < 6; ++i) {
         const std::array<double, 3> weave{60 / 255.0, 60 / 255.0, 64 / 255.0};
-        c.fillRect(uSG0 + 4.0 / kLiveryTextureSize + i * ((uSG1 - uSG0) * 0.55 - 8.0 / kLiveryTextureSize) / 5.0,
+        c.fillRect(uPane0 + 4.0 / kLiveryTextureSize + i * ((uNet1 - uPane0) - 8.0 / kLiveryTextureSize) / 5.0,
                    0.593, 2.0 / kLiveryTextureSize, 0.069, weave);
-        c.fillRect(uSG0 + 2.0 / kLiveryTextureSize, 0.596 + i * 0.063 / 5.0, (uSG1 - uSG0) * 0.55 - 4.0 / kLiveryTextureSize,
+        c.fillRect(uPane0 + 2.0 / kLiveryTextureSize, 0.596 + i * 0.063 / 5.0, (uNet1 - uPane0) - 4.0 / kLiveryTextureSize,
                    2.0 / kLiveryTextureSize, weave);
     }
     // T26: the B-pillar -- a body-coloured post where the door pane ends and
@@ -991,15 +1030,20 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // in the greenhouse and it is what makes two windows read instead of one
     // long slot.
     {
-        const double bu = uSG0 + (uSG1 - uSG0) * 0.55;
-        c.fillRect(bu - 0.003, 0.323, 0.006, 0.087, tone(kBaseM));
-        c.fillRect(bu - 0.003, 0.590, 0.006, 0.087, tone(kBaseM));
+        c.fillRect(uPost - 0.003, 0.323, 0.006, 0.087, tone(kBaseM));
+        c.fillRect(uPost - 0.003, 0.590, 0.006, 0.087, tone(kBaseM));
     }
     // A/B pillar dark edges
     const std::array<double, 3> pillarDark{14 / 255.0, 14 / 255.0, 16 / 255.0};
     c.fillRect(uWS0 - 2.0 / kLiveryTextureSize, GV0, 4.0 / kLiveryTextureSize, GVH, pillarDark);
-    c.fillRect(uSG1 - 2.0 / kLiveryTextureSize, 0.323, 4.0 / kLiveryTextureSize, 0.087, pillarDark);
-    c.fillRect(uSG1 - 2.0 / kLiveryTextureSize, 0.590, 4.0 / kLiveryTextureSize, 0.087, pillarDark);
+    // T28: the rear edge leans with the pane, so its dark seal does too.
+    {
+        const double w = 4.0 / kLiveryTextureSize;
+        fillSlant(uSG1T - w * 0.5, uSG1T + w * 0.5, 0.590, uSG1 - w * 0.5, uSG1 + w * 0.5, 0.677, pillarDark);
+        fillSlant(uSG1 - w * 0.5, uSG1 + w * 0.5, 0.323, uSG1T - w * 0.5, uSG1T + w * 0.5, 0.410, pillarDark);
+        fillSlant(uSG0T - w * 0.5, uSG0T + w * 0.5, 0.590, uSG0 - w * 0.5, uSG0 + w * 0.5, 0.677, pillarDark);
+        fillSlant(uSG0 - w * 0.5, uSG0 + w * 0.5, 0.323, uSG0T - w * 0.5, uSG0T + w * 0.5, 0.410, pillarDark);
+    }
 
     // H2 (NT2003 engine-feel plan): window rubber. The pillar edges above
     // only frame the SIDES of each glass rect (the A/B pillars, which are
@@ -1099,7 +1143,7 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         // the B-pillar post -- and reaches the belt with the glass. It used to
         // span the whole side glass, so the post landed mid-net.
         constexpr double kNetV0 = 0.590, kNetVH = 0.087;
-        const double nu0 = uSG0, nu1 = uSG0 + (uSG1 - uSG0) * 0.55 - 0.003;
+        const double nu0 = uPane0, nu1 = uNet1 - 0.003;
         const double barW = 5.0 / kLiveryTextureSize;
         // Horizontal webbing straps -- the dominant read on a real net -- plus
         // a sparser vertical set, and a frame around the whole opening.

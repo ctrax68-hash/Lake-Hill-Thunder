@@ -522,7 +522,7 @@ _K_SEAM_W = 0.0035  # livery.cpp's own kSeamW, copied here for the same reason
 # T27: cowl 0.95, A-pillar 0.365, C-pillar -0.77, deck start -1.52 -- the
 # greenhouse re-authored to the #41's traced outline.
 _uWS0, _uWS1 = _carU_raw(0.95), _carU_raw(0.365)
-_uSG0 = _carU_raw(0.365) + 0.012
+_uSG0 = _carU_raw(R.SIDE_GLASS_XJS["front_belt"])
 _uRG0, _uRG1 = _carU_raw(-0.77), _carU_raw(-1.52) - _K_SEAM_W
 
 _st6_u = R.car_u(_key_station_x("cowl"))    # cowl/windshield base
@@ -532,8 +532,38 @@ _st12_u = R.car_u(_key_station_x("deck_start"))  # deck start
 
 check(abs(_uWS0 - _st6_u) < 1e-9, "windshield uWS0 exactly matches the cowl station (regression guard)")
 check(abs(_uWS1 - _st8_u) < 1e-9, "windshield uWS1 exactly matches the A-pillar station (regression guard)")
-check(abs(_uSG0 - (_st8_u + 0.012)) < 1e-9,
-      "side-glass uSG0 anchors to the A-pillar station + the T26 pillar band (0.012)")
+# T28: the side window's four corners live in gen_car_rig.py's SIDE_GLASS_XJS
+# and livery.cpp carries copies. Read the C++ and compare, the way the kArch*
+# constants are checked, so the pane cannot drift from the geometry it is read
+# against.
+_liv = open(os.path.join(_HERE, "..", "src", "render", "livery.cpp")).read()
+import re as _re
+_m = _re.search(r"const double uSG0 = carU\(([-0-9.]+)\), uSG1 = carU\(([-0-9.]+)\);\s*"
+                r"const double uSG0T = carU\(([-0-9.]+)\), uSG1T = carU\(([-0-9.]+)\);", _liv)
+check(_m is not None, "livery.cpp declares the four side-glass corners (uSG0/uSG1/uSG0T/uSG1T)")
+if _m:
+    _got = [float(v) for v in _m.groups()]
+    _want = [R.SIDE_GLASS_XJS[k] for k in ("front_belt", "rear_belt", "front_top", "rear_top")]
+    check(all(abs(a - b) < 1e-9 for a, b in zip(_got, _want)),
+          "livery.cpp's side-glass corners match gen_car_rig.py's SIDE_GLASS_XJS (%s vs %s)" % (_got, _want))
+# T28c: the sail panel is measured AT THE BELT, against the deck. Measuring it
+# against the roof's trailing edge -- which the first cut did -- asserts that
+# the glass stops before the roof does, and a raked C-pillar legitimately
+# passes it: the reference's bottom-rear corner is 0.42 behind roof_trail. What
+# a quarter panel actually is, is the body between the glass and the deck along
+# the BELT, and that is what this holds.
+_sail = R.SIDE_GLASS_XJS["rear_belt"] - R.STATION_ROLES["deck_start"]
+check(0.15 <= _sail <= 0.60,
+      "a quarter panel of %.3f (x_js) sits between the side glass and the deck at the belt" % _sail)
+check(R.SIDE_GLASS_XJS["front_top"] < R.STATION_ROLES["roof_lead"],
+      "the side glass's front-top corner sits behind the A-pillar top, leaving a pillar")
+# The C-pillar rakes BACK going down -- the bottom-rear corner is behind the
+# top-rear one. The first reading had this inverted, which is a shape no car
+# has, and nothing caught it.
+check(R.SIDE_GLASS_XJS["rear_belt"] < R.SIDE_GLASS_XJS["rear_top"] - 0.10,
+      "the C-pillar rakes backward going down (belt %.3f is %.3f behind top %.3f)"
+      % (R.SIDE_GLASS_XJS["rear_belt"], R.SIDE_GLASS_XJS["rear_top"] - R.SIDE_GLASS_XJS["rear_belt"],
+         R.SIDE_GLASS_XJS["rear_top"]))
 check(abs(_uRG0 - _st10_u) < 1e-9, "rear-glass uRG0 exactly matches the C-pillar station (regression guard)")
 # The actual bug-catcher: fails against the pre-K2 uRG1 (carU(-1.75), which
 # overshoots station 11 by far more than 0.01), passes after the fix, and
