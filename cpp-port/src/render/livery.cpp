@@ -190,9 +190,25 @@ public:
     // stretch; it is tolerable on a long thin wordmark and not on a numeral,
     // which is why the door numbers were still 7-segment. Pass the surface's
     // own dU/dx over dV/dy here and the glyph is physically square.
+    // T32: `flipV` turns a run upside down about its own ink span.
+    //
+    // It is not a style option, it is the -z flank's UV. The ring's V is
+    // mirrored about 0.5 between the two sides of the car: on the +z flank the
+    // beltline is v 0.677 and the rocker 0.985, so +v runs DOWN the door; on
+    // the -z flank the same two lines are 0.323 and 0.015, so +v runs UP it.
+    // A viewer standing off each side sees, in texture axes, (+u left, +v down)
+    // from +z and (+u right, +v up) from -z -- a mirror in u on one flank and a
+    // mirror in V on the other, not the same mirror twice.
+    //
+    // Only the u half of that was ever implemented, so every piece of lettering
+    // on the -z flank -- both door numbers, both associate marks, the quarter
+    // wordmark -- has been rendering UPSIDE DOWN since T4 put text on the body.
+    // Verified before and after on a rendered frame at azimuth 237, which is
+    // the flank the T4 probe did not check.
     void drawText(double fx, double fy, double fh, const std::string& text,
                   const std::array<double, 3>& color, double alpha = 1.0, bool centered = false,
-                  bool mirrorU = false, TextDir dir = TextDir::AlongU, double xScale = 1.0) {
+                  bool mirrorU = false, TextDir dir = TextDir::AlongU, double xScale = 1.0,
+                  bool flipV = false) {
         const font::AtlasImage& atlas = liveryFontAtlas();
         if (!atlas.ok || text.empty()) return;
 
@@ -226,6 +242,23 @@ public:
             inkMax = std::max(inkMax, (double)quads[g + 2].x);
         }
         const double mirrorSum = inkMin + inkMax;
+        // The vertical reflection is about the CALLER'S BOX, not the run's ink
+        // -- the opposite of the horizontal one above, and for a reason worth
+        // writing down because the first cut got it wrong and the render showed
+        // it. `fy` is the top of a box `fh` tall, and pushText lays the baseline
+        // at exactly that box's bottom, so the box is [0, target] in glyph
+        // space. Digit ink starts inkYMin below the box top (the font's ascent
+        // is taller than its cap height) and ends on the baseline.
+        //
+        // Reflecting about the ink span keeps the ink where it is, which is
+        // right for the u mirror -- both doors want the number at the same u.
+        // Reflecting the V that way puts the -z number inkYMin LOWER on the
+        // door than the +z one, because the two doors' v run in opposite
+        // directions: measured, 104 texels of it, which is what a cross-
+        // correlation of the two halves found before this line was changed.
+        // Reflecting about the box maps [0, target] onto itself, so the flipped
+        // run occupies the mirror of the band the upright one does.
+        const double mirrorSumY = target;
         double ox = fx * size_;
         if (centered) ox -= runRaw * xScale * 0.5;
         const double oy = fy * size_;
@@ -238,7 +271,8 @@ public:
             const double gx0 = (mirrorU ? mirrorSum - b.x : a.x) * xScale;
             const double gx1 = (mirrorU ? mirrorSum - a.x : b.x) * xScale;
             // Glyph-space extents: rx runs along the string, ry down the glyph.
-            const double ry0 = a.y, ry1 = b.y;
+            const double ry0 = flipV ? mirrorSumY - (double)b.y : (double)a.y;
+            const double ry1 = flipV ? mirrorSumY - (double)a.y : (double)b.y;
             // Destination box, per direction. The rotated cases transpose the
             // two axes -- the run occupies v and the glyph height occupies u.
             int x0, x1, y0, y1;
@@ -275,9 +309,10 @@ public:
                         ry = pxx + 0.5 - ox;
                     }
                     double tx = (rx - gx0) / (gx1 - gx0);
-                    const double ty = (ry - ry0) / (ry1 - ry0);
+                    double ty = (ry - ry0) / (ry1 - ry0);
                     if (tx < 0.0 || tx >= 1.0 || ty < 0.0 || ty >= 1.0) continue;
                     if (mirrorU) tx = 1.0 - tx;
+                    if (flipV) ty = 1.0 - ty;
                     const double u = a.u + (b.u - a.u) * tx, v = a.v + (b.v - a.v) * ty;
                     const int ax = std::clamp((int)(u * atlas.width), 0, atlas.width - 1);
                     const int ay = std::clamp((int)(v * atlas.height), 0, atlas.height - 1);
@@ -417,14 +452,8 @@ double carU(double x) {
 // They exist because the two decorations that had been standing in for the
 // arches -- the JS shadow rings and the H2 lip highlight -- were both placed
 // by hand against an older axle position and never moved when the wheels did.
-constexpr double kArchFrontU0 = 0.0878, kArchFrontU1 = 0.2285;
-// T23: kArchRearU1 0.6528 -> 0.6459. The rear axle did not move; the arch's
-// rear U bound is the last STATION the carve reaches, and moving deck_start
-// from -1.67 to -1.56 with the greenhouse changed which station that is.
-constexpr double kArchRearU0 = 0.5052, kArchRearU1 = 0.6459;
-constexpr double kArchFrontCU = (kArchFrontU0 + kArchFrontU1) * 0.5;
-constexpr double kArchRearCU = (kArchRearU0 + kArchRearU1) * 0.5;
-constexpr double kArchLipV = 0.8848;  // RINGV[K_LIP]
+// T32: these five, and the flank layout derived from them, now live in
+// livery.h so the guards read the same numbers this file paints with.
 
 // G1b (NASCAR-Thunder gap-analysis plan, car UV/livery fix): every fill*
 // call above is fraction-based (fx/fy/fw/fh in [0,1]), so rendering into a
@@ -514,16 +543,16 @@ void drawDigit(Canvas& c, int d, double fcx, double fcy, double fw, double fh, c
 // so it scales with kLiveryTextureSize.
 void drawFontNumber(Canvas& c, int num, double fcx, double fcyTop, double fh,
                     const std::array<double, 3>& fill, const std::array<double, 3>& outline,
-                    bool mirrorU, double xScale, double outlineF) {
+                    bool mirrorU, double xScale, double outlineF, bool flipV = false) {
     const std::string s = std::to_string(num);
     for (int oy = -1; oy <= 1; ++oy) {
         for (int ox = -1; ox <= 1; ++ox) {
             if (ox == 0 && oy == 0) continue;
             c.drawText(fcx + ox * outlineF, fcyTop + oy * outlineF, fh, s, outline, 1.0, true,
-                       mirrorU, Canvas::TextDir::AlongU, xScale);
+                       mirrorU, Canvas::TextDir::AlongU, xScale, flipV);
         }
     }
-    c.drawText(fcx, fcyTop, fh, s, fill, 1.0, true, mirrorU, Canvas::TextDir::AlongU, xScale);
+    c.drawText(fcx, fcyTop, fh, s, fill, 1.0, true, mirrorU, Canvas::TextDir::AlongU, xScale, flipV);
 }
 
 // Draws a 1-2 digit number, outline then fill (JS's drawNum() stroke+fill
@@ -654,10 +683,16 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         c.fillRect(U0, 0.692, U1 - U0, 0.012, acc2);
     } else {
         // flames (index.html:2655-2664).
+        // T32: dropped to the lower door and shortened. They licked from
+        // v 0.855 to 0.930, i.e. straight across the bottom half of where the
+        // door number now sits, and since the number is painted later the
+        // flank dump showed a white smear with a numeral stamped on it. Real
+        // flame liveries of this era run the licks along the rocker UNDER the
+        // number, which is also the one band of door left free.
         const double flU0 = 0.26;
-        for (auto [vSide, dir] : {std::pair{0.145, -1.0}, std::pair{0.855, 1.0}}) {
-            drawFlameLick(c, flU0, vSide, 0.26, 0.075, dir, accent);
-            drawFlameLick(c, flU0, vSide + dir * 0.01, 0.18, 0.045, dir, acc2);
+        for (auto [vSide, dir] : {std::pair{0.092, -1.0}, std::pair{0.908, 1.0}}) {
+            drawFlameLick(c, flU0, vSide, 0.26, 0.040, dir, accent);
+            drawFlameLick(c, flU0, vSide + dir * 0.006, 0.18, 0.024, dir, acc2);
         }
     }
 
@@ -707,11 +742,19 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         //   hood      u 0.060-0.264: clear of the nose lamp column (which
         //             ends at 0.038) and the cowl shutline (0.285).
         //             v 0.412-0.588, inside the roof/hood highlight band.
-        //   quarters  u 0.286-0.524: the door/lower-quarter run between the
-        //             front wheel-arch ring (reaches u=0.260) and the rear
-        //             one (starts at 0.540). v 0.076-0.138, above the
-        //             near-black rocker (ends 0.052) and below the door-
-        //             number ellipse (starts 0.153).
+        //   quarters  T32: this run WAS u 0.286-0.524 on the lower door,
+        //             "below the door-number ellipse (starts 0.153)". There
+        //             is no ellipse any more and the number itself now
+        //             occupies v 0.095-0.320 across u 0.305-0.428, so four
+        //             accent-coloured slabs were being painted straight
+        //             under it -- on a purple car with a white accent that
+        //             is the white blob the flank dump shows behind the 12.
+        //             Moved aft of the rear arch (ends 0.6459) and short of
+        //             the tail lamp wrap (starts 0.764), which is the one
+        //             stretch of lower bodywork nothing else claims: the
+        //             quarter wordmark sits at v 0.170/0.790 and the third
+        //             associate mark at 0.262/0.702, both clear of the
+        //             0.076-0.138 band these use.
         //   rear win  u 0.556-0.658: roughly under the rear glass's own u
         //             span (K2: [0.551,0.609] after correcting uRG1, was
         //             [0.551,0.665] before -- these patches don't actually
@@ -732,10 +775,10 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
             {0.142, 0.428, 0.048, 0.144, false}, // hood, centre slab
             {0.202, 0.440, 0.062, 0.050, false}, // hood, cowl pair
             {0.202, 0.510, 0.062, 0.050, false},
-            {0.286, 0.076, 0.058, 0.062, true},  // lower door/quarter run
-            {0.352, 0.076, 0.048, 0.062, true},
-            {0.408, 0.084, 0.042, 0.046, true},
-            {0.458, 0.076, 0.066, 0.062, true},
+            {0.652, 0.076, 0.030, 0.062, true},  // lower rear-quarter run
+            {0.686, 0.076, 0.026, 0.062, true},
+            {0.716, 0.084, 0.022, 0.046, true},
+            {0.742, 0.076, 0.020, 0.062, true},
             {0.556, 0.244, 0.048, 0.064, true},  // rear-window surround
             {0.612, 0.244, 0.046, 0.064, true},
         }};
@@ -1316,9 +1359,14 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // around u 0.325. So the stack lives in u [0.254, 0.311] and below
     // v 0.846, which is the one gap on this panel.
     {
-        constexpr int kCols = 3, kRows = 4;
-        constexpr double kU0 = 0.254, kDU = 0.020, kCW = 0.017;
-        constexpr double kV0 = 0.846, kDV = 0.024, kCH = 0.018;
+        // T32: re-anchored to the FRONT ARCH's own trailing edge rather than a
+        // literal, and pulled forward out of the bigger number's way. On the
+        // reference the stack sits immediately behind the front wheel; ours was
+        // at a fixed 0.254 that happened to end 0.034 from the old number and
+        // now would have touched the new one.
+        constexpr int kCols = kChipCols, kRows = kChipRows;
+        constexpr double kU0 = kChipU0, kDU = kChipDU, kCW = kChipW;
+        constexpr double kV0 = kChipV0, kDV = kChipDV, kCH = kChipH;
         constexpr double kBorder = 2.0 / kLiveryTextureSize;
         const std::array<double, 3> backing{240 / 255.0, 240 / 255.0, 240 / 255.0};
         // Same palette as the rear row, offset by the car's idx so the two
@@ -1368,7 +1416,9 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     {
         Canvas::ScopedGloss boltGloss(c, kGlossMatte);
         const std::array<double, 3> bolt{0.62, 0.63, 0.65};
-        constexpr double kU0 = 0.240, kU1 = 0.498, kStep = 0.0165;
+        // T32: the row's ends are the two wheel openings, not two literals that
+        // happened to sit between them when they were written down.
+        constexpr double kU0 = kArchFrontU1 + 0.012, kU1 = kArchRearU0 - 0.008, kStep = 0.0165;
         constexpr double kW = 0.0042, kH = 0.0050;
         for (double u = kU0; u <= kU1; u += kStep) {
             c.fillRect(u, 0.9415, kW, kH, bolt, 0.85);
@@ -1434,7 +1484,7 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
             const std::array<double, 3>& plate = lightPlate ? inkLight : inkDark;
             const std::array<double, 3>& ink = lightPlate ? inkDark : inkLight;
             c.fillRect(x - padX, vy - padY, w + 2 * padX, h + 2 * padY, plate, a);
-            c.drawText(x, vy, h, t, ink, 1.0, false, vy > 0.5);
+            c.drawText(x, vy, h, t, ink, 1.0, false, vy > 0.5, Canvas::TextDir::AlongU, 1.0, vy < 0.5);
         };
 
         const char* primary = kBrands[(size_t)(idx % (int)kBrands.size())];
@@ -1460,12 +1510,25 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         for (double vy : {0.170, 0.790}) {
             badge(0.752 - c.measureText(kMarkH, primary), vy, kMarkH, primary, false, 0.90);
         }
-        // Associate mark forward of the door number, where the real cars carry
-        // one, and a third on the lower door above the rocker band. 0.185 for
-        // the second, not 0.310: at 0.310 the dump showed it buried under the
-        // door-number roundel.
-        for (double vy : {0.145, 0.815}) badge(0.290, vy, 0.014, second, true, 0.90);
-        for (double vy : {0.262, 0.702}) badge(0.185, vy, 0.013, third, false, 0.85);
+        // T32: BOTH ASSOCIATE MARKS RE-PLACED, and both for the same reason as
+        // the number itself -- they were literals chosen against an older
+        // flank and the dump shows what that cost.
+        //
+        // `second` was at u 0.290. The door number now runs from u 0.305 to
+        // 0.428, so the mark's plate ran under the leading digit: the dump
+        // shows "OKAMI" with its last three letters buried behind the "1". It
+        // moves aft of the number instead, into the gap between the number's
+        // trailing edge and the rear arch (0.5052), which is the one clear
+        // strip left on the lower door.
+        //
+        // `third` was at u 0.185 -- inside the front wheel opening, which
+        // spans 0.0878 to 0.2285. It was painted on the arch carve, i.e. on
+        // nothing. It goes to the rear quarter aft of the arch, on its own v
+        // band under the primary wordmark.
+        const double secondX = kDoorCenterU + 0.070;
+        const double thirdX = kArchRearU1 + 0.014;
+        for (double vy : {0.145, 0.815}) badge(secondX, vy, 0.013, second, true, 0.90);
+        for (double vy : {0.262, 0.702}) badge(thirdX, vy, 0.013, third, false, 0.85);
 
         // T17: the hood and deck wordmarks run ACROSS the car, not along it.
         //
@@ -1540,7 +1603,25 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
     // 7-segment: a font glyph drawn with equal U and V extents came out squat.
     constexpr double kFlankXScale = 0.1496 / 0.362;
     constexpr double kRoofXScale = 0.1496 / 0.160;
-    constexpr double kNumOutline = 5.0 / kLiveryTextureSize;
+    // T32: THE OUTLINE SCALES WITH THE NUMBER. It was a flat 5 texels whatever
+    // the digit's size, which was 2.6% of the cap height when the door number
+    // was fh 0.19 and is 2.2% now that it is 0.225 -- so making the number
+    // bigger made its trim proportionally thinner, the opposite of the
+    // reference, where the dark keyline around a white numeral is a real line
+    // rather than a hairline. 2% of cap height is 9 texels on the door and 4 on
+    // the roof.
+    //
+    // 3.5% was tried first and rendered wrong on the SHADED flank: the ring ate
+    // 45% of a 70-texel stroke, so where the white fill is lit it reads white
+    // with a keyline and where it is in shadow it reads as a BLACK number with
+    // a grey core. Checked on frames at azimuth 57 and 237, which put the same
+    // car's two doors in sun and in shade.
+    //
+    // It also fixes the T10 mirror guard's real difficulty, which was never
+    // that the mirror was wrong: a 5-texel ring compared against itself across
+    // a blit that rounds each destination box with floor/ceil loses most of its
+    // own area to a 3-texel slip. A 16-texel ring does not.
+    constexpr double kNumOutlineRatio = 0.020;
     const std::array<double, 3> panelFill = lum > 0.5 ? dark : white;
     const std::array<double, 3> panelNum = lum > 0.5 ? white : dark;
     if (paceLightBar) {
@@ -1563,7 +1644,7 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         // Roof: fcyTop, not a centre -- drawFontNumber takes the glyph box's
         // top edge, the way drawText does.
         drawFontNumber(c, num, carU(-0.20), 0.50 - 0.105 * 0.5, 0.105, panelNum, dark,
-                       false, kRoofXScale, kNumOutline);                                        // roof
+                       false, kRoofXScale, 0.105 * kNumOutlineRatio);                          // roof
     }
     if (!paceLightBar) {
         // T26: THE DOOR NUMBER, SIZED AND PLACED OFF THE #41.
@@ -1581,8 +1662,24 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         //
         // Still the T10 rule: the v > 0.5 door is drawn mirrored so it reads
         // forwards on the car.
-        constexpr double kDoorFh = 0.19;
-        constexpr double kDoorTopV = 0.677 + 6.0 / kLiveryTextureSize;
+        // T32: CENTRED BETWEEN THE ARCHES, NOT ON carU(-0.10).
+        //
+        // That literal was picked when the axles sat somewhere else, and it
+        // never moved: the door's real centre is the midpoint of the two arch
+        // openings, u 0.3669, and the number was being painted at 0.4151 --
+        // 0.32 m too far back along the car, hard against the rear arch with
+        // an empty stretch of door ahead of it. It is the clearest case of the
+        // thing the user described: paint that stayed put while the body moved
+        // out from under it. kArchFrontCU/kArchRearCU are derived from the
+        // generator and checked against it, so this now moves with the wheels.
+        constexpr double kDoorCU = kDoorCenterU;
+        // 0.19 -> 0.225 of V. The flank band runs 0.677 (belt) to 0.985
+        // (rocker), 0.308 tall; at 0.19 the number filled 62% of the door and
+        // the reference fills about 80%. The outlined box is fh * 1.22, so
+        // 0.225 puts it at 0.274 -- 89% of the band, sitting 6 texels under the
+        // belt with the rocker band clear below.
+        constexpr double kDoorFh = kDoorNumberFh;
+        constexpr double kDoorTopV = kDoorNumberTopV;
         // Without the roundel the digits need their own contrast: white fill
         // with a dark outline on a dark car, the reverse on a light one --
         // which is what every reference car does (white "41" outlined dark on
@@ -1590,10 +1687,12 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         // came out as a black skeleton with the stripes showing through it.
         const std::array<double, 3>& doorFill = lum > 0.5 ? dark : white;
         const std::array<double, 3>& doorLine = lum > 0.5 ? white : dark;
-        drawFontNumber(c, num, carU(-0.10), 1.0 - kDoorTopV - kDoorFh, kDoorFh, doorFill, doorLine,
-                       false, kFlankXScale, kNumOutline);                                       // right door
-        drawFontNumber(c, num, carU(-0.10), kDoorTopV, kDoorFh, doorFill, doorLine,
-                       true, kFlankXScale, kNumOutline);                                        // left door
+        // The -z door: no u mirror, but flipped in V -- see drawText's own note
+        // on why the two flanks need different mirrors, not the same one.
+        drawFontNumber(c, num, kDoorCU, 1.0 - kDoorTopV - kDoorFh, kDoorFh, doorFill, doorLine,
+                       false, kFlankXScale, kDoorFh * kNumOutlineRatio, true);                 // -z door
+        drawFontNumber(c, num, kDoorCU, kDoorTopV, kDoorFh, doorFill, doorLine,
+                       true, kFlankXScale, kDoorFh * kNumOutlineRatio);                        // +z door
     }
 
     // ---- nose/tail lamp clusters (index.html:2793-2855, re-placed) ----

@@ -230,8 +230,11 @@ int main() {
         // swatch checks already use.
         const Sample kPatchSamples[] = {
             {"hood patch", 0.095, 0.553},
-            {"lower quarter patch (-z flank)", 0.315, 0.107},
-            {"lower quarter patch (+z flank)", 0.315, 0.893},
+            // T32: patch 5 moved off the lower door and onto the lower rear
+            // quarter, because the door number now covers where it used to be.
+            // Centre of patch 5, {0.652, 0.076, 0.030, 0.062}.
+            {"lower quarter patch (-z flank)", 0.667, 0.107},
+            {"lower quarter patch (+z flank)", 0.667, 0.893},
             {"rear-window surround patch", 0.580, 0.276},
         };
         for (int style = 0; style < 5; ++style) {
@@ -317,12 +320,20 @@ int main() {
         LiveryScheme scheme{0, 0, 0, CarPalette::White};
         const auto pixels = buildLiveryPixels(red, 28, 1, &scheme);
         int darkPixels = 0;
-        // T26: box moved with the number -- centre v 0.2042 (the mirror of
-        // 0.7958), half-height 0.125, u 0.330-0.500. The floor is unchanged: a
-        // bigger number with the same outline ratio can only put MORE dark
-        // texels in its box, so 13000 remains a lower bound the old size met.
-        for (int y = (int)(0.079 * kLiveryTextureSize); y < (int)(0.329 * kLiveryTextureSize); ++y)
-            for (int x = (int)(0.330 * kLiveryTextureSize); x < (int)(0.500 * kLiveryTextureSize); ++x)
+        // T32: the box is derived from livery.h's anchors like the mirror
+        // guard's, and for the same reason -- it was written for a number that
+        // has since moved 0.32 m forward and grown. Centred on the LOW door's
+        // glyph box (the mirror of kDoorNumberTopV + fh/2) and on
+        // kDoorCenterU, padded generously in both axes: this clause counts
+        // dark texels and only needs to contain the graphic, not fit it.
+        // The floor is unchanged: a bigger number with the same outline ratio
+        // can only put MORE dark texels in its box, so 13000 remains a lower
+        // bound the old size met.
+        constexpr double kLoC = 1.0 - (kDoorNumberTopV + kDoorNumberFh * 0.5);
+        for (int y = (int)((kLoC - kDoorNumberFh * 0.72) * kLiveryTextureSize);
+             y < (int)((kLoC + kDoorNumberFh * 0.72) * kLiveryTextureSize); ++y)
+            for (int x = (int)((kDoorCenterU - 0.085) * kLiveryTextureSize);
+                 x < (int)((kDoorCenterU + 0.085) * kLiveryTextureSize); ++x)
                 if (luminance(pixelAt(pixels, x, y)) < 0.10) ++darkPixels;
         expectTrue("door number carries a bold dark outline", darkPixels >= 13000);
     }
@@ -497,7 +508,21 @@ int main() {
                    kSmallestDecalH * kNonPlayerTexture >= 8.0);
     }
 
-    // T10: the two door numbers must be MIRROR IMAGES of each other.
+    // T10: the two door numbers must be 180-DEGREE ROTATIONS of each other.
+    //
+    // T32 changed what this clause asserts, because the thing it asserted was
+    // wrong. It said "mirror images", which is what the paint did: the +z door
+    // is drawn with mirrorU and the -z door plain. Both flanks share one U, so
+    // that much was right -- and both flanks do NOT share one V. The ring's V
+    // is mirrored about 0.5 between the sides, so +v runs down the +z door and
+    // up the -z one, and the -z number rendered upside down on the car for as
+    // long as there has been a number on it (verified at azimuth 237, the
+    // flank the original single-sided probe never looked at).
+    //
+    // With the -z door drawn flipped in V and the +z one mirrored in U, one is
+    // now the other turned through 180 degrees, and that is what is measured
+    // below. The identity control is unchanged and still what proves the
+    // transform is doing work.
     //
     // WHY THIS GUARD EXISTS. `car_u(x)` is the same function of x all the way
     // around the section, so u advances toward the TAIL on both flanks -- but
@@ -525,7 +550,6 @@ int main() {
     {
         LiveryScheme scheme{0, 0, 0, CarPalette::White};
         const auto pixels = buildLiveryPixels(red, 91, 1, &scheme);
-
         // T26: box re-centred on the door number's new centre, 0.7958 (top
         // edge 6 texels under the belt, fh 0.19 with the 1.22x outline), and
         // widened to hold the 0.056-wide digits; it was the old mid-door box.
@@ -537,9 +561,21 @@ int main() {
         // compared was body paint -- and the scheme's stripes are not mirror-
         // symmetric about carU(-0.10), so they dominated the disagreement. The
         // 7-segment digits were wide enough to swamp that; the font's are not.
-        // Centred on carU(-0.10) = 0.4152, which is the axis mirrorRegionX uses.
-        const int u0 = (int)(0.3672 * kLiveryTextureSize);
-        const int u1 = (int)(0.4632 * kLiveryTextureSize);
+        // T32: THE BOX IS DERIVED, NOT WRITTEN DOWN. It was centred on 0.4152
+        // -- carU(-0.10), a literal chosen when the axles were somewhere else
+        // -- and stayed there while the door itself moved 0.32 m forward. Now
+        // it reads livery.h's kDoorCenterU, which is the midpoint of the two
+        // wheel openings and the axis drawText actually mirrors about, so the
+        // guard cannot drift away from the paint again.
+        //
+        // Half-width from the cap height: a two-digit run measures about 0.5
+        // of the cap height per digit once kFlankXScale has squeezed it, so
+        // 0.25*fh each side covers the run with slack and still stops short of
+        // the contingency stack (u 0.2365-0.2935) on one side and the scheme's
+        // panel edges on the other.
+        constexpr double kNumHalfU = kDoorNumberFh * 0.25;
+        const int u0 = (int)((kDoorCenterU - kNumHalfU) * kLiveryTextureSize);
+        const int u1 = (int)((kDoorCenterU + kNumHalfU) * kLiveryTextureSize);
         const int w = u1 - u0;
         // Half-height is the outlined digit box (0.19 x 1.22 / 2), not more:
         // the box's top edge sits 6 texels under the belt, and a taller box
@@ -550,9 +586,17 @@ int main() {
         // two differed by 43 texels in OPPOSITE directions on the two doors,
         // so the comparison was reading the halves 86 texels out of register
         // and reported the mirror failing on a correctly mirrored number.
-        const int halfV = (int)(0.105 * kLiveryTextureSize);
-        const int loC = (int)(0.225 * kLiveryTextureSize);
-        const int hiC = (int)(0.775 * kLiveryTextureSize);
+        // T32: also derived. The glyph box's centre is its published top edge
+        // plus half the published cap height; the low door's is its mirror.
+        // Half-height stays just inside the cap height (0.49 of it, not 0.5)
+        // so the box's top edge cannot cross the beltline into the glass,
+        // where the +z door carries the window net and the -z door does not.
+        // Its bottom edge lands at 0.903, clear of the rocker fastener row at
+        // 0.9415 -- the other asymmetry on this flank.
+        constexpr double kGlyphC = kDoorNumberTopV + kDoorNumberFh * 0.5;
+        const int halfV = (int)(kDoorNumberFh * 0.49 * kLiveryTextureSize);
+        const int loC = (int)((1.0 - kGlyphC) * kLiveryTextureSize);
+        const int hiC = (int)(kGlyphC * kLiveryTextureSize);
 
         // T30: agreement is allowed one texel of slack in u. The two doors are
         // separate rasterisations of the same glyph run -- one mirrored -- and
@@ -591,29 +635,29 @@ int main() {
         // average hides. The identity figure printed alongside is what proves
         // that, and it is measured exactly the same way.
         constexpr int kBlk = 4;
-        auto cov = [&](int x0, int y0, bool flip) {
+        auto cov = [&](int x0, int y0, bool flipX, bool flipY) {
             int n = 0;
             for (int by = 0; by < kBlk; ++by)
                 for (int bx = 0; bx < kBlk; ++bx)
-                    n += ink_at(flip ? x0 - bx : x0 + bx, y0 + by) ? 1 : 0;
+                    n += ink_at(flipX ? x0 - bx : x0 + bx, flipY ? y0 - by : y0 + by) ? 1 : 0;
             return (double)n / (kBlk * kBlk);
         };
         long ink = 0, same = 0, mirrored = 0, total = 0;
         for (int dv = -halfV; dv + kBlk <= halfV; dv += kBlk) {
             for (int dx = 0; dx + kBlk <= w; dx += kBlk) {
-                const double lo = cov(u0 + dx, loC + dv, false);
-                const double hi = cov(u0 + dx, hiC + dv, false);
-                const double hiMir = cov(u1 - 1 - dx, hiC + dv, true);
+                const double lo = cov(u0 + dx, loC + dv, false, false);
+                const double hi = cov(u0 + dx, hiC + dv, false, false);
+                const double hiRot = cov(u1 - 1 - dx, hiC - dv, true, true);
                 if (lo > 0.5) ++ink;
                 if (std::fabs(lo - hi) <= 0.25) ++same;
-                if (std::fabs(lo - hiMir) <= 0.25) ++mirrored;
+                if (std::fabs(lo - hiRot) <= 0.25) ++mirrored;
                 ++total;
             }
         }
         ink *= kBlk * kBlk;
         const double fMirror = total ? (double)mirrored / (double)total : 0.0;
         const double fSame = total ? (double)same / (double)total : 0.0;
-        std::printf("livery_test: T10 door-number halves -- mirrored %.3f, identity %.3f (ink %ld)\n",
+        std::printf("livery_test: T10 door-number halves -- rotated %.3f, identity %.3f (ink %ld)\n",
                     fMirror, fSame, ink);
 
         expectTrue("T10: door numbers are actually painted (ink present)", ink > 5000);
@@ -626,9 +670,9 @@ int main() {
         // on the grid. 0.938 is what a correct font-drawn mirror measures here;
         // the 7-segment blocks it was calibrated on were solid and wide enough
         // to reach 0.98.
-        expectTrue("T10: the two door numbers are horizontal mirrors of each other", fMirror >= 0.93);
-        expectTrue("T10: door numbers agree far better mirrored than superimposed "
-                   "(catches an un-mirrored number whose glyphs happen to be symmetric)",
+        expectTrue("T10: the two door numbers are 180-degree rotations of each other", fMirror >= 0.93);
+        expectTrue("T10: door numbers agree far better rotated than superimposed "
+                   "(catches an untransformed number whose glyphs happen to be symmetric)",
                    fMirror - fSame >= 0.10);
     }
 
@@ -907,11 +951,15 @@ int main() {
             const double mn = std::min({px[0], px[1], px[2]});
             return mx >= 0.25 && mx - mn >= 0.20;
         };
-        for (int col = 0; col < 3; ++col) {
-            const int x = (int)((0.254 + col * 0.020 + 0.017 * 0.5) * kLiveryTextureSize);
+        // T32: the column positions come from livery.h's kChip* anchors, which
+        // hang off kArchFrontU1 -- the same edit that moved the stack forward
+        // with the wheel opening used to leave this scan on bare paint.
+        for (int col = 0; col < kChipCols; ++col) {
+            const int x = (int)((kChipU0 + col * kChipDU + kChipW * 0.5) * kLiveryTextureSize);
             int runs = 0;
             bool on = false;
-            for (int y = (int)(0.840 * kLiveryTextureSize); y < (int)(0.940 * kLiveryTextureSize); ++y) {
+            for (int y = (int)((kChipV0 - 0.006) * kLiveryTextureSize);
+                 y < (int)((kChipV0 + kChipRows * kChipDV) * kLiveryTextureSize); ++y) {
                 const auto px = pixelAt(pixels, x, y);
                 const bool sat = saturated(px);
                 if (sat && !on) ++runs;
@@ -924,7 +972,7 @@ int main() {
         std::printf("livery_test: T23e front contingency stack -- %d chips down the thinnest column, %d tones\n",
                     minRuns, totalTones);
         expectTrue("T23e: the front quarter carries a STACK of chips, not one painted panel",
-                   minRuns >= 4);
+                   minRuns >= kChipRows);
         expectTrue("T23e: the stack is multi-colour", totalTones >= 3);
 
         // The fastener row, counted as RUNS of pale texels along its own v, so
@@ -932,7 +980,8 @@ int main() {
         const int fy = (int)(0.9435 * kLiveryTextureSize);
         int rivets = 0;
         bool on = false;
-        for (int x = (int)(0.235 * kLiveryTextureSize); x < (int)(0.505 * kLiveryTextureSize); ++x) {
+        for (int x = (int)((kArchFrontU1 + 0.006) * kLiveryTextureSize);
+             x < (int)((kArchRearU0 - 0.002) * kLiveryTextureSize); ++x) {
             const bool pale = luminance(pixelAt(pixels, x, fy)) > 0.30;
             if (pale && !on) ++rivets;
             on = pale;

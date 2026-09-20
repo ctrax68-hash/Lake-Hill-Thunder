@@ -129,6 +129,42 @@ inline constexpr double kGlossDecal = 0.20;   // printed vinyl is matte next to 
 inline constexpr double kGlossRubber = 0.04;  // tires reflect essentially nothing
 inline constexpr double kGlossMatte = 0.10;   // grille mesh, cage bars, rubber trim
 
+// T32: THE FLANK'S LAYOUT ANCHORS, PUBLISHED.
+//
+// These were file-local in livery.cpp, and everything that needed to know
+// where a mark sits on the door -- the paint, check_car_rig.py, livery_test --
+// kept its own copy of the number. That is how the door number came to be
+// painted 0.32 m behind the door's real centre and stayed there through two
+// re-authorings of the body: it was written as carU(-0.10) when the axles were
+// somewhere else, and nothing related it to where the wheels actually are.
+//
+// The arch spans are generated: check_car_rig.py recomputes all five from
+// gen_car_rig.py and fails if these drift. Everything else on the flank is
+// derived FROM them here, so a mark's position is a consequence of where the
+// wheels are rather than a literal that has to be remembered.
+constexpr double kArchFrontU0 = 0.0878, kArchFrontU1 = 0.2285;
+// T23: kArchRearU1 0.6528 -> 0.6459. The rear axle did not move; the arch's
+// rear U bound is the last STATION the carve reaches, and moving deck_start
+// from -1.67 to -1.56 with the greenhouse changed which station that is.
+constexpr double kArchRearU0 = 0.5052, kArchRearU1 = 0.6459;
+constexpr double kArchFrontCU = (kArchFrontU0 + kArchFrontU1) * 0.5;
+constexpr double kArchRearCU = (kArchRearU0 + kArchRearU1) * 0.5;
+constexpr double kArchLipV = 0.8848;  // RINGV[K_LIP]
+
+// The door's centre IS the midpoint of the two openings.
+constexpr double kDoorCenterU = (kArchFrontCU + kArchRearCU) * 0.5;
+// Cap height and the glyph box's top edge, in texture fractions. The flank
+// band runs 0.677 (beltline) to 0.985 (rocker); 0.225 with drawFontNumber's
+// 1.22x outline box fills 89% of it, against the reference's ~80% of the
+// door itself.
+constexpr double kDoorNumberFh = 0.225;
+constexpr double kDoorNumberTopV = 0.677 + 6.0 / 2048.0;
+// The contingency stack: 3 wide, 4 deep, starting just aft of the front arch.
+constexpr double kChipU0 = kArchFrontU1 + 0.008;
+constexpr double kChipDU = 0.020, kChipW = 0.017;
+constexpr double kChipV0 = 0.846, kChipDV = 0.024, kChipH = 0.018;
+constexpr int kChipCols = 3, kChipRows = 4;
+
 // body: car.col (or CarPalette::White for a pace car -- not built here,
 // see this file's own note below). accent: auto-derived from body's
 // luminance (index.html:2867-2868), just like JS. num/idx/scheme: the

@@ -12629,3 +12629,91 @@ new truth rather than relaxed:
   for: 8 bars driver, 4 passenger, fails correctly.
 
 `check_car_rig.py` PASS, `car_proportions.py` 17/17, `ctest` 36/36.
+
+## T32 — repaint: the flank's marks were anchored to a body that moved
+
+User report: *"Repaint the bodies and numbers and let's see what it looks like
+I think the old paint didn't move from the adjustments making cars look
+shitty."* That read was right, and it was right about more than the numbers.
+
+### The measurement that started it
+
+Dumping 21 liveries (`LHT_FORCE_RACE=1 LHT_DUMP_LIVERY=...`) and unrolling the
+flanks:
+
+```
+front arch centre u 0.1582   rear arch centre u 0.5756   door midpoint 0.3669
+door number painted at u 0.4151  (carU(-0.10))   ->  0.323 m too far back
+```
+
+`carU(-0.10)` was chosen when the axles sat somewhere else and never moved
+while the body was re-authored underneath it three times. The number sat hard
+against the rear arch with an empty stretch of door ahead of it. The same
+disease had spread to every other mark on the panel.
+
+### Anchors are published now, not remembered
+
+`livery.h` exports the flank's layout: the four arch U bounds, the arch lip V,
+`kDoorCenterU` (the midpoint of the two openings), the door number's cap height
+and top edge, and the contingency stack's grid. `check_car_rig.py` recomputes
+the arch spans from `gen_car_rig.py` and fails if they drift, so a mark's
+position is a consequence of where the wheels are. The paint, both guards and
+the rig check now read one copy.
+
+Moved onto those anchors: the door number (centre and size), the contingency
+stack, the rocker fastener row's two ends, and the T10/I5/T23e guard boxes.
+
+### The -z flank has been rendering its lettering UPSIDE DOWN since T4
+
+Found while re-registering the T10 mirror guard, confirmed on frames at azimuth
+57 and 237, and it is the single worst thing in this entry.
+
+The ring's V is mirrored about 0.5 between the sides of the car: the beltline
+is v 0.677 on the +z flank and 0.323 on the -z one, so **+v runs down one door
+and up the other**. A viewer standing off each side sees, in texture axes,
+(+u left, +v down) from +z and (+u right, +v up) from -z — a mirror in U on one
+flank and a mirror in **V** on the other, not the same mirror twice. Only the U
+half was ever implemented. T4's single-sided probe verified the flank that
+happened to be right.
+
+`Canvas::drawText()` takes a `flipV` now, and it reflects about the CALLER'S
+BOX rather than the run's ink. The first cut reflected about the ink, which
+looks equivalent and is not: digit ink starts `inkYMin` below the box top
+because the font's ascent is taller than its cap height, so the -z number
+landed that much lower on the door — 104 texels of it, which is what a
+cross-correlation of the two halves measured before the line was changed.
+
+T10 changed with it. It asserted the two door numbers are horizontal mirrors,
+which is now false: one is mirrored in U, the other flipped in V, so **one is
+the other turned through 180 degrees**. Measured that way: 0.992 rotated
+against 0.658 superimposed. Verified failing in both directions — 0.691 with
+the V flip removed, 0.641 with the U mirror removed.
+
+### Three collisions the bigger number exposed
+
+Painted marks that were fine against a small number and are not against a
+correct one. All three were visible in the flank dump:
+
+- the **associate mark** at u 0.290 ran under the leading digit
+- the **third mark** at u 0.185 was painted *inside the front wheel opening*,
+  i.e. on the arch carve, i.e. on nothing
+- the **I5 lower-door patch run** (u 0.286–0.524, v 0.076–0.138) put four
+  accent-coloured slabs under the number — on a purple car with a white accent,
+  the white blob behind the 12
+- the **flame style's licks** ran across the bottom half of the number, and
+  since the number is painted later the dump showed a white smear with a
+  numeral stamped on it
+
+All four moved to bodywork nothing else claims, and the two guards that sampled
+the old positions moved with them.
+
+### The outline is proportional now, and 2% not 3.5%
+
+The number's dark keyline was a flat 5 texels whatever the digit's size, so
+making the number bigger made its trim proportionally thinner. It scales with
+cap height now. 3.5% was tried first and rendered wrong on the **shaded**
+flank: the ring ate 45% of a 70-texel stroke, so the number read white-with-a-
+keyline in sun and as a BLACK numeral with a grey core in shade. Checked on
+frames at both azimuths; 2% reads as a keyline in both.
+
+`ctest` 36/36, `check_car_rig.py` PASS, `car_proportions.py` 22/22.

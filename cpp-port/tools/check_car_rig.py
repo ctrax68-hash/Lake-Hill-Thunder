@@ -1013,15 +1013,19 @@ if _front and _rear:
         "kArchRearU0": _rear[0], "kArchRearU1": _rear[1],
         "kArchLipV": R.RINGV[R.K_LIP],
     }
+    # T32: the five live in livery.h now, so the paint and both guards read one
+    # copy instead of three. That duplication is how the door number came to sit
+    # 0.32 m behind the door's real centre and stay there.
+    _livh = open(os.path.join(_HERE, "..", "src", "render", "livery.h")).read()
     for _name, _py in _want.items():
-        _mm = _re.search(r"\b%s = ([0-9.]+)" % _name, _liv)
-        check(_mm is not None, "livery.cpp declares %s" % _name)
+        _mm = _re.search(r"\b%s = ([0-9.]+)" % _name, _livh)
+        check(_mm is not None, "livery.h declares %s" % _name)
         if _mm:
             # 1e-4: these are written to 4 decimal places on purpose -- a
             # texel at 2048 is 4.9e-4 wide, so agreeing to 1e-4 means the AO
             # band starts on the same texel the generator's arch does.
             check(abs(float(_mm.group(1)) - _py) < 1e-4,
-                  "livery.cpp's %s matches the generated arch (cpp %s vs py %.4f)"
+                  "livery.h's %s matches the generated arch (cpp %s vs py %.4f)"
                   % (_name, _mm.group(1), _py))
 
     # And the centres those spans imply must land on the ACTUAL AXLES. This is
