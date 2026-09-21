@@ -12717,3 +12717,53 @@ keyline in sun and as a BLACK numeral with a grey core in shade. Checked on
 frames at both azimuths; 2% reads as a keyline in both.
 
 `ctest` 36/36, `check_car_rig.py` PASS, `car_proportions.py` 22/22.
+
+## T32b — correcting T32: the number was in the right place to begin with
+
+User, on the T32 build: *"lol cars look autistic now"*. They were right, and the
+cause was T32's own headline claim.
+
+T32 moved the door number from `carU(-0.10)` = u 0.4151 to the midpoint of the
+two wheel openings, u 0.3669, and justified it as "0.323 m too far back". That
+justification rested on an assumption stated as a fact — that a door number is
+centred between the axles — and the assumption was never measured. It is wrong.
+
+Measured on the #41 side view: glyph ink box (598,112)-(692,181), hubs (518,161)
+and (846,188), 117.9 px/m.
+
+| | reference | T32 shipped | now |
+|---|---|---|---|
+| centre, fraction of wheelbase from the REAR hub | **0.381** | 0.500 | 0.381 |
+| centre in U | **0.4166** | 0.3669 | 0.4166 |
+| cap height | **0.585 m** | 0.622 m | 0.585 m |
+| ink width | **0.797 m** | 0.822 m | 0.797 m |
+
+The number sits *behind* the middle of the door, because the front of the door
+is where the contingency block goes. `carU(-0.10)` was within **10 mm** of the
+photograph all along. What was wrong with it was that it was a literal nothing
+related to the wheels — not where it pointed. T32 fixed the anchoring and broke
+the position, moving the number 0.322 m forward while reporting that it had
+moved it 0.323 m back.
+
+`kDoorNumberT = 0.381` now carries the measured fraction and `kDoorCenterU`
+derives from the arch centres, so the anchoring T32 wanted is kept and the
+position is the photograph's.
+
+### One more thing T32 sized the wrong way
+
+`kDoorNumberFh` was set to 0.225 as "89% of the belt-to-rocker band, against the
+reference's ~80% of the door". Those two percentages are not the same
+measurement: our band is 0.308 of V but **0.851 m of arc**, against the photo's
+**0.72 m of projected height**, because the door curves away under the camera.
+Sized in metres instead — the one unit that means the same thing in both — the
+cap height is 0.585 m, i.e. fh 0.212, and the top edge sits 0.025 of V under the
+beltline seam rather than hard against it.
+
+### Knock-ons
+
+The number moving back reopened the gap ahead of it and closed the one behind,
+so the associate mark went back to u 0.300 (between the chips and the number,
+which is where T32's own comment said the real cars carry it), and the flame
+licks dropped another 0.010 of V to clear the number's new baseline.
+
+`ctest` 36/36, `check_car_rig.py` PASS, `car_proportions.py` 22/22.

@@ -151,14 +151,37 @@ constexpr double kArchFrontCU = (kArchFrontU0 + kArchFrontU1) * 0.5;
 constexpr double kArchRearCU = (kArchRearU0 + kArchRearU1) * 0.5;
 constexpr double kArchLipV = 0.8848;  // RINGV[K_LIP]
 
-// The door's centre IS the midpoint of the two openings.
-constexpr double kDoorCenterU = (kArchFrontCU + kArchRearCU) * 0.5;
-// Cap height and the glyph box's top edge, in texture fractions. The flank
-// band runs 0.677 (beltline) to 0.985 (rocker); 0.225 with drawFontNumber's
-// 1.22x outline box fills 89% of it, against the reference's ~80% of the
-// door itself.
-constexpr double kDoorNumberFh = 0.225;
-constexpr double kDoorNumberTopV = 0.677 + 6.0 / 2048.0;
+// T32b: WHERE THE NUMBER SITS, MEASURED OFF THE PHOTOGRAPH.
+//
+// T32 put this at the midpoint of the two wheel openings and said so as if it
+// were a fact about race cars. It is not. Measured on the #41 side view --
+// glyph ink box (598,112)-(692,181), hubs (518,161) and (846,188) -- the
+// number's centre sits at 0.381 of the wheelbase forward of the REAR hub, not
+// 0.500. Behind the middle of the door, which is where a Gen-4 door number
+// actually lives, because the front of the door is where the contingency block
+// goes.
+//
+// So T32 moved the number 0.322 m FORWARD of where it belongs while claiming
+// to have moved it 0.323 m back to where it belonged. The literal it replaced,
+// carU(-0.10) = 0.4151, was within 10 mm of the photograph all along; what was
+// wrong with it was that it was a literal, not that it was in the wrong place.
+// That is now fixed properly: the fraction is measured, and it hangs off the
+// arch centres, so it still moves with the wheels.
+constexpr double kDoorNumberT = 0.381;  // fraction of the wheelbase, from the rear hub
+constexpr double kDoorCenterU = kArchRearCU - kDoorNumberT * (kArchRearCU - kArchFrontCU);
+// Cap height and the glyph box's top edge, in texture fractions, both measured
+// on the same frame. The ink is 69 px tall against 117.9 px/m, so 0.585 m, and
+// V advances 0.362 per metre down the flank: fh 0.212. Its top edge sits 7 px
+// under the beltline seam, about 0.07 m along the door's surface, so 0.025 of
+// V below the seam at 0.677.
+//
+// NOT sized as a fraction of the belt-to-rocker band, which is how T32 got
+// 0.225. That band is 0.308 of V but 0.851 m of ARC, against the photo's 0.72 m
+// of PROJECTED height -- the door curves away under the camera, so the same
+// "80% of the door" reads as two different numbers depending on which one you
+// measure it in. Metres are the same in both.
+constexpr double kDoorNumberFh = 0.212;
+constexpr double kDoorNumberTopV = 0.677 + 0.025;
 // The contingency stack: 3 wide, 4 deep, starting just aft of the front arch.
 constexpr double kChipU0 = kArchFrontU1 + 0.008;
 constexpr double kChipDU = 0.020, kChipW = 0.017;

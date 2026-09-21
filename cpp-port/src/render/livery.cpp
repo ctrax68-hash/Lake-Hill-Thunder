@@ -690,9 +690,9 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         // flame liveries of this era run the licks along the rocker UNDER the
         // number, which is also the one band of door left free.
         const double flU0 = 0.26;
-        for (auto [vSide, dir] : {std::pair{0.092, -1.0}, std::pair{0.908, 1.0}}) {
-            drawFlameLick(c, flU0, vSide, 0.26, 0.040, dir, accent);
-            drawFlameLick(c, flU0, vSide + dir * 0.006, 0.18, 0.024, dir, acc2);
+        for (auto [vSide, dir] : {std::pair{0.082, -1.0}, std::pair{0.918, 1.0}}) {
+            drawFlameLick(c, flU0, vSide, 0.26, 0.030, dir, accent);
+            drawFlameLick(c, flU0, vSide + dir * 0.005, 0.18, 0.018, dir, acc2);
         }
     }
 
@@ -1525,7 +1525,11 @@ std::vector<uint8_t> buildLiveryPixels(const Color3& body, int num, int idx, con
         // spans 0.0878 to 0.2285. It was painted on the arch carve, i.e. on
         // nothing. It goes to the rear quarter aft of the arch, on its own v
         // band under the primary wordmark.
-        const double secondX = kDoorCenterU + 0.070;
+        // T32b: forward of the number again, which is where T32's own comment
+        // said the real cars carry it -- the number moving back to its measured
+        // place reopened that gap (chips end 0.2935, number ink starts 0.357)
+        // and closed the one aft of it (number ends 0.476, rear arch 0.5052).
+        const double secondX = 0.300;
         const double thirdX = kArchRearU1 + 0.014;
         for (double vy : {0.145, 0.815}) badge(secondX, vy, 0.013, second, true, 0.90);
         for (double vy : {0.262, 0.702}) badge(thirdX, vy, 0.013, third, false, 0.85);
